@@ -1,0 +1,39 @@
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  background: var(--app-bg-page);
+  color: var(--app-text-primary);
+  font-family: var(--app-font-family);
+  font-size: var(--app-font-size-md);
+  line-height: var(--app-line-height-md);
+}
+
+body {
+  min-width: 320px;
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--app-bg-page);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+#app {
+  min-height: 100dvh;
+}
+
+::selection {
+  background: var(--app-primary-soft);
+  color: var(--app-primary-active);
+}
