@@ -1,0 +1,209 @@
+<script setup lang="ts">
+import { reactive, watch } from 'vue'
+
+import { configEnvTypeOptions, configStatusOptions, type EnvConfigItem } from '@/entities/config'
+import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
+
+import {
+  buildCreateEnvPayload,
+  createConfigEnvFormFromItem,
+  createDefaultConfigEnvForm,
+  type ConfigEnvDialogMode,
+  type ConfigEnvForm,
+  validateConfigEnvForm,
+} from './model'
+
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean
+    mode: ConfigEnvDialogMode
+    env?: EnvConfigItem | null
+    saving?: boolean
+    defaultWorkspaceCode?: string
+  }>(),
+  {
+    env: null,
+    defaultWorkspaceCode: 'ALL',
+  },
+)
+
+const emit = defineEmits<{
+  'update:modelValue': [value: boolean]
+  submit: [payload: ReturnType<typeof buildCreateEnvPayload>]
+}>()
+
+const form = reactive<ConfigEnvForm>(createDefaultConfigEnvForm(props.defaultWorkspaceCode))
+const formError = reactive({
+  message: '',
+})
+
+function resetForm() {
+  const nextForm =
+    props.mode === 'edit' && props.env
+      ? createConfigEnvFormFromItem(props.env)
+      : createDefaultConfigEnvForm(props.defaultWorkspaceCode)
+
+  Object.assign(form, nextForm)
+  formError.message = ''
+}
+
+function submit() {
+  const error = validateConfigEnvForm(form)
+  if (error) {
+    formError.message = error
+    return
+  }
+
+  formError.message = ''
+  emit('submit', buildCreateEnvPayload(form))
+}
+
+watch(
+  () => props.modelValue,
+  (visible) => {
+    if (visible) {
+      resetForm()
+    }
+  },
+)
+
+watch(
+  () => props.env,
+  () => {
+    if (props.modelValue) {
+      resetForm()
+    }
+  },
+)
+</script>
+
+<template>
+  <AppDialog
+    :model-value="modelValue"
+    :title="mode === 'create' ? '新增环境' : '编辑环境'"
+    width="520px"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
+    <div class="config-env-dialog">
+      <label class="config-env-dialog__field">
+        <span>目标空间</span>
+        <el-input v-model="form.workspaceCode" placeholder="ALL" />
+      </label>
+
+      <label class="config-env-dialog__field">
+        <span>环境名称 *</span>
+        <el-input v-model="form.envName" placeholder="例如：测试环境" />
+      </label>
+
+      <div class="config-env-dialog__field">
+        <span>环境类型</span>
+        <div class="config-env-dialog__segment">
+          <button
+            v-for="item in configEnvTypeOptions"
+            :key="item.value"
+            type="button"
+            :class="{ 'is-active': form.envType === item.value }"
+            @click="form.envType = item.value"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
+
+      <label class="config-env-dialog__field">
+        <span>Base URL *</span>
+        <el-input v-model="form.baseUrl" placeholder="https://api.example.com" />
+      </label>
+
+      <label class="config-env-dialog__field">
+        <span>描述</span>
+        <el-input
+          v-model="form.configJson"
+          type="textarea"
+          :rows="3"
+          placeholder="描述该环境的用途或注意事项"
+        />
+      </label>
+
+      <div class="config-env-dialog__field">
+        <span>状态</span>
+        <div class="config-env-dialog__segment is-two">
+          <button
+            v-for="item in configStatusOptions"
+            :key="item.value"
+            type="button"
+            :class="{ 'is-active': form.status === item.value }"
+            @click="form.status = item.value"
+          >
+            {{ item.label }}
+          </button>
+        </div>
+      </div>
+
+      <p v-if="formError.message" class="config-env-dialog__error">{{ formError.message }}</p>
+    </div>
+
+    <template #footer>
+      <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
+      <AppButton type="primary" :loading="saving" @click="submit">保存</AppButton>
+    </template>
+  </AppDialog>
+</template>
+
+<style scoped>
+.config-env-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+}
+
+.config-env-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+}
+
+.config-env-dialog__field > span {
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.config-env-dialog__segment {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--app-space-2);
+}
+
+.config-env-dialog__segment.is-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.config-env-dialog__segment button {
+  min-height: var(--app-control-height-md);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-weight: 600;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.config-env-dialog__segment button:hover {
+  background: var(--app-bg-page);
+}
+
+.config-env-dialog__segment button.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.config-env-dialog__error {
+  margin: 0;
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+}
+</style>
