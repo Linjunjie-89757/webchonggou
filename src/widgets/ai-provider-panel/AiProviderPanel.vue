@@ -68,7 +68,6 @@ async function loadProviders() {
     providers.value = Array.isArray(items) ? items : []
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
-    providers.value = []
   } finally {
     loading.value = false
   }
@@ -225,8 +224,13 @@ watch(
 
     <AppLoadingState v-if="loading && !providers.length" text="正在加载 AI 连接池..." />
 
+    <div v-else-if="errorMessage && providers.length" class="ai-provider-inline-error">
+      {{ errorMessage }}
+      <AppButton size="small" :icon="RefreshRight" @click="loadProviders">重试</AppButton>
+    </div>
+
     <AppEmptyState
-      v-else-if="errorMessage"
+      v-else-if="errorMessage && !providers.length"
       title="AI 连接池加载失败"
       :description="errorMessage"
     >
@@ -382,6 +386,19 @@ watch(
   gap: var(--app-space-4);
 }
 
+.ai-provider-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
+  border: 1px solid #fecaca;
+  border-radius: var(--app-radius-md);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+}
+
 .ai-provider-list {
   display: grid;
   gap: var(--app-space-4);
@@ -390,7 +407,7 @@ watch(
 .ai-provider-card {
   padding: var(--app-space-5);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-xl);
+  border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
   transition: box-shadow 160ms ease;
 }
