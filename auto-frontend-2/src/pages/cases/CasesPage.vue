@@ -193,7 +193,8 @@ onMounted(() => {
 .cases-page {
   display: flex;
   align-items: flex-start;
-  gap: var(--app-space-5);
+  gap: var(--app-space-4);
+  min-width: 0;
 }
 
 .cases-page__content {
@@ -204,7 +205,7 @@ onMounted(() => {
 .cases-page__stack {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-5);
+  gap: var(--app-space-4);
 }
 
 .cases-page__inline-error {
@@ -222,6 +223,7 @@ onMounted(() => {
 
 .cases-workspace-select {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--app-space-2);
 }
@@ -234,7 +236,7 @@ onMounted(() => {
 }
 
 .cases-workspace-select__control {
-  width: 180px;
+  width: 192px;
 }
 
 .cases-workspace-select__error {
@@ -260,6 +262,13 @@ onMounted(() => {
     width: 100%;
   }
 }
+
+@media (max-width: 1200px) {
+  .cases-workspace-select__control {
+    width: 168px;
+  }
+}
+
 @media (max-width: 720px) {
   .cases-workspace-select {
     flex-wrap: wrap;

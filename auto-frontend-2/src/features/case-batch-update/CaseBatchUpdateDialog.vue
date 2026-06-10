@@ -133,7 +133,7 @@ watch(
 .case-batch-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-4);
+  gap: var(--app-space-3);
 }
 
 .case-batch-dialog__summary {

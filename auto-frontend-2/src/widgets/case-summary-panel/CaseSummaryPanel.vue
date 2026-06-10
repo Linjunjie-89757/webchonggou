@@ -26,7 +26,17 @@ const stats = computed<CaseStat[]>(() => [
 .case-summary-panel {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--app-space-4);
+  gap: var(--app-space-3);
+}
+
+.case-summary-panel :deep(.config-stat-card) {
+  min-height: 68px;
+  padding: var(--app-space-3) var(--app-space-4);
+}
+
+.case-summary-panel :deep(.config-stat-card strong) {
+  font-size: 22px;
+  line-height: 26px;
 }
 
 @media (max-width: 1100px) {

@@ -194,7 +194,7 @@ watch(
 .case-detail-drawer {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-4);
+  gap: var(--app-space-3);
 }
 
 .case-detail-drawer__summary {
@@ -238,6 +238,13 @@ watch(
   display: flex;
   flex-direction: column;
   gap: var(--app-space-2);
+  padding-bottom: var(--app-space-3);
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.case-detail-drawer__section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 .case-detail-drawer__section h4 {
@@ -274,6 +281,8 @@ watch(
 
 .case-detail-drawer__text {
   margin: 0;
+  max-height: 260px;
+  overflow: auto;
   padding: var(--app-space-3);
   border: 1px solid var(--app-border-soft);
   border-radius: var(--app-radius-md);

@@ -101,8 +101,8 @@ function handleNodeClick(node: CaseTreeNode) {
 
 <style scoped>
 .case-directory-tree {
-  width: 248px;
-  flex: 0 0 248px;
+  width: 236px;
+  flex: 0 0 236px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
@@ -133,12 +133,29 @@ function handleNodeClick(node: CaseTreeNode) {
 .case-directory-tree__tree {
   max-height: calc(100dvh - 220px);
   overflow: auto;
-  padding: var(--app-space-2);
+  padding: var(--app-space-2) var(--app-space-1);
+}
+
+.case-directory-tree__tree :deep(.el-tree-node__content) {
+  height: 34px;
+  border-radius: var(--app-radius-md);
+  color: var(--app-text-secondary);
+}
+
+.case-directory-tree__tree :deep(.el-tree-node__content:hover) {
+  background: var(--app-bg-muted);
+}
+
+.case-directory-tree__tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  font-weight: 600;
 }
 
 .case-directory-tree__node {
-  display: inline-flex;
+  display: flex;
   min-width: 0;
+  width: 100%;
   align-items: center;
   gap: var(--app-space-2);
   font-size: var(--app-font-size-sm);

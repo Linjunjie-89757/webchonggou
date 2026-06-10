@@ -127,7 +127,7 @@ watch(
 .case-review-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-4);
+  gap: var(--app-space-3);
 }
 
 .case-review-dialog__summary {
@@ -180,12 +180,14 @@ watch(
 
 .case-review-dialog__segment button {
   min-height: var(--app-control-height-md);
+  padding: 0 var(--app-space-2);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
   color: var(--app-text-secondary);
   cursor: pointer;
   font-weight: 600;
+  white-space: nowrap;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 

@@ -84,15 +84,19 @@ function resetFilters() {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--app-space-3);
+  gap: var(--app-space-2);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
 }
 
 .case-filter-panel__search {
-  width: min(320px, 100%);
+  width: min(300px, 100%);
 }
 
 .case-filter-panel__control {
-  width: 148px;
+  width: 136px;
 }
 
 @media (max-width: 720px) {

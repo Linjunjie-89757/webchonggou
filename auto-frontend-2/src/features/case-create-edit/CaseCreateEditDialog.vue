@@ -247,13 +247,13 @@ watch(
 .case-dialog {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-4);
+  gap: var(--app-space-3);
 }
 
 .case-dialog__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--app-space-4);
+  gap: var(--app-space-3) var(--app-space-4);
 }
 
 .case-dialog__field {
@@ -285,12 +285,14 @@ watch(
 
 .case-dialog__segment button {
   min-height: var(--app-control-height-md);
+  padding: 0 var(--app-space-2);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
   color: var(--app-text-secondary);
   cursor: pointer;
   font-weight: 600;
+  white-space: nowrap;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
