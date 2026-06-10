@@ -1,18 +1,21 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import AppLayout from '@/app/layouts/AppLayout.vue'
+import { loadCurrentUser, sessionState } from '@/entities/session'
+import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
+import LoginPage from '@/pages/login/LoginPage.vue'
 import PlaceholderPage from '@/pages/placeholder/PlaceholderPage.vue'
 
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
     name: 'login',
-    component: PlaceholderPage,
+    component: LoginPage,
     meta: {
       title: '登录',
-      description: '账号登录能力将在后续迁移阶段接入。',
       bare: true,
+      public: true,
     },
   },
   {
@@ -49,7 +52,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'cases',
         name: 'cases',
-        component: PlaceholderPage,
+        component: CasesPage,
         meta: {
           title: '用例中心',
           description: '后续按目录树、筛选区、表格、抽屉等区域拆分。',
@@ -98,4 +101,26 @@ const routes: RouteRecordRaw[] = [
 export const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach(async (to) => {
+  const isPublicRoute = to.meta.public === true
+
+  if (!sessionState.sessionChecked.value) {
+    await loadCurrentUser()
+  }
+
+  if (to.name === 'login' && sessionState.isAuthenticated.value) {
+    return { path: '/config-center', replace: true }
+  }
+
+  if (!isPublicRoute && !sessionState.isAuthenticated.value) {
+    return {
+      path: '/login',
+      query: to.fullPath === '/' ? undefined : { redirect: to.fullPath },
+      replace: true,
+    }
+  }
+
+  return true
 })

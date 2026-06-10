@@ -94,7 +94,6 @@ async function loadParams() {
     params.value = Array.isArray(page.items) ? page.items : []
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
-    params.value = []
   } finally {
     loading.value = false
   }
@@ -211,6 +210,11 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
     </div>
 
+    <div v-else-if="params.length" class="config-inline-error">
+      {{ errorMessage }}
+      <AppButton size="small" :icon="RefreshRight" @click="loadParams">重试</AppButton>
+    </div>
+
     <div class="config-segmented-tabs">
       <button
         v-for="item in categoryTabs"
@@ -226,7 +230,7 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
     <AppLoadingState v-if="loading && !params.length" text="正在加载参数配置..." />
 
     <AppEmptyState
-      v-else-if="errorMessage"
+      v-else-if="errorMessage && !params.length"
       title="参数配置加载失败"
       :description="errorMessage"
     >
@@ -237,6 +241,13 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
 
     <div v-else class="config-param-table-card">
       <table v-if="filteredParams.length">
+        <colgroup>
+          <col class="config-param-table-card__name-col" />
+          <col class="config-param-table-card__value-col" />
+          <col class="config-param-table-card__type-col" />
+          <col class="config-param-table-card__description-col" />
+          <col class="config-param-table-card__action-col" />
+        </colgroup>
         <thead>
           <tr>
             <th>参数名</th>
@@ -253,7 +264,9 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
               <div class="config-table-subtitle">{{ param.workspaceName || param.workspaceCode }}</div>
             </td>
             <td>
-              <span class="config-value-chip">{{ getParamValueText(param) }}</span>
+              <span class="config-value-chip" :title="getParamValueText(param)">
+                {{ getParamValueText(param) }}
+              </span>
             </td>
             <td>
               <ConfigTypeBadge
@@ -356,6 +369,19 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   gap: var(--app-space-3);
 }
 
+.config-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
+  border: 1px solid #fecaca;
+  border-radius: var(--app-radius-md);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+}
+
 .config-filter-control {
   width: 156px;
 }
@@ -405,6 +431,26 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   table-layout: fixed;
 }
 
+.config-param-table-card__name-col {
+  width: 22%;
+}
+
+.config-param-table-card__value-col {
+  width: 28%;
+}
+
+.config-param-table-card__type-col {
+  width: 16%;
+}
+
+.config-param-table-card__description-col {
+  width: 22%;
+}
+
+.config-param-table-card__action-col {
+  width: 112px;
+}
+
 .config-param-table-card thead {
   border-bottom: 1px solid var(--app-border);
   background: var(--app-bg-page);
@@ -439,9 +485,13 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
 
 .config-table-subtitle,
 .config-table-muted {
+  display: block;
+  overflow: hidden;
   margin-top: 2px;
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .config-value-chip {

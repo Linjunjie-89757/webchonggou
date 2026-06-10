@@ -79,7 +79,6 @@ async function loadDbConnections() {
     dbConnections.value = Array.isArray(page.items) ? page.items : []
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
-    dbConnections.value = []
   } finally {
     loading.value = false
   }
@@ -249,10 +248,15 @@ watch([filterKeyword, filterDbType, filterStatus], () => {
       <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
     </div>
 
+    <div v-else-if="dbConnections.length" class="config-inline-error">
+      {{ errorMessage }}
+      <AppButton size="small" :icon="RefreshRight" @click="loadDbConnections">重试</AppButton>
+    </div>
+
     <AppLoadingState v-if="loading && !dbConnections.length" text="正在加载数据库连接..." />
 
     <AppEmptyState
-      v-else-if="errorMessage"
+      v-else-if="errorMessage && !dbConnections.length"
       title="数据库连接加载失败"
       :description="errorMessage"
     >
@@ -389,6 +393,19 @@ watch([filterKeyword, filterDbType, filterStatus], () => {
   gap: var(--app-space-3);
 }
 
+.config-inline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
+  border: 1px solid #fecaca;
+  border-radius: var(--app-radius-md);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+}
+
 .config-filter-control {
   width: 156px;
 }
@@ -405,7 +422,7 @@ watch([filterKeyword, filterDbType, filterStatus], () => {
 .config-db-card {
   padding: var(--app-space-5);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-xl);
+  border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
   transition: box-shadow 160ms ease;
 }

@@ -76,6 +76,10 @@ export interface DbConnectionTestResult {
   elapsedMs?: number
 }
 
+export interface DbConnectionTestPayload {
+  id: number
+}
+
 export interface UpdateDbConnectionStatusPayload {
   status: ConfigStatus
 }

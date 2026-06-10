@@ -6,6 +6,7 @@ import type {
   CreateEnvPayload,
   CreateParamPayload,
   DbConnectionItem,
+  DbConnectionTestPayload,
   DbConnectionTestResult,
   EnvConfigItem,
   ParamSetItem,
@@ -189,9 +190,9 @@ export const configApi = {
   },
 
   async testSettingsDbConnection(workspaceCode: string, id: number) {
-    const response = await httpPost<ApiResponse<DbConnectionTestResult>, undefined>(
-      `/settings/db-connections/${id}/test`,
-      undefined,
+    const response = await httpPost<ApiResponse<DbConnectionTestResult>, DbConnectionTestPayload>(
+      '/settings/db-connections/test',
+      { id },
       {
         headers: workspaceHeaders(workspaceCode),
       },

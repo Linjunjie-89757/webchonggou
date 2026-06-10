@@ -1,14 +1,44 @@
 <script setup lang="ts">
 import {
+  ArrowDown,
   Cpu,
   Files,
   Grid,
   Monitor,
   Setting,
+  SwitchButton,
   Tools,
   User,
   Warning,
 } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+
+import { useSession } from '@/entities/session'
+import { useLogout } from '@/features/auth-logout'
+
+const router = useRouter()
+const route = useRoute()
+const { currentUser } = useSession()
+const { loading: logoutLoading, errorMessage: logoutErrorMessage, logout } = useLogout()
+
+const headerTitle = computed(() => {
+  return typeof route.meta.title === 'string' && route.meta.title ? route.meta.title : '前端 2.0 重建'
+})
+
+const headerDescription = computed(() => {
+  return typeof route.meta.description === 'string' && route.meta.description
+    ? route.meta.description
+    : 'Vue3 · TypeScript · Element Plus'
+})
+
+const userDisplayName = computed(() => {
+  const user = currentUser.value
+  return user?.displayName || user?.username || '当前用户'
+})
+
+const userRoleText = computed(() => currentUser.value?.roleCode || '已登录')
 
 const navigationItems = [
   { path: '/', label: '工作台', icon: Grid },
@@ -20,6 +50,23 @@ const navigationItems = [
   { path: '/automation/app', label: 'APP 自动化', icon: Tools },
   { path: '/settings', label: '系统设置', icon: User },
 ]
+
+function isNavigationActive(path: string) {
+  return route.path === path
+}
+
+async function handleLogout() {
+  if (logoutLoading.value) {
+    return
+  }
+
+  try {
+    await logout()
+    await router.replace('/login')
+  } catch {
+    ElMessage.error(logoutErrorMessage.value || '退出登录失败，请稍后重试')
+  }
+}
 </script>
 
 <template>
@@ -35,8 +82,8 @@ const navigationItems = [
           v-for="item in navigationItems"
           :key="item.path"
           class="app-layout__nav-item"
+          :class="{ 'is-active': isNavigationActive(item.path) }"
           :to="item.path"
-          active-class="is-active"
         >
           <el-icon class="app-layout__nav-icon">
             <component :is="item.icon" />
@@ -48,8 +95,39 @@ const navigationItems = [
 
     <section class="app-layout__body">
       <header class="app-layout__header">
-        <div class="app-layout__header-title">前端 2.0 重建</div>
-        <div class="app-layout__header-meta">Vue3 · TypeScript · Element Plus</div>
+        <div class="app-layout__header-copy">
+          <div class="app-layout__header-title">{{ headerTitle }}</div>
+          <div class="app-layout__header-meta">{{ headerDescription }}</div>
+        </div>
+
+        <el-dropdown trigger="click" @command="handleLogout">
+          <button
+            class="app-layout__user"
+            type="button"
+            :aria-busy="logoutLoading"
+            :disabled="logoutLoading"
+          >
+            <span class="app-layout__user-avatar">{{ userDisplayName.slice(0, 1).toUpperCase() }}</span>
+            <span class="app-layout__user-main">
+              <span class="app-layout__user-name">{{ userDisplayName }}</span>
+              <span class="app-layout__user-role">{{ userRoleText }}</span>
+            </span>
+            <el-icon class="app-layout__user-arrow">
+              <ArrowDown />
+            </el-icon>
+          </button>
+
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="logout" :disabled="logoutLoading">
+                <el-icon>
+                  <SwitchButton />
+                </el-icon>
+                {{ logoutLoading ? '正在退出' : '退出登录' }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </header>
 
       <main class="app-layout__main">
@@ -147,6 +225,7 @@ const navigationItems = [
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--app-space-4);
   height: 64px;
   padding: 0 var(--app-space-6);
   border-bottom: 1px solid var(--app-border);
@@ -154,14 +233,97 @@ const navigationItems = [
   backdrop-filter: blur(10px);
 }
 
+.app-layout__header-copy {
+  min-width: 0;
+}
+
 .app-layout__header-title {
+  overflow: hidden;
   font-size: var(--app-font-size-lg);
   font-weight: 700;
+  line-height: var(--app-line-height-lg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-layout__header-meta {
+  overflow: hidden;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-layout__user {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--app-space-2);
+  max-width: 260px;
+  min-height: 40px;
+  padding: 0 var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.app-layout__user:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.app-layout__user:hover {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+}
+
+.app-layout__user-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-primary);
+  color: var(--app-text-inverse);
+  font-size: var(--app-font-size-sm);
+  font-weight: 700;
+}
+
+.app-layout__user-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.app-layout__user-name {
+  max-width: 150px;
+  overflow: hidden;
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-layout__user-role {
+  max-width: 150px;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-layout__user-arrow {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: 14px;
 }
 
 .app-layout__main {
@@ -199,6 +361,36 @@ const navigationItems = [
 
   .app-layout__main {
     padding: var(--app-space-4);
+  }
+}
+
+@media (max-width: 560px) {
+  .app-layout__header {
+    align-items: flex-start;
+    height: auto;
+    min-height: 64px;
+    padding-block: var(--app-space-3);
+  }
+
+  .app-layout__header-copy {
+    flex: 1 1 auto;
+  }
+
+  .app-layout__header-title {
+    max-width: 100%;
+  }
+
+  .app-layout__header-meta {
+    max-width: 100%;
+  }
+
+  .app-layout__user {
+    max-width: 156px;
+  }
+
+  .app-layout__user-name,
+  .app-layout__user-role {
+    max-width: 72px;
   }
 }
 </style>
