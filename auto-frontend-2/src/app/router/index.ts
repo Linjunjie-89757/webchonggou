@@ -4,6 +4,7 @@ import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
+import DefectsPage from '@/pages/defects/DefectsPage.vue'
 import LoginPage from '@/pages/login/LoginPage.vue'
 import PlaceholderPage from '@/pages/placeholder/PlaceholderPage.vue'
 
@@ -61,10 +62,10 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'bugs',
         name: 'bugs',
-        component: PlaceholderPage,
+        component: DefectsPage,
         meta: {
           title: '缺陷管理',
-          description: '后续迁移列表、详情、编辑和关联弹窗的统一视觉。',
+          description: '按工作空间查看缺陷统计和真实列表，后续继续补齐详情与流转。',
         },
       },
       {
