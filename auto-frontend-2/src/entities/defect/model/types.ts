@@ -55,6 +55,21 @@ export interface SaveDefectPayload {
   tags: string[]
 }
 
+export interface AssignDefectPayload {
+  workspaceCode?: string
+  assigneeId: number
+}
+
+export interface TransitionDefectPayload {
+  workspaceCode?: string
+  toStatus: string
+  actionComment?: string
+}
+
+export type AssignDefectResult = DefectDetail
+
+export type TransitionDefectResult = DefectDetail
+
 export interface DefectStatistics {
   total: number
   todo: number

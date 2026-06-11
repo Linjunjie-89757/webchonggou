@@ -1,12 +1,16 @@
 import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
 import type {
+  AssignDefectPayload,
+  AssignDefectResult,
   DefectDetail,
   DefectListQuery,
   DefectListResponse,
   DefectStatistics,
   DefectSummaryItem,
   SaveDefectPayload,
+  TransitionDefectPayload,
+  TransitionDefectResult,
 } from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
@@ -118,6 +122,26 @@ export const defectApi = {
     const payload = await httpPut<ApiResponse<DefectDetail>, SaveDefectPayload>(`/bugs/${id}`, data, {
       headers: workspaceHeaders(workspaceCode),
     })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async assignDefect(workspaceCode = 'ALL', id: number, data: AssignDefectPayload) {
+    const payload = await httpPost<ApiResponse<AssignDefectResult>, AssignDefectPayload>(`/bugs/${id}/assign`, data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async transitionDefect(workspaceCode = 'ALL', id: number, data: TransitionDefectPayload) {
+    const payload = await httpPost<ApiResponse<TransitionDefectResult>, TransitionDefectPayload>(
+      `/bugs/${id}/transition`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
 
     return normalizeDefectDetail(unwrapApiResponse(payload))
   },
