@@ -74,6 +74,15 @@ function normalizePageNo() {
   }
 }
 
+function reloadFromFirstPage() {
+  if (pageNo.value === 1) {
+    void loadDefects()
+    return
+  }
+
+  pageNo.value = 1
+}
+
 async function loadDefects() {
   const requestSeq = ++loadRequestSeq
   loading.value = true
@@ -218,20 +227,18 @@ async function submitTransitionDefect(payload: TransitionDefectPayload) {
 watch(
   () => props.workspaceCode,
   () => {
-    pageNo.value = 1
     dialogVisible.value = false
     detailDrawerVisible.value = false
     assignDialogVisible.value = false
     transitionDialogVisible.value = false
-    void loadDefects()
+    reloadFromFirstPage()
   },
 )
 
 watch(
   () => props.filter,
   () => {
-    pageNo.value = 1
-    void loadDefects()
+    reloadFromFirstPage()
   },
   { deep: true },
 )
@@ -244,8 +251,7 @@ watch(pageNo, (value, oldValue) => {
 
 watch(pageSize, (value, oldValue) => {
   if (value !== oldValue) {
-    pageNo.value = 1
-    void loadDefects()
+    reloadFromFirstPage()
   }
 })
 
