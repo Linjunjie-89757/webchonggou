@@ -37,6 +37,15 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Goal 84 smoke | Passed with documented gaps | Logged-out `/cases`, `/bugs`, `/automation/api`, `/settings`, and `/automation/web` redirected to `/login?redirect=...`. Logged-in smoke reached config center, case center, defect management, interface automation, system settings, and Web/App placeholders. Config/case/defect/API/settings create dialogs opened; case and defect detail opened; defect assign and transition dialogs opened from the more menu; Web/App placeholders did not request `/tasks`. | Keep this as the baseline release smoke checklist. |
 | Goal 84 gaps | Open | No destructive save/delete was executed. Interface automation case history drawer was not fully verified because the selected definition had zero case rows. The logged-out route guard still creates an expected `/auth/me` 401 console entry. Build still has known PURE annotation and chunk-size warnings. | Use disposable interface cases for history/run regression; defer build warning optimization unless it becomes release-blocking. |
 
+## Release Closure Classification
+
+| Level | Items | Release Decision | Follow-up |
+| --- | --- | --- | --- |
+| Blocking | None found in the rebuilt frontend after Goal 82-84 checks. | No current frontend blocker for a controlled pre-release/staging release. | Keep the release candidate tied to the current Git branch and known backend runtime. |
+| Recommended before release | Defect backend cleanup support for remaining disposable bug `BUG-005` / `id=5136`; interface automation case-row history/run smoke with a disposable case; backend contract decision for AI/DB test failure response shape. | Recommended, but not required to ship the current frontend if these are accepted as known risks. | Prefer a backend cleanup endpoint/script and one disposable interface case before wider UAT. |
+| Acceptable known risks | AI/DB test failures returning HTTP 400; build warnings from `@vueuse/core` PURE annotation and chunk size; logged-out route guard creating an expected `/auth/me` 401 console entry; outer `WODEZIDONGHUA` remaining dirty and ignored. | Can release with notes because build passes, UI remains stable, and these do not break the verified user flows. | Revisit during backend contract polish, build optimization, and repository hygiene work. |
+| Later iteration | Rich defect comments/attachments, defect transition matrix restrictions, interface automation complex editors/assertions/scenarios, role permissions/settings tabs, full old-frontend UI parity. | Not part of this release scope. | Schedule after the release candidate is accepted. |
+
 ## Config Center
 
 | Area | Not Fully Verified | Risk | Follow-up |
