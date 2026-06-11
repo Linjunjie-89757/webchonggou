@@ -59,6 +59,7 @@ onMounted(() => {
   <AppPage
     title="配置中心"
     description="管理测试环境、全局参数和数据库连接。当前阶段先迁移配置中心骨架，后续按确认顺序接入接口和操作。"
+    fill
   >
     <template #actions>
       <div class="config-workspace-select">
@@ -99,13 +100,16 @@ onMounted(() => {
 <style scoped>
 .config-center-page {
   display: flex;
-  align-items: flex-start;
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
   gap: var(--app-space-5);
 }
 
 .config-center-page__content {
   min-width: 0;
   flex: 1;
+  min-height: 0;
   padding: var(--app-space-6);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);

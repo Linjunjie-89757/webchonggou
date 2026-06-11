@@ -40,6 +40,7 @@ const placeholderMeta = computed(() => {
   <AppPage
     title="系统设置"
     description="管理平台级 AI 连接、工作空间、成员与用户账号，未接入的设置分类保持占位。"
+    fill
   >
     <div class="system-settings-page">
       <SettingsSidebar v-model:active-tab="activeTab" />
@@ -60,13 +61,16 @@ const placeholderMeta = computed(() => {
 <style scoped>
 .system-settings-page {
   display: flex;
-  align-items: flex-start;
+  min-height: 0;
+  flex: 1;
+  align-items: stretch;
   gap: var(--app-space-5);
 }
 
 .system-settings-page__content {
   min-width: 0;
   flex: 1;
+  min-height: 0;
   padding: var(--app-space-5);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);

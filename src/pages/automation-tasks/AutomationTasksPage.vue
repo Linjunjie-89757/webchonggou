@@ -89,7 +89,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <AppPage :title="pageTitle" :description="pageDescription">
+  <AppPage :title="pageTitle" :description="pageDescription" fill>
     <template #actions>
       <div class="automation-tasks-workspace-select">
         <span class="automation-tasks-workspace-select__label">工作空间</span>
@@ -130,6 +130,7 @@ onMounted(() => {
 <style scoped>
 .automation-tasks-page {
   display: flex;
+  flex: 1;
   min-width: 0;
   flex-direction: column;
   gap: var(--app-space-4);

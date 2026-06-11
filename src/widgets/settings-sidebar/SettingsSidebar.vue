@@ -51,6 +51,7 @@ const settingsTabs: Array<{
 <style scoped>
 .settings-sidebar {
   display: flex;
+  align-self: stretch;
   flex-direction: column;
   gap: var(--app-space-2);
   width: 224px;

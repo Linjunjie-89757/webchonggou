@@ -19,8 +19,8 @@ const description = computed(() =>
     <AppEmptyState :title="title" :description="description" />
   </main>
 
-  <AppPage v-else :title="title" :description="description">
-    <AppSection>
+  <AppPage v-else :title="title" :description="description" fill>
+    <AppSection class="placeholder-page-section">
       <AppEmptyState title="页面建设中..." :description="description" />
     </AppSection>
   </AppPage>
@@ -34,5 +34,10 @@ const description = computed(() =>
   min-height: 100dvh;
   padding: var(--app-space-6);
   background: var(--app-bg-page);
+}
+
+.placeholder-page-section {
+  flex: 1;
+  justify-content: center;
 }
 </style>
