@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { Connection, Edit, Loading, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 import {
   aiProviderApi,
@@ -9,7 +10,10 @@ import {
   getAiProviderProtocolLabel,
   getAiProviderStatusMeta,
   type AiProviderConnectionItem,
+  type SaveAiProviderConnectionPayload,
 } from '@/entities/ai-provider'
+import { AiConnectionCreateEditDialog, type AiConnectionDialogMode } from '@/features/ai-connection-create-edit'
+import { testAiConnection } from '@/features/ai-connection-test'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -18,7 +22,12 @@ import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 
 const providers = ref<AiProviderConnectionItem[]>([])
 const loading = ref(false)
+const saving = ref(false)
 const errorMessage = ref('')
+const dialogVisible = ref(false)
+const dialogMode = ref<AiConnectionDialogMode>('create')
+const editingProvider = ref<AiProviderConnectionItem | null>(null)
+const testingProviderIds = ref<Set<number>>(new Set())
 
 const stats = computed(() => [
   { label: '连接总数', value: providers.value.length },
@@ -40,6 +49,68 @@ async function loadProviders() {
   }
 }
 
+function openCreateDialog() {
+  dialogMode.value = 'create'
+  editingProvider.value = null
+  dialogVisible.value = true
+}
+
+function openEditDialog(provider: AiProviderConnectionItem) {
+  dialogMode.value = 'edit'
+  editingProvider.value = provider
+  dialogVisible.value = true
+}
+
+function setTestingProvider(id: number, value: boolean) {
+  const nextIds = new Set(testingProviderIds.value)
+  if (value) {
+    nextIds.add(id)
+  } else {
+    nextIds.delete(id)
+  }
+  testingProviderIds.value = nextIds
+}
+
+function isProviderTesting(id: number) {
+  return testingProviderIds.value.has(id)
+}
+
+async function submitProvider(payload: SaveAiProviderConnectionPayload) {
+  saving.value = true
+  try {
+    if (dialogMode.value === 'edit' && editingProvider.value) {
+      await aiProviderApi.updateProviderConnection('ALL', editingProvider.value.id, payload)
+      ElMessage.success('AI 连接已更新')
+    } else {
+      await aiProviderApi.createProviderConnection('ALL', payload)
+      ElMessage.success('AI 连接已创建')
+    }
+    dialogVisible.value = false
+    await loadProviders()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
+}
+
+async function testProvider(provider: AiProviderConnectionItem) {
+  setTestingProvider(provider.id, true)
+  try {
+    const result = await testAiConnection(provider, 'ALL')
+    if (result.success) {
+      ElMessage.success(result.message || 'AI 连接测试成功')
+    } else {
+      ElMessage.warning(result.message || 'AI 连接测试未通过')
+    }
+    await loadProviders()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    setTestingProvider(provider.id, false)
+  }
+}
+
 onMounted(() => {
   void loadProviders()
 })
@@ -50,9 +121,12 @@ onMounted(() => {
     <header class="settings-panel-header">
       <div>
         <h2>AI 连接池</h2>
-        <p>按平台视角查看已配置的大模型服务连接，当前阶段只读展示。</p>
+        <p>按平台视角管理大模型服务连接，当前阶段支持新增、编辑和测试连接。</p>
       </div>
-      <AppButton :icon="RefreshRight" :loading="loading" @click="loadProviders">刷新</AppButton>
+      <div class="settings-panel-header__actions">
+        <AppButton :icon="RefreshRight" :loading="loading" @click="loadProviders">刷新</AppButton>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增连接</AppButton>
+      </div>
     </header>
 
     <div class="settings-stat-grid">
@@ -83,7 +157,11 @@ onMounted(() => {
       v-else-if="providers.length === 0"
       title="暂无 AI 连接"
       description="当前平台视角下还没有可展示的 AI 连接。"
-    />
+    >
+      <template #actions>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增连接</AppButton>
+      </template>
+    </AppEmptyState>
 
     <el-table v-else v-loading="loading" :data="providers" class="settings-table" row-key="id">
       <el-table-column prop="connectionName" label="连接名称" min-width="180" show-overflow-tooltip />
@@ -125,7 +203,46 @@ onMounted(() => {
           {{ formatAiProviderDate(row.lastVerifiedAt) }}
         </template>
       </el-table-column>
+      <el-table-column label="操作" width="138" fixed="right">
+        <template #default="{ row }: { row: AiProviderConnectionItem }">
+          <div class="ai-connection-actions">
+            <button
+              type="button"
+              class="ai-connection-actions__button"
+              :class="{ 'is-loading': isProviderTesting(row.id) }"
+              :disabled="isProviderTesting(row.id)"
+              aria-label="测试连接"
+              @click="testProvider(row)"
+            >
+              <el-icon>
+                <Loading v-if="isProviderTesting(row.id)" />
+                <Connection v-else />
+              </el-icon>
+              <span>测试</span>
+            </button>
+            <button
+              type="button"
+              class="ai-connection-actions__button"
+              aria-label="编辑连接"
+              :disabled="isProviderTesting(row.id)"
+              @click="openEditDialog(row)"
+            >
+              <el-icon><Edit /></el-icon>
+              <span>编辑</span>
+            </button>
+          </div>
+        </template>
+      </el-table-column>
     </el-table>
+
+    <AiConnectionCreateEditDialog
+      v-model="dialogVisible"
+      :mode="dialogMode"
+      :provider="editingProvider"
+      :saving="saving"
+      default-workspace-code="ALL"
+      @submit="submitProvider"
+    />
   </section>
 </template>
 
@@ -141,6 +258,13 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--app-space-4);
+}
+
+.settings-panel-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
 }
 
 .settings-panel-header h2 {
@@ -200,6 +324,50 @@ onMounted(() => {
   width: 100%;
 }
 
+.ai-connection-actions {
+  display: flex;
+  gap: var(--app-space-1);
+}
+
+.ai-connection-actions__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 var(--app-space-2);
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
+}
+
+.ai-connection-actions__button:hover {
+  background: var(--app-primary-soft);
+}
+
+.ai-connection-actions__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.ai-connection-actions__button.is-loading .el-icon {
+  animation: ai-connection-spin 1s linear infinite;
+}
+
+@keyframes ai-connection-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 960px) {
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -209,6 +377,10 @@ onMounted(() => {
 @media (max-width: 640px) {
   .settings-panel-header {
     flex-direction: column;
+  }
+
+  .settings-panel-header__actions {
+    justify-content: flex-start;
   }
 
   .settings-stat-grid {
