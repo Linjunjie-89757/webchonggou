@@ -74,6 +74,10 @@ function normalizePageNo() {
   }
 }
 
+function getClientTotalPages(totalCount: number) {
+  return totalCount > 0 ? Math.ceil(totalCount / Math.max(pageSize.value, 1)) : 0
+}
+
 function reloadFromFirstPage() {
   if (pageNo.value === 1) {
     void loadDefects()
@@ -100,7 +104,7 @@ async function loadDefects() {
       defects.value = Array.isArray(page.items) ? page.items : []
       pageNo.value = page.pageNo
       total.value = page.total
-      totalPages.value = page.totalPages
+      totalPages.value = getClientTotalPages(page.total)
       emit('loaded', defects.value)
     }
   } catch (error) {

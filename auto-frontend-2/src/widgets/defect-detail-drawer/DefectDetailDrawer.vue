@@ -95,6 +95,7 @@ async function loadDetail() {
     const nextDetail = await defectApi.getDefectDetail(props.workspaceCode, props.defectId)
     if (requestSeq === detailRequestSeq) {
       detail.value = nextDetail
+      comments.value = Array.isArray(nextDetail.comments) ? nextDetail.comments : comments.value
     }
   } catch (error) {
     if (requestSeq === detailRequestSeq) {
@@ -115,7 +116,6 @@ async function loadComments() {
   const requestSeq = ++commentsRequestSeq
   commentsLoading.value = true
   commentsErrorMessage.value = ''
-  comments.value = []
   try {
     const nextComments = await defectApi.getDefectComments(props.workspaceCode, props.defectId)
     if (requestSeq === commentsRequestSeq) {
