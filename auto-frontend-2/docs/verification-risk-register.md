@@ -30,6 +30,13 @@ This file tracks known unverified paths and residual risks during the frontend r
 | System Settings | Partially Fixed/Verified | Goal 82 found AI connection timeout frontend allowed 1-9 seconds while backend requires 10-600 seconds; frontend validation was aligned. AI provider create/models/update/delete then succeeded. Goal 83 confirmed invalid AI test currently throws backend error and returns HTTP 400. | Keep frontend timeout minimum at 10. Consider backend business result for test failures if global error toast is too coarse. |
 | Workspace Settings | Cleaned/Verified | Goal 82 disposable workspace create/edit succeeded. Goal 83 confirmed `DELETE /workspaces/{workspaceCode}` exists and cleaned `d82-20260611184729`. Duplicate member add returned stable backend 400. | Keep workspace cleanup in the disposable regression checklist; keep member failure UX stable. |
 
+## Release Playwright Smoke Regression
+
+| Area | Status | Finding | Follow-up |
+| --- | --- | --- | --- |
+| Goal 84 smoke | Passed with documented gaps | Logged-out `/cases`, `/bugs`, `/automation/api`, `/settings`, and `/automation/web` redirected to `/login?redirect=...`. Logged-in smoke reached config center, case center, defect management, interface automation, system settings, and Web/App placeholders. Config/case/defect/API/settings create dialogs opened; case and defect detail opened; defect assign and transition dialogs opened from the more menu; Web/App placeholders did not request `/tasks`. | Keep this as the baseline release smoke checklist. |
+| Goal 84 gaps | Open | No destructive save/delete was executed. Interface automation case history drawer was not fully verified because the selected definition had zero case rows. The logged-out route guard still creates an expected `/auth/me` 401 console entry. Build still has known PURE annotation and chunk-size warnings. | Use disposable interface cases for history/run regression; defer build warning optimization unless it becomes release-blocking. |
+
 ## Config Center
 
 | Area | Not Fully Verified | Risk | Follow-up |
