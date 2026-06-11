@@ -2,6 +2,7 @@ import { httpGet, type ApiResponse } from '@/shared/api/request'
 
 import type {
   ApiCaseListQuery,
+  ApiDefinitionListQuery,
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
@@ -22,7 +23,7 @@ function unwrapApiResponse<T>(payload: ApiResponse<T>) {
   return payload.data
 }
 
-function cleanQuery(query?: ApiCaseListQuery) {
+function cleanQuery(query?: object) {
   if (!query) {
     return undefined
   }
@@ -95,9 +96,10 @@ function normalizeCase(item: ApiDefinitionCaseItem): ApiDefinitionCaseItem {
 }
 
 export const apiAutomationApi = {
-  async getDefinitions(workspaceCode = 'ALL') {
+  async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionItem>>>('/automation/api/definitions', {
       headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
     })
 
     return normalizePageResponse(unwrapApiResponse(payload), normalizeDefinition)

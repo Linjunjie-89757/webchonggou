@@ -49,9 +49,18 @@ export interface ApiDefinitionCaseItem {
   updatedAt: string | null
 }
 
+export interface ApiDefinitionListQuery {
+  keyword?: string
+  moduleId?: number | null
+  pageNo?: number
+  pageSize?: number
+}
+
 export interface ApiCaseListQuery {
   definitionId?: number | null
   keyword?: string
+  pageNo?: number
+  pageSize?: number
 }
 
 export interface ApiAutomationClientFilter {

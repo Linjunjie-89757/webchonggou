@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -8,7 +8,6 @@ import {
   ApiRunResultBadge,
   formatApiDateTime,
   formatApiTags,
-  matchesApiCaseClientFilter,
   type ApiDefinitionCaseItem,
   type ApiDefinitionItem,
 } from '@/entities/api-automation'
@@ -36,17 +35,24 @@ const emit = defineEmits<{
 const cases = ref<ApiDefinitionCaseItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
+const pageNo = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const totalPages = ref(0)
 let loadRequestSeq = 0
 
-const visibleCases = computed(() => cases.value.filter((item) => matchesApiCaseClientFilter(item, props.keyword)))
-
-async function loadCases() {
+async function loadCases(options: { keepPage?: boolean } = {}) {
   if (!props.definition) {
     cases.value = []
+    total.value = 0
+    totalPages.value = 0
     emit('loaded', [])
     return
   }
 
+  if (!options.keepPage) {
+    pageNo.value = 1
+  }
   const requestSeq = ++loadRequestSeq
   loading.value = true
   errorMessage.value = ''
@@ -54,9 +60,13 @@ async function loadCases() {
     const page = await apiAutomationApi.getCases(props.workspaceCode, {
       definitionId: props.definition.id,
       keyword: props.keyword,
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
     })
     if (requestSeq === loadRequestSeq) {
       cases.value = page.items
+      total.value = page.total
+      totalPages.value = page.totalPages
       emit('loaded', cases.value)
     }
   } catch (error) {
@@ -68,6 +78,17 @@ async function loadCases() {
       loading.value = false
     }
   }
+}
+
+function handlePageChange(value: number) {
+  pageNo.value = value
+  void loadCases({ keepPage: true })
+}
+
+function handlePageSizeChange(value: number) {
+  pageSize.value = value
+  pageNo.value = 1
+  void loadCases({ keepPage: true })
 }
 
 watch(
@@ -88,7 +109,7 @@ defineExpose({
     <header class="api-case-list-panel__header">
       <div>
         <strong>接口用例</strong>
-        <span v-if="definition">{{ definition.name }}</span>
+        <span v-if="definition">{{ definition.name }} · 共 {{ total }} 条</span>
         <span v-else>请选择接口定义</span>
       </div>
       <AppButton :icon="RefreshRight" :loading="loading" :disabled="!definition" @click="loadCases">刷新</AppButton>
@@ -108,12 +129,12 @@ defineExpose({
       @action="loadCases"
     />
     <AppEmptyState
-      v-else-if="visibleCases.length === 0"
+      v-else-if="cases.length === 0"
       title="暂无接口用例"
       description="当前接口定义下没有匹配的接口用例。"
     />
     <div v-else class="api-case-list-panel__table-wrap">
-      <el-table class="api-case-list-panel__table" :data="visibleCases" size="small" row-key="id">
+      <el-table class="api-case-list-panel__table" :data="cases" size="small" row-key="id">
         <el-table-column label="方法" width="92">
           <template #default="{ row }">
             <ApiMethodBadge :method="row.method" />
@@ -152,6 +173,19 @@ defineExpose({
         </el-table-column>
       </el-table>
       <p v-if="errorMessage" class="api-case-list-panel__inline-error">{{ errorMessage }}</p>
+      <footer v-if="cases.length || total > 0" class="api-case-list-panel__pagination">
+        <span>共 {{ total }} 条 / {{ totalPages }} 页</span>
+        <el-pagination
+          background
+          layout="sizes, prev, pager, next"
+          :current-page="pageNo"
+          :page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          @current-change="handlePageChange"
+          @size-change="handlePageSizeChange"
+        />
+      </footer>
     </div>
   </section>
 </template>
@@ -250,6 +284,18 @@ defineExpose({
   padding: var(--app-space-2) var(--app-space-4);
   border-top: 1px solid var(--app-border-soft);
   color: var(--app-danger);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-case-list-panel__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3) var(--app-space-4);
+  border-top: 1px solid var(--app-border-soft);
+  color: var(--app-text-secondary);
   font-size: var(--app-font-size-xs);
 }
 </style>

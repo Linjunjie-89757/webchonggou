@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -8,7 +8,6 @@ import {
   ApiRunResultBadge,
   formatApiDateTime,
   formatApiTags,
-  matchesApiDefinitionClientFilter,
   type ApiAutomationClientFilter,
   type ApiDefinitionItem,
   type ApiDefinitionModuleItem,
@@ -42,49 +41,34 @@ const emit = defineEmits<{
 const definitions = ref<ApiDefinitionItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
+const pageNo = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
+const totalPages = ref(0)
 let loadRequestSeq = 0
-
-const selectedModuleName = computed(() => findModuleName(props.modules, props.selectedModuleId))
-
-const visibleDefinitions = computed(() => {
-  const moduleName = selectedModuleName.value
-
-  return definitions.value.filter((item) => {
-    const matchesModule = !moduleName || item.directoryName === moduleName || item.directoryName?.endsWith(`/${moduleName}`)
-    return matchesModule && matchesApiDefinitionClientFilter(item, props.filter)
-  })
-})
-
-function findModuleName(modules: ApiDefinitionModuleItem[], id?: number | null): string {
-  if (!id) {
-    return ''
-  }
-
-  for (const item of modules) {
-    if (item.id === id) {
-      return item.fullPath || item.name
-    }
-    const child = findModuleName(item.children, id)
-    if (child) {
-      return child
-    }
-  }
-
-  return ''
-}
 
 function selectDefinition(item: ApiDefinitionItem) {
   emit('select', item)
 }
 
-async function loadDefinitions() {
+async function loadDefinitions(options: { keepPage?: boolean } = {}) {
+  if (!options.keepPage) {
+    pageNo.value = 1
+  }
   const requestSeq = ++loadRequestSeq
   loading.value = true
   errorMessage.value = ''
   try {
-    const page = await apiAutomationApi.getDefinitions(props.workspaceCode)
+    const page = await apiAutomationApi.getDefinitions(props.workspaceCode, {
+      keyword: props.filter.keyword,
+      moduleId: props.selectedModuleId,
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
+    })
     if (requestSeq === loadRequestSeq) {
       definitions.value = page.items
+      total.value = page.total
+      totalPages.value = page.totalPages
       emit('loaded', definitions.value)
       const current = definitions.value.find((item) => item.id === props.selectedDefinitionId)
       emit('select', current || definitions.value[0] || null)
@@ -100,6 +84,17 @@ async function loadDefinitions() {
   }
 }
 
+function handlePageChange(value: number) {
+  pageNo.value = value
+  void loadDefinitions({ keepPage: true })
+}
+
+function handlePageSizeChange(value: number) {
+  pageSize.value = value
+  pageNo.value = 1
+  void loadDefinitions({ keepPage: true })
+}
+
 watch(
   () => props.workspaceCode,
   () => {
@@ -109,16 +104,10 @@ watch(
 )
 
 watch(
-  visibleDefinitions,
-  (items) => {
-    if (items.length === 0) {
-      emit('select', null)
-      return
-    }
-
-    if (!items.some((item) => item.id === props.selectedDefinitionId)) {
-      emit('select', items[0])
-    }
+  () => [props.filter.keyword, props.selectedModuleId],
+  () => {
+    emit('select', null)
+    void loadDefinitions()
   },
 )
 
@@ -136,7 +125,7 @@ defineExpose({
     <header class="api-definition-list-panel__header">
       <div>
         <strong>接口定义</strong>
-        <span>共 {{ visibleDefinitions.length }} 条</span>
+        <span>共 {{ total }} 条</span>
       </div>
       <AppButton :icon="RefreshRight" :loading="loading" @click="loadDefinitions">刷新</AppButton>
     </header>
@@ -150,14 +139,14 @@ defineExpose({
       @action="loadDefinitions"
     />
     <AppEmptyState
-      v-else-if="visibleDefinitions.length === 0"
+      v-else-if="definitions.length === 0"
       title="暂无接口定义"
       description="当前工作空间或筛选条件下没有接口定义。"
     />
     <div v-else class="api-definition-list-panel__table-wrap">
       <el-table
         class="api-definition-list-panel__table"
-        :data="visibleDefinitions"
+        :data="definitions"
         size="small"
         row-key="id"
         highlight-current-row
@@ -207,6 +196,19 @@ defineExpose({
         </el-table-column>
       </el-table>
       <p v-if="errorMessage" class="api-definition-list-panel__inline-error">{{ errorMessage }}</p>
+      <footer v-if="definitions.length || total > 0" class="api-definition-list-panel__pagination">
+        <span>共 {{ total }} 条 / {{ totalPages }} 页</span>
+        <el-pagination
+          background
+          layout="sizes, prev, pager, next"
+          :current-page="pageNo"
+          :page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          @current-change="handlePageChange"
+          @size-change="handlePageSizeChange"
+        />
+      </footer>
     </div>
   </section>
 </template>
@@ -300,6 +302,18 @@ defineExpose({
   padding: var(--app-space-2) var(--app-space-4);
   border-top: 1px solid var(--app-border-soft);
   color: var(--app-danger);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-definition-list-panel__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3) var(--app-space-4);
+  border-top: 1px solid var(--app-border-soft);
+  color: var(--app-text-secondary);
   font-size: var(--app-font-size-xs);
 }
 </style>
