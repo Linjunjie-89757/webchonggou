@@ -1,4 +1,4 @@
-import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
+import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
 import type {
   ApiCaseListQuery,
@@ -213,6 +213,14 @@ export const apiAutomationApi = {
     return normalizeDefinitionDetail(unwrapApiResponse(payload))
   },
 
+  async deleteDefinition(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/definitions/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
+  },
+
   async getCases(workspaceCode = 'ALL', query?: ApiCaseListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionCaseItem>>>('/automation/api/cases', {
       headers: workspaceHeaders(workspaceCode),
@@ -252,6 +260,14 @@ export const apiAutomationApi = {
     )
 
     return normalizeCaseDetail(unwrapApiResponse(payload))
+  },
+
+  async deleteCase(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/cases/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
   },
 
   async debugRunDefinition(workspaceCode = 'ALL', id: number, data?: ApiRunPayload) {

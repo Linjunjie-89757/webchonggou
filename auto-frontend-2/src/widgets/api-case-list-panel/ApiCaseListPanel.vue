@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -15,6 +15,7 @@ import {
   type SaveApiDefinitionCasePayload,
 } from '@/entities/api-automation'
 import { ApiCaseCreateEditDialog, type ApiCaseDialogMode } from '@/features/api-case-create-edit'
+import { deleteApiCase } from '@/features/api-delete'
 import { runApiCase } from '@/features/api-run'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -53,6 +54,7 @@ const detailErrorMessage = ref('')
 const saving = ref(false)
 const rowLoadingId = ref<number | null>(null)
 const runningCaseId = ref<number | null>(null)
+const deletingCaseId = ref<number | null>(null)
 let loadRequestSeq = 0
 
 function openCreateDialog() {
@@ -120,6 +122,30 @@ async function handleRunCase(item: ApiDefinitionCaseItem) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     runningCaseId.value = null
+  }
+}
+
+async function handleDeleteCase(item: ApiDefinitionCaseItem) {
+  try {
+    await ElMessageBox.confirm(`确认删除接口用例「${item.name}」？`, '删除接口用例', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+
+  deletingCaseId.value = item.id
+  try {
+    await deleteApiCase(props.workspaceCode, item.id)
+    ElMessage.success('接口用例已删除')
+    await loadCases({ keepPage: true })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    deletingCaseId.value = null
   }
 }
 
@@ -248,11 +274,14 @@ defineExpose({
             <span class="api-case-list-panel__muted">{{ formatApiTags(row.tags) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="168" fixed="right">
           <template #default="{ row }">
             <div class="api-case-list-panel__actions">
               <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
               <AppButton :loading="runningCaseId === row.id" @click.stop="handleRunCase(row)">运行</AppButton>
+              <AppButton type="danger" plain :loading="deletingCaseId === row.id" @click.stop="handleDeleteCase(row)">
+                删除
+              </AppButton>
             </div>
           </template>
         </el-table-column>

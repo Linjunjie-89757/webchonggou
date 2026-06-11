@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -16,6 +16,7 @@ import {
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
 import { ApiDefinitionCreateEditDialog, type ApiDefinitionDialogMode } from '@/features/api-definition-create-edit'
+import { deleteApiDefinition } from '@/features/api-delete'
 import { runApiDefinition } from '@/features/api-run'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -59,6 +60,7 @@ const detailErrorMessage = ref('')
 const saving = ref(false)
 const rowLoadingId = ref<number | null>(null)
 const runningDefinitionId = ref<number | null>(null)
+const deletingDefinitionId = ref<number | null>(null)
 let loadRequestSeq = 0
 
 function selectDefinition(item: ApiDefinitionItem) {
@@ -130,6 +132,34 @@ async function handleRunDefinition(item: ApiDefinitionItem) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     runningDefinitionId.value = null
+  }
+}
+
+async function handleDeleteDefinition(item: ApiDefinitionItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除接口定义「${item.name}」？如果该定义仍被用例或场景引用，后端会拒绝删除。`,
+      '删除接口定义',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch {
+    return
+  }
+
+  deletingDefinitionId.value = item.id
+  try {
+    await deleteApiDefinition(props.workspaceCode, item.id)
+    ElMessage.success('接口定义已删除')
+    await loadDefinitions({ keepPage: true })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    deletingDefinitionId.value = null
   }
 }
 
@@ -271,11 +301,19 @@ defineExpose({
             <span class="api-definition-list-panel__muted">{{ formatApiTags(row.tags) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="168" fixed="right">
           <template #default="{ row }">
             <div class="api-definition-list-panel__actions">
               <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
               <AppButton :loading="runningDefinitionId === row.id" @click.stop="handleRunDefinition(row)">调试</AppButton>
+              <AppButton
+                type="danger"
+                plain
+                :loading="deletingDefinitionId === row.id"
+                @click.stop="handleDeleteDefinition(row)"
+              >
+                删除
+              </AppButton>
             </div>
           </template>
         </el-table-column>
