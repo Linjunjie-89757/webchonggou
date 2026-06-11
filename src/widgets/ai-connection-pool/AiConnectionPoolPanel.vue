@@ -5,10 +5,14 @@ import { ElMessage } from 'element-plus'
 
 import {
   aiProviderApi,
+  aiProviderBrands,
   formatAiProviderDate,
+  getAiProviderBrandInitial,
   getAiProviderEndpointSummary,
   getAiProviderProtocolLabel,
   getAiProviderStatusMeta,
+  hasAiProviderBrandConnection,
+  inferAiProviderBrand,
   type AiProviderConnectionItem,
   type SaveAiProviderConnectionPayload,
 } from '@/entities/ai-provider'
@@ -19,6 +23,7 @@ import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
+import AppProviderBadge from '@/shared/ui/app-provider-badge/AppProviderBadge.vue'
 import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 import { AiConnectionModelsDrawer } from '@/widgets/ai-connection-models-drawer'
 
@@ -36,10 +41,21 @@ const modelsProvider = ref<AiProviderConnectionItem | null>(null)
 
 const stats = computed(() => [
   { label: '连接总数', value: providers.value.length },
-  { label: '已验证', value: providers.value.filter((item) => item.status === 1 && item.lastVerifiedAt).length },
+  { label: '正常连接', value: providers.value.filter((item) => item.status === 1 && item.lastVerifiedAt).length },
   { label: '异常连接', value: providers.value.filter((item) => item.status === 0).length },
-  { label: '模型总数', value: providers.value.reduce((total, item) => total + (item.modelCount ?? 0), 0) },
+  { label: '可用供应商', value: aiProviderBrands.length },
 ])
+
+const providerCardItems = computed(() => providers.value)
+
+function getProviderBrand(provider: AiProviderConnectionItem) {
+  return inferAiProviderBrand(provider)
+}
+
+function providerHasBrandConnection(brandId: string) {
+  const brand = aiProviderBrands.find((item) => item.id === brandId)
+  return brand ? hasAiProviderBrandConnection(brand, providers.value) : false
+}
 
 async function loadProviders() {
   loading.value = true
@@ -215,60 +231,64 @@ onMounted(() => {
       </template>
     </AppEmptyState>
 
-    <div v-else class="settings-table-card">
-      <el-table v-loading="loading" :data="providers" class="settings-table" row-key="id">
-      <el-table-column prop="connectionName" label="连接名称" min-width="180" show-overflow-tooltip />
-      <el-table-column label="状态" width="110">
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          <AppStatusBadge
-            :label="getAiProviderStatusMeta(row).label"
-            :tone="getAiProviderStatusMeta(row).tone"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column label="协议" min-width="150">
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ getAiProviderProtocolLabel(row.protocolType) }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="modelName" label="默认模型" min-width="150" show-overflow-tooltip>
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ row.modelName || '-' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="模型数" width="90">
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ row.modelCount ?? 0 }}
-        </template>
-      </el-table-column>
-      <el-table-column label="服务地址" min-width="180" show-overflow-tooltip>
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ getAiProviderEndpointSummary(row.baseUrl) }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="workspaceName" label="所属空间" min-width="140" show-overflow-tooltip>
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ row.workspaceName || row.workspaceCode || 'ALL' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="最近验证" min-width="150">
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          {{ formatAiProviderDate(row.lastVerifiedAt) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="224" fixed="right">
-        <template #default="{ row }: { row: AiProviderConnectionItem }">
-          <div class="ai-connection-actions">
+    <section v-else class="ai-connection-card-grid" v-loading="loading">
+      <article v-for="provider in providerCardItems" :key="provider.id" class="ai-connection-card">
+        <div
+          class="ai-connection-brand"
+          :class="`ai-connection-brand--${getProviderBrand(provider).tone}`"
+          aria-hidden="true"
+        >
+          <span>{{ getProviderBrand(provider).id === 'custom' ? getAiProviderBrandInitial(provider) : getProviderBrand(provider).mark }}</span>
+        </div>
+
+        <div class="ai-connection-card__main">
+          <div class="ai-connection-card__title-row">
+            <h3>{{ provider.connectionName }}</h3>
+            <AppStatusBadge
+              :label="getAiProviderStatusMeta(provider).label"
+              :tone="getAiProviderStatusMeta(provider).tone"
+            />
+          </div>
+
+          <div class="ai-connection-card__tags">
+            <AppProviderBadge
+              :label="getProviderBrand(provider).shortName"
+              :tone="getProviderBrand(provider).tone"
+            />
+            <span class="ai-connection-model-chip">{{ provider.modelName || '-' }}</span>
+          </div>
+
+          <dl class="ai-connection-meta">
+            <div>
+              <dt>协议</dt>
+              <dd>{{ getAiProviderProtocolLabel(provider.protocolType) }}</dd>
+            </div>
+            <div>
+              <dt>服务地址</dt>
+              <dd>{{ getAiProviderEndpointSummary(provider.baseUrl) }}</dd>
+            </div>
+            <div>
+              <dt>所属空间</dt>
+              <dd>{{ provider.workspaceName || provider.workspaceCode || 'ALL' }}</dd>
+            </div>
+            <div>
+              <dt>最近验证</dt>
+              <dd>{{ formatAiProviderDate(provider.lastVerifiedAt) }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="ai-connection-actions">
             <button
               type="button"
               class="ai-connection-actions__button"
-              :class="{ 'is-loading': isProviderTesting(row.id) }"
-              :disabled="isProviderBusy(row.id)"
+              :class="{ 'is-loading': isProviderTesting(provider.id) }"
+              :disabled="isProviderBusy(provider.id)"
               aria-label="测试连接"
-              @click="testProvider(row)"
+              @click="testProvider(provider)"
             >
               <el-icon>
-                <Loading v-if="isProviderTesting(row.id)" />
+                <Loading v-if="isProviderTesting(provider.id)" />
                 <Connection v-else />
               </el-icon>
               <span>测试</span>
@@ -277,8 +297,8 @@ onMounted(() => {
               type="button"
               class="ai-connection-actions__button"
               aria-label="编辑连接"
-              :disabled="isProviderBusy(row.id)"
-              @click="openEditDialog(row)"
+              :disabled="isProviderBusy(provider.id)"
+              @click="openEditDialog(provider)"
             >
               <el-icon><Edit /></el-icon>
               <span>编辑</span>
@@ -287,8 +307,8 @@ onMounted(() => {
               type="button"
               class="ai-connection-actions__button"
               aria-label="查看模型"
-              :disabled="isProviderBusy(row.id)"
-              @click="openModelsDrawer(row)"
+              :disabled="isProviderBusy(provider.id)"
+              @click="openModelsDrawer(provider)"
             >
               <el-icon><Tickets /></el-icon>
               <span>模型</span>
@@ -296,22 +316,41 @@ onMounted(() => {
             <button
               type="button"
               class="ai-connection-actions__button is-danger"
-              :class="{ 'is-loading': isProviderDeleting(row.id) }"
-              :disabled="isProviderBusy(row.id)"
+              :class="{ 'is-loading': isProviderDeleting(provider.id) }"
+              :disabled="isProviderBusy(provider.id)"
               aria-label="删除连接"
-              @click="deleteProvider(row)"
+              @click="deleteProvider(provider)"
             >
               <el-icon>
-                <Loading v-if="isProviderDeleting(row.id)" />
+                <Loading v-if="isProviderDeleting(provider.id)" />
                 <Delete v-else />
               </el-icon>
               <span>删除</span>
             </button>
           </div>
-        </template>
-      </el-table-column>
-      </el-table>
-    </div>
+      </article>
+    </section>
+
+    <section class="supported-providers">
+      <h3>支持的供应商</h3>
+      <div class="supported-provider-grid">
+        <div
+          v-for="brand in aiProviderBrands"
+          :key="brand.id"
+          class="supported-provider-card"
+          :class="[
+            `supported-provider-card--${brand.tone}`,
+            { 'has-connection': providerHasBrandConnection(brand.id) },
+          ]"
+        >
+          <div class="ai-connection-brand ai-connection-brand--small" :class="`ai-connection-brand--${brand.tone}`">
+            <span>{{ brand.mark }}</span>
+          </div>
+          <span>{{ brand.shortName }}</span>
+          <i v-if="providerHasBrandConnection(brand.id)" aria-hidden="true" />
+        </div>
+      </div>
+    </section>
 
     <AiConnectionCreateEditDialog
       v-model="dialogVisible"
@@ -441,40 +480,168 @@ onMounted(() => {
   font-size: var(--app-font-size-sm);
 }
 
-.settings-table-card {
+.ai-connection-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--app-space-3);
+}
+
+.ai-connection-card {
+  position: relative;
+  display: grid;
   min-width: 0;
-  overflow: hidden;
+  min-height: 148px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--app-space-4);
+  padding: var(--app-space-5);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
 }
 
-.settings-table {
-  width: 100%;
+.ai-connection-card:hover {
+  border-color: var(--app-border-strong);
+  box-shadow: var(--app-shadow-card-hover);
+  transform: translateY(-1px);
 }
 
-.settings-table :deep(.el-table__header th) {
-  height: 44px;
-  background: var(--app-bg-muted);
+.ai-connection-card__main {
+  min-width: 0;
+}
+
+.ai-connection-card__title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+}
+
+.ai-connection-card__title-row h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+  font-weight: 700;
+  line-height: var(--app-line-height-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-connection-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+  margin-top: var(--app-space-2);
+}
+
+.ai-connection-model-chip {
+  display: inline-flex;
+  max-width: 220px;
+  min-height: 26px;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 var(--app-space-2);
+  border: 1px solid var(--app-border-soft);
+  border-radius: 999px;
+  background: var(--app-bg-subtle);
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-xs);
-  font-weight: 600;
+  line-height: var(--app-line-height-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.settings-table :deep(.el-table__row) {
-  height: var(--app-table-row-height);
+.ai-connection-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--app-space-2) var(--app-space-4);
+  margin: var(--app-space-3) 0 0;
 }
 
-.settings-table :deep(.el-table__cell) {
-  padding: var(--app-space-2) 0;
+.ai-connection-meta div {
+  min-width: 0;
 }
 
-.settings-table :deep(.el-table__fixed-right::before) {
-  background: var(--app-border-soft);
+.ai-connection-meta dt {
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+}
+
+.ai-connection-meta dd {
+  min-width: 0;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-connection-brand {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-lg);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.ai-connection-brand--small {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+  border-radius: 12px;
+  font-size: var(--app-font-size-sm);
+}
+
+.ai-connection-brand--primary {
+  border-color: #bfdbfe;
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.ai-connection-brand--success {
+  border-color: #bbf7d0;
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.ai-connection-brand--warning {
+  border-color: #fed7aa;
+  background: var(--app-warning-soft);
+  color: var(--app-warning);
+}
+
+.ai-connection-brand--danger {
+  border-color: #fecaca;
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
+.ai-connection-brand--purple {
+  border-color: #e9d5ff;
+  background: var(--app-purple-soft);
+  color: var(--app-purple);
 }
 
 .ai-connection-actions {
+  position: absolute;
+  right: var(--app-space-4);
+  bottom: var(--app-space-4);
   display: flex;
   flex-wrap: nowrap;
   gap: 6px;
@@ -527,6 +694,67 @@ onMounted(() => {
   animation: ai-connection-spin 1s linear infinite;
 }
 
+.supported-providers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.supported-providers h3 {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+  line-height: var(--app-line-height-md);
+}
+
+.supported-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--app-space-3);
+}
+
+.supported-provider-card {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 104px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--app-space-2);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  text-align: center;
+  transition: border-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease;
+}
+
+.supported-provider-card:not(.has-connection) .ai-connection-brand {
+  opacity: 0.42;
+}
+
+.supported-provider-card.has-connection {
+  border-color: var(--app-border-strong);
+  color: var(--app-text-secondary);
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.supported-provider-card.has-connection i {
+  position: absolute;
+  bottom: var(--app-space-3);
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--app-success);
+  transform: translateX(-50%);
+}
+
 @keyframes ai-connection-spin {
   from {
     transform: rotate(0deg);
@@ -538,19 +766,37 @@ onMounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .ai-connection-card,
   .settings-stat,
   .ai-connection-actions__button {
     transition: none;
   }
 
+  .ai-connection-card:hover,
   .settings-stat:hover {
     transform: none;
   }
 }
 
+@media (max-width: 1280px) {
+  .supported-provider-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
+  .ai-connection-card-grid,
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-connection-card {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-connection-actions {
+    position: static;
+    margin-top: var(--app-space-4);
   }
 }
 
@@ -572,8 +818,26 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .settings-table-card {
-    overflow-x: auto;
+  .ai-connection-card-grid,
+  .ai-connection-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-connection-card {
+    padding: var(--app-space-4);
+  }
+
+  .ai-connection-card__title-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .ai-connection-actions {
+    flex-wrap: wrap;
+  }
+
+  .supported-provider-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
