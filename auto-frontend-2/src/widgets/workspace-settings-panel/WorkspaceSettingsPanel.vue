@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
-import { workspaceApi, type SaveWorkspacePayload, type WorkspaceItem } from '@/entities/workspace'
+import {
+  workspaceApi,
+  type CreateWorkspaceMemberPayload,
+  type SaveWorkspacePayload,
+  type UpdateWorkspaceMemberPayload,
+  type WorkspaceItem,
+  type WorkspaceMemberItem,
+} from '@/entities/workspace'
 import {
   formatUserWorkspaceNames,
   getUserDisplayName,
@@ -13,6 +20,12 @@ import {
   userApi,
 } from '@/entities/user'
 import { WorkspaceCreateEditDialog, type WorkspaceDialogMode } from '@/features/workspace-create-edit'
+import {
+  deleteWorkspaceMember,
+  getWorkspaceMemberRoleLabel,
+  WorkspaceMemberDialog,
+  type WorkspaceMemberDialogMode,
+} from '@/features/workspace-member-manage'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -21,16 +34,29 @@ import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 
 const workspaces = ref<WorkspaceItem[]>([])
 const users = ref<UserItem[]>([])
+const members = ref<WorkspaceMemberItem[]>([])
 const workspaceLoading = ref(false)
 const userLoading = ref(false)
+const memberLoading = ref(false)
 const savingWorkspace = ref(false)
+const savingMember = ref(false)
 const workspaceErrorMessage = ref('')
 const userErrorMessage = ref('')
+const memberErrorMessage = ref('')
 const workspaceDialogVisible = ref(false)
 const workspaceDialogMode = ref<WorkspaceDialogMode>('create')
 const editingWorkspace = ref<WorkspaceItem | null>(null)
+const memberWorkspaceCode = ref('')
+const memberDialogVisible = ref(false)
+const memberDialogMode = ref<WorkspaceMemberDialogMode>('create')
+const editingMember = ref<WorkspaceMemberItem | null>(null)
+const deletingMemberIds = ref<Set<number>>(new Set())
 
 const businessWorkspaces = computed(() => workspaces.value.filter((item) => !item.allScope && item.workspaceCode !== 'ALL'))
+const memberWorkspaceOptions = computed(() => businessWorkspaces.value.map((item) => ({
+  label: item.workspaceName || item.workspaceCode,
+  value: item.workspaceCode,
+})))
 
 const workspaceStats = computed(() => [
   { label: '空间总数', value: businessWorkspaces.value.length },
@@ -54,7 +80,14 @@ async function loadWorkspaces() {
   workspaceLoading.value = true
   workspaceErrorMessage.value = ''
   try {
-    workspaces.value = await workspaceApi.getWorkspaces()
+    const items = await workspaceApi.getWorkspaces()
+    workspaces.value = items
+    const nextBusinessWorkspaces = items.filter((item) => !item.allScope && item.workspaceCode !== 'ALL')
+    if (!nextBusinessWorkspaces.some((item) => item.workspaceCode === memberWorkspaceCode.value)) {
+      memberWorkspaceCode.value = nextBusinessWorkspaces[0]?.workspaceCode || ''
+    } else {
+      void loadMembers()
+    }
   } catch (error) {
     workspaceErrorMessage.value = getRequestErrorMessage(error)
   } finally {
@@ -71,6 +104,24 @@ async function loadUsers() {
     userErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     userLoading.value = false
+  }
+}
+
+async function loadMembers() {
+  if (!memberWorkspaceCode.value) {
+    members.value = []
+    memberErrorMessage.value = ''
+    return
+  }
+
+  memberLoading.value = true
+  memberErrorMessage.value = ''
+  try {
+    members.value = await workspaceApi.getWorkspaceMembers(memberWorkspaceCode.value)
+  } catch (error) {
+    memberErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    memberLoading.value = false
   }
 }
 
@@ -110,8 +161,93 @@ async function submitWorkspace(payload: SaveWorkspacePayload) {
   }
 }
 
+function openCreateMemberDialog() {
+  memberDialogMode.value = 'create'
+  editingMember.value = null
+  memberDialogVisible.value = true
+}
+
+function openEditMemberDialog(member: WorkspaceMemberItem) {
+  memberDialogMode.value = 'edit'
+  editingMember.value = member
+  memberDialogVisible.value = true
+}
+
+function setDeletingMember(id: number, value: boolean) {
+  const nextIds = new Set(deletingMemberIds.value)
+  if (value) {
+    nextIds.add(id)
+  } else {
+    nextIds.delete(id)
+  }
+  deletingMemberIds.value = nextIds
+}
+
+function isMemberDeleting(id: number) {
+  return deletingMemberIds.value.has(id)
+}
+
+async function submitCreateMember(payload: CreateWorkspaceMemberPayload) {
+  if (!memberWorkspaceCode.value) {
+    return
+  }
+
+  savingMember.value = true
+  try {
+    await workspaceApi.createWorkspaceMember(memberWorkspaceCode.value, payload)
+    ElMessage.success('成员已添加')
+    memberDialogVisible.value = false
+    await loadMembers()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    savingMember.value = false
+  }
+}
+
+async function submitUpdateMember(payload: UpdateWorkspaceMemberPayload) {
+  if (!memberWorkspaceCode.value || !editingMember.value) {
+    return
+  }
+
+  savingMember.value = true
+  try {
+    await workspaceApi.updateWorkspaceMember(memberWorkspaceCode.value, editingMember.value.id, payload)
+    ElMessage.success('成员角色已更新')
+    memberDialogVisible.value = false
+    await loadMembers()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    savingMember.value = false
+  }
+}
+
+async function removeMember(member: WorkspaceMemberItem) {
+  if (!memberWorkspaceCode.value) {
+    return
+  }
+
+  setDeletingMember(member.id, true)
+  try {
+    await deleteWorkspaceMember(memberWorkspaceCode.value, member)
+    ElMessage.success('成员已移除')
+    await loadMembers()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    setDeletingMember(member.id, false)
+  }
+}
+
 onMounted(() => {
   reloadAll()
+})
+
+watch(memberWorkspaceCode, () => {
+  void loadMembers()
 })
 </script>
 
@@ -223,6 +359,119 @@ onMounted(() => {
 
     <div class="settings-panel-block">
       <div class="settings-panel-block__header">
+        <div>
+          <h3>成员管理</h3>
+          <p class="settings-panel-block__description">选择工作空间后查看和维护成员角色。</p>
+        </div>
+        <div class="settings-panel-block__actions">
+          <el-select
+            v-model="memberWorkspaceCode"
+            class="workspace-member-select"
+            placeholder="选择工作空间"
+            :disabled="workspaceLoading || memberWorkspaceOptions.length === 0"
+          >
+            <el-option
+              v-for="item in memberWorkspaceOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+          <span v-if="memberErrorMessage && members.length > 0" class="settings-inline-error">
+            {{ memberErrorMessage }}
+          </span>
+          <AppButton
+            size="small"
+            type="primary"
+            :icon="Plus"
+            :disabled="!memberWorkspaceCode"
+            @click="openCreateMemberDialog"
+          >
+            添加成员
+          </AppButton>
+        </div>
+      </div>
+
+      <AppLoadingState v-if="memberLoading && members.length === 0" text="正在加载空间成员" />
+
+      <AppEmptyState
+        v-else-if="!memberWorkspaceCode"
+        title="请选择工作空间"
+        description="选择一个工作空间后查看成员列表。"
+      />
+
+      <AppEmptyState
+        v-else-if="memberErrorMessage && members.length === 0"
+        title="成员列表加载失败"
+        :description="memberErrorMessage"
+      >
+        <template #actions>
+          <AppButton :icon="RefreshRight" @click="loadMembers">重试</AppButton>
+        </template>
+      </AppEmptyState>
+
+      <AppEmptyState
+        v-else-if="members.length === 0"
+        title="暂无空间成员"
+        description="当前工作空间暂无可展示的成员。"
+      >
+        <template #actions>
+          <AppButton type="primary" :icon="Plus" @click="openCreateMemberDialog">添加成员</AppButton>
+        </template>
+      </AppEmptyState>
+
+      <el-table v-else v-loading="memberLoading" :data="members" class="settings-table" row-key="id">
+        <el-table-column label="姓名" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }: { row: WorkspaceMemberItem }">
+            {{ row.displayName || row.username || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="username" label="账号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
+        <el-table-column label="角色" min-width="110">
+          <template #default="{ row }: { row: WorkspaceMemberItem }">
+            {{ getWorkspaceMemberRoleLabel(row.roleCode) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }: { row: WorkspaceMemberItem }">
+            <AppStatusBadge
+              :label="getUserStatusMeta(row.status).label"
+              :tone="getUserStatusMeta(row.status).tone"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="146" fixed="right">
+          <template #default="{ row }: { row: WorkspaceMemberItem }">
+            <div class="workspace-member-actions">
+              <button
+                type="button"
+                class="workspace-action-button"
+                :disabled="isMemberDeleting(row.id)"
+                aria-label="编辑成员"
+                @click="openEditMemberDialog(row)"
+              >
+                <el-icon><Edit /></el-icon>
+                <span>编辑</span>
+              </button>
+              <button
+                type="button"
+                class="workspace-action-button is-danger"
+                :disabled="isMemberDeleting(row.id)"
+                aria-label="移除成员"
+                @click="removeMember(row)"
+              >
+                <el-icon><Delete /></el-icon>
+                <span>{{ isMemberDeleting(row.id) ? '移除中' : '移除' }}</span>
+              </button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="settings-panel-block">
+      <div class="settings-panel-block__header">
         <h3>用户账号</h3>
         <span v-if="userErrorMessage && users.length > 0" class="settings-inline-error">
           {{ userErrorMessage }}
@@ -282,6 +531,15 @@ onMounted(() => {
       :workspace="editingWorkspace"
       :saving="savingWorkspace"
       @submit="submitWorkspace"
+    />
+
+    <WorkspaceMemberDialog
+      v-model="memberDialogVisible"
+      :mode="memberDialogMode"
+      :member="editingMember"
+      :saving="savingMember"
+      @create="submitCreateMember"
+      @update="submitUpdateMember"
     />
   </section>
 </template>
@@ -376,6 +634,13 @@ onMounted(() => {
   line-height: var(--app-line-height-lg);
 }
 
+.settings-panel-block__description {
+  margin: var(--app-space-1) 0 0;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-md);
+}
+
 .settings-inline-error {
   max-width: 360px;
   overflow: hidden;
@@ -392,6 +657,16 @@ onMounted(() => {
 
 .settings-table {
   width: 100%;
+}
+
+.workspace-member-select {
+  width: 220px;
+}
+
+.workspace-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-1);
 }
 
 .workspace-action-button {
@@ -414,6 +689,19 @@ onMounted(() => {
   background: var(--app-primary-soft);
 }
 
+.workspace-action-button.is-danger {
+  color: var(--app-danger);
+}
+
+.workspace-action-button.is-danger:hover {
+  background: var(--app-danger-soft);
+}
+
+.workspace-action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 @media (max-width: 960px) {
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -430,6 +718,10 @@ onMounted(() => {
   .settings-panel-header__actions,
   .settings-panel-block__actions {
     justify-content: flex-start;
+  }
+
+  .workspace-member-select {
+    width: min(260px, 100%);
   }
 
   .settings-stat-grid {

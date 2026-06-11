@@ -26,3 +26,22 @@ export interface SaveWorkspacePayload {
   ownerUserId?: number | null
   status?: number | null
 }
+
+export interface WorkspaceMemberItem {
+  id: number
+  userId: number
+  username: string
+  email: string
+  displayName: string
+  roleCode: string
+  status: number | null
+}
+
+export interface CreateWorkspaceMemberPayload {
+  userId: number
+  roleCode?: string | null
+}
+
+export interface UpdateWorkspaceMemberPayload {
+  roleCode: string
+}

@@ -1,6 +1,12 @@
-import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
+import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
-import type { SaveWorkspacePayload, WorkspaceItem } from '../model/types'
+import type {
+  CreateWorkspaceMemberPayload,
+  SaveWorkspacePayload,
+  UpdateWorkspaceMemberPayload,
+  WorkspaceItem,
+  WorkspaceMemberItem,
+} from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
@@ -26,6 +32,14 @@ function unwrapWorkspaceResponse(payload: ApiResponse<WorkspaceItem[]>) {
   }
 
   return Array.isArray(payload.data) ? payload.data.map(normalizeWorkspaceItem) : []
+}
+
+function unwrapMemberResponse(payload: ApiResponse<WorkspaceMemberItem[]>) {
+  if (payload.success === false) {
+    throw new Error(payload.message || '成员列表加载失败')
+  }
+
+  return Array.isArray(payload.data) ? payload.data : []
 }
 
 export const workspaceApi = {
@@ -69,5 +83,63 @@ export const workspaceApi = {
     }
 
     return normalizeWorkspaceItem(response.data)
+  },
+
+  async getWorkspaceMembers(workspaceCode: string) {
+    const payload = await httpGet<ApiResponse<WorkspaceMemberItem[]>>(
+      `/workspaces/${encodeURIComponent(workspaceCode)}/members`,
+      {
+        headers: workspaceHeaders('ALL'),
+      },
+    )
+
+    return unwrapMemberResponse(payload)
+  },
+
+  async createWorkspaceMember(workspaceCode: string, payload: CreateWorkspaceMemberPayload) {
+    const response = await httpPost<ApiResponse<WorkspaceMemberItem>, CreateWorkspaceMemberPayload>(
+      `/workspaces/${encodeURIComponent(workspaceCode)}/members`,
+      payload,
+      {
+        headers: workspaceHeaders('ALL'),
+      },
+    )
+
+    if (response.success === false) {
+      throw new Error(response.message || '成员添加失败')
+    }
+
+    return response.data
+  },
+
+  async updateWorkspaceMember(workspaceCode: string, memberId: number, payload: UpdateWorkspaceMemberPayload) {
+    const response = await httpPut<ApiResponse<WorkspaceMemberItem>, UpdateWorkspaceMemberPayload>(
+      `/workspaces/${encodeURIComponent(workspaceCode)}/members/${memberId}`,
+      payload,
+      {
+        headers: workspaceHeaders('ALL'),
+      },
+    )
+
+    if (response.success === false) {
+      throw new Error(response.message || '成员更新失败')
+    }
+
+    return response.data
+  },
+
+  async deleteWorkspaceMember(workspaceCode: string, memberId: number) {
+    const response = await httpDelete<ApiResponse<null>>(
+      `/workspaces/${encodeURIComponent(workspaceCode)}/members/${memberId}`,
+      {
+        headers: workspaceHeaders('ALL'),
+      },
+    )
+
+    if (response.success === false) {
+      throw new Error(response.message || '成员移除失败')
+    }
+
+    return response.data
   },
 }
