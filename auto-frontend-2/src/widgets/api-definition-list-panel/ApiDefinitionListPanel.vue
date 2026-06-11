@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -9,9 +10,12 @@ import {
   formatApiDateTime,
   formatApiTags,
   type ApiAutomationClientFilter,
+  type ApiDefinitionDetail,
   type ApiDefinitionItem,
   type ApiDefinitionModuleItem,
+  type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
+import { ApiDefinitionCreateEditDialog, type ApiDefinitionDialogMode } from '@/features/api-definition-create-edit'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -45,10 +49,72 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const totalPages = ref(0)
+const dialogVisible = ref(false)
+const dialogMode = ref<ApiDefinitionDialogMode>('create')
+const editingDefinition = ref<ApiDefinitionItem | null>(null)
+const editingDefinitionDetail = ref<ApiDefinitionDetail | null>(null)
+const detailLoading = ref(false)
+const detailErrorMessage = ref('')
+const saving = ref(false)
+const rowLoadingId = ref<number | null>(null)
 let loadRequestSeq = 0
 
 function selectDefinition(item: ApiDefinitionItem) {
   emit('select', item)
+}
+
+function openCreateDialog() {
+  dialogMode.value = 'create'
+  editingDefinition.value = null
+  editingDefinitionDetail.value = null
+  detailErrorMessage.value = ''
+  dialogVisible.value = true
+}
+
+async function openEditDialog(item: ApiDefinitionItem) {
+  dialogMode.value = 'edit'
+  editingDefinition.value = item
+  editingDefinitionDetail.value = null
+  detailErrorMessage.value = ''
+  dialogVisible.value = true
+  await loadDefinitionDetail(item)
+}
+
+async function loadDefinitionDetail(item = editingDefinition.value) {
+  if (!item) {
+    return
+  }
+
+  detailLoading.value = true
+  rowLoadingId.value = item.id
+  detailErrorMessage.value = ''
+  try {
+    editingDefinitionDetail.value = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, item.id)
+  } catch (error) {
+    detailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    detailLoading.value = false
+    rowLoadingId.value = null
+  }
+}
+
+async function handleDialogSubmit(payload: SaveApiDefinitionPayload) {
+  saving.value = true
+  try {
+    if (dialogMode.value === 'edit' && editingDefinition.value) {
+      await apiAutomationApi.updateDefinition(props.workspaceCode, editingDefinition.value.id, payload)
+      ElMessage.success('接口定义已更新')
+    } else {
+      await apiAutomationApi.createDefinition(props.workspaceCode, payload)
+      ElMessage.success('接口定义已创建')
+    }
+    dialogVisible.value = false
+    await loadDefinitions({ keepPage: dialogMode.value === 'edit' })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
 }
 
 async function loadDefinitions(options: { keepPage?: boolean } = {}) {
@@ -127,7 +193,10 @@ defineExpose({
         <strong>接口定义</strong>
         <span>共 {{ total }} 条</span>
       </div>
-      <AppButton :icon="RefreshRight" :loading="loading" @click="loadDefinitions">刷新</AppButton>
+      <div class="api-definition-list-panel__tools">
+        <AppButton type="primary" @click="openCreateDialog">新增接口</AppButton>
+        <AppButton :icon="RefreshRight" :loading="loading" @click="loadDefinitions">刷新</AppButton>
+      </div>
     </header>
 
     <AppLoadingState v-if="loading && definitions.length === 0" text="正在读取接口定义" />
@@ -187,9 +256,9 @@ defineExpose({
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
-          <template #default>
+          <template #default="{ row }">
             <div class="api-definition-list-panel__actions">
-              <AppButton disabled>编辑</AppButton>
+              <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
               <AppButton disabled>调试</AppButton>
             </div>
           </template>
@@ -210,6 +279,19 @@ defineExpose({
         />
       </footer>
     </div>
+
+    <ApiDefinitionCreateEditDialog
+      v-model="dialogVisible"
+      :mode="dialogMode"
+      :definition-item="editingDefinition"
+      :definition-detail="editingDefinitionDetail"
+      :saving="saving"
+      :loading-detail="detailLoading"
+      :detail-error-message="detailErrorMessage"
+      :default-workspace-code="workspaceCode"
+      @submit="handleDialogSubmit"
+      @retry-detail="loadDefinitionDetail"
+    />
   </section>
 </template>
 
@@ -246,6 +328,17 @@ defineExpose({
 .api-definition-list-panel__header span {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
+}
+
+.api-definition-list-panel__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.api-definition-list-panel__tools :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .api-definition-list-panel__table-wrap {
