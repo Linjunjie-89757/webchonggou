@@ -19,6 +19,33 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Backend compile | Open | Earlier backend compile was blocked by unrelated `ApiExecutionEngineSupport.readScenarioSteps` error. | Recheck when backend work resumes. |
 | Encoding | Monitoring | PowerShell may display UTF-8 Chinese as mojibake, while source files are UTF-8. | Prefer editor/file checks over console display for Chinese text. |
 
+## Release Disposable Regression
+
+| Area | Status | Finding | Follow-up |
+| --- | --- | --- | --- |
+| Config Center | Fixed/Verified | Goal 82 disposable env and param create/edit/status/delete succeeded. Disposable DB connection create/delete succeeded. Goal 83 confirmed invalid DB test currently throws backend `BadRequestException` and returns HTTP 400. | UI should keep failed test dialogs/lists stable; backend may optionally return business `success=false` instead of HTTP 400 for test failures. |
+| Case Center | Verified | Goal 82 disposable case create/detail/edit/review/execute/batch-update/delete succeeded under `retail-onboarding`. | Keep a disposable case script for future release checks. |
+| Defect Management | Needs Backend Cleanup | Goal 82 disposable defect create/detail/comments/edit/assign/transition succeeded. Goal 83 confirmed there is no `DELETE /bugs/{id}` endpoint; disposable bug `BUG-005` / `id=5136` remains in `retail-onboarding`. | Add a bug delete endpoint or backend cleanup script before repeated release regressions. |
+| Interface Automation | Cleaned | Goal 82 disposable API definition and case create/detail/edit/run/history/delete succeeded. Goal 83 used existing `DELETE /automation/api/definition-modules/{id}` to remove the empty `DISPOSABLE` module. | Keep module cleanup in the disposable regression checklist. |
+| System Settings | Partially Fixed/Verified | Goal 82 found AI connection timeout frontend allowed 1-9 seconds while backend requires 10-600 seconds; frontend validation was aligned. AI provider create/models/update/delete then succeeded. Goal 83 confirmed invalid AI test currently throws backend error and returns HTTP 400. | Keep frontend timeout minimum at 10. Consider backend business result for test failures if global error toast is too coarse. |
+| Workspace Settings | Cleaned/Verified | Goal 82 disposable workspace create/edit succeeded. Goal 83 confirmed `DELETE /workspaces/{workspaceCode}` exists and cleaned `d82-20260611184729`. Duplicate member add returned stable backend 400. | Keep workspace cleanup in the disposable regression checklist; keep member failure UX stable. |
+
+## Release Playwright Smoke Regression
+
+| Area | Status | Finding | Follow-up |
+| --- | --- | --- | --- |
+| Goal 84 smoke | Passed with documented gaps | Logged-out `/cases`, `/bugs`, `/automation/api`, `/settings`, and `/automation/web` redirected to `/login?redirect=...`. Logged-in smoke reached config center, case center, defect management, interface automation, system settings, and Web/App placeholders. Config/case/defect/API/settings create dialogs opened; case and defect detail opened; defect assign and transition dialogs opened from the more menu; Web/App placeholders did not request `/tasks`. | Keep this as the baseline release smoke checklist. |
+| Goal 84 gaps | Open | No destructive save/delete was executed. Interface automation case history drawer was not fully verified because the selected definition had zero case rows. The logged-out route guard still creates an expected `/auth/me` 401 console entry. Build still has known PURE annotation and chunk-size warnings. | Use disposable interface cases for history/run regression; defer build warning optimization unless it becomes release-blocking. |
+
+## Release Closure Classification
+
+| Level | Items | Release Decision | Follow-up |
+| --- | --- | --- | --- |
+| Blocking | None found in the rebuilt frontend after Goal 82-84 checks. | No current frontend blocker for a controlled pre-release/staging release. | Keep the release candidate tied to the current Git branch and known backend runtime. |
+| Recommended before release | Defect backend cleanup support for remaining disposable bug `BUG-005` / `id=5136`; interface automation case-row history/run smoke with a disposable case; backend contract decision for AI/DB test failure response shape. | Recommended, but not required to ship the current frontend if these are accepted as known risks. | Prefer a backend cleanup endpoint/script and one disposable interface case before wider UAT. |
+| Acceptable known risks | AI/DB test failures returning HTTP 400; build warnings from `@vueuse/core` PURE annotation and chunk size; logged-out route guard creating an expected `/auth/me` 401 console entry; outer `WODEZIDONGHUA` remaining dirty and ignored. | Can release with notes because build passes, UI remains stable, and these do not break the verified user flows. | Revisit during backend contract polish, build optimization, and repository hygiene work. |
+| Later iteration | Rich defect comments/attachments, defect transition matrix restrictions, interface automation complex editors/assertions/scenarios, role permissions/settings tabs, full old-frontend UI parity. | Not part of this release scope. | Schedule after the release candidate is accepted. |
+
 ## Config Center
 
 | Area | Not Fully Verified | Risk | Follow-up |
@@ -71,6 +98,18 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Multi-page task data | Goal 56 adds server-side filtering and pagination for `/tasks`, but current smoke data may not cover many pages per engine. | Page navigation and page-size behavior may hide edge cases until seeded data is larger. | Validate with more than one page of WEB and APP tasks. |
 | Backend runtime reload | Goal 56 backend compile passed, but the running backend instance used by Playwright still returned the old all-task response until restart. | Browser smoke confirmed frontend query parameters, but not the live filtered response after restart. | Restart backend and re-run `/automation/web` query smoke before relying on server-side filtering. |
 | Task mutations | Current automation task UI is read-only. | Create/edit/delete/transition payload and permission behavior remain unverified in the new frontend. | Add disposable-data tests when mutation goals start. |
+
+## System Settings
+
+| Area | Not Fully Verified | Risk | Follow-up |
+| --- | --- | --- | --- |
+| AI connection mutations | Create/edit dialogs, required validation, test connection, delete cancel, and models drawer were smoke-tested. Real create/update/delete success paths were not exhaustively run against disposable providers. | Provider payload validation, API key retention rules, and delete reference constraints may still surface with real data. | Use disposable AI provider connections for full mutation regression. |
+| AI provider models | Models drawer reads the real provider models endpoint when opened. | Current data may not cover providers with long model names, many models, or model-read failures. | Recheck with providers that have multiple model entries and forced failures. |
+| Workspace mutations | Workspace create/edit dialogs and validation were smoke-tested; real save success was kept limited. | Backend uniqueness rules and owner/status edge cases may still need coverage. | Use disposable workspaces for full create/edit regression. |
+| Member management | Goal 77 verified member list read, add-member validation, edit-member refill, and remove cancel. Real add/update/remove success paths were not executed to avoid changing current members. | Role payload, duplicate membership handling, permission failures, and successful refresh behavior still need disposable-data verification. | Use a disposable workspace and user account for full member mutation regression. |
+| Role permissions and settings tabs | Role permissions, notification, security, and appearance remain unified placeholders. | Users cannot configure those areas in the rebuilt frontend yet. | Split only after backend controllers and business scope are confirmed. |
+| Full system settings regression | Goal 78 runs focused smoke rather than a full destructive regression. | Cross-panel interactions and rare 401/500 states may still hide edge cases. | Add mock failure and disposable-data checks before release. |
+| UI parity depth | Goal 79 keeps the current table-based AI connection pool and only tightens density and operation-column stability. | Old-project provider-card pool, supplier grid, and richer settings tabs are still outside this small UI alignment pass. | Revisit after disposable-data regression and confirmed provider UX scope. |
 
 ## Interface Automation
 
