@@ -1,6 +1,6 @@
 import { httpGet, type ApiResponse } from '@/shared/api/request'
 
-import type { AutomationTaskListResponse, AutomationTaskSummaryItem } from '../model/types'
+import type { AutomationTaskListQuery, AutomationTaskListResponse, AutomationTaskSummaryItem } from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
@@ -39,10 +39,21 @@ function normalizeTaskListResponse(page: AutomationTaskListResponse): Automation
   }
 }
 
+function cleanQuery(query?: AutomationTaskListQuery) {
+  if (!query) {
+    return undefined
+  }
+
+  return Object.fromEntries(
+    Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+}
+
 export const automationTaskApi = {
-  async getTasks(workspaceCode = 'ALL') {
+  async getTasks(workspaceCode = 'ALL', query?: AutomationTaskListQuery) {
     const payload = await httpGet<ApiResponse<AutomationTaskListResponse>>('/tasks', {
       headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
     })
 
     return normalizeTaskListResponse(unwrapApiResponse(payload))

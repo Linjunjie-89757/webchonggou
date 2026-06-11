@@ -60,6 +60,15 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Mutation success paths | Goal 51 opened create/edit/assign/transition dialogs but skipped saves to avoid changing real data. | Payload validation, permissions, and success refresh behavior still need disposable-data verification. | Use explicit disposable defect records before release. |
 | Full module regression | Goal 49 ran a light-to-medium smoke pass, and Goal 51 added real-data read-only integration evidence; destructive success paths were skipped. | Interactions around real create/edit/assign/transition success may hide regressions. | Run a disposable-data regression before release. |
 
+## Automation Tasks
+
+| Area | Not Fully Verified | Risk | Follow-up |
+| --- | --- | --- | --- |
+| API automation route | `/automation/api` remains a placeholder and is intentionally not backed by `/tasks`. | Interface automation uses a separate large workspace and may need a different split strategy. | Split API automation as its own module after task/report flow stabilizes. |
+| Multi-page task data | Goal 56 adds server-side filtering and pagination for `/tasks`, but current smoke data may not cover many pages per engine. | Page navigation and page-size behavior may hide edge cases until seeded data is larger. | Validate with more than one page of WEB and APP tasks. |
+| Backend runtime reload | Goal 56 backend compile passed, but the running backend instance used by Playwright still returned the old all-task response until restart. | Browser smoke confirmed frontend query parameters, but not the live filtered response after restart. | Restart backend and re-run `/automation/web` query smoke before relying on server-side filtering. |
+| Task mutations | Current automation task UI is read-only. | Create/edit/delete/transition payload and permission behavior remain unverified in the new frontend. | Add disposable-data tests when mutation goals start. |
+
 ## Recommended Next Regression Goals
 
 1. Defect disposable-data regression: real create/edit, assign, transition, attachment-bearing detail, and allowed state transitions.

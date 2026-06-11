@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -35,39 +35,48 @@ const tasks = ref<AutomationTaskSummaryItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
 const total = ref(0)
+const pageNo = ref(1)
+const pageSize = ref(10)
+const totalPages = ref(0)
 let loadRequestSeq = 0
 
-const filteredTasks = computed(() => {
-  const keyword = props.filter.keyword.trim().toLowerCase()
+function normalizePageNo() {
+  if (totalPages.value > 0 && pageNo.value > totalPages.value) {
+    pageNo.value = totalPages.value
+  }
+}
 
-  return tasks.value.filter((item) => {
-    if (item.engineType !== props.engineType) {
-      return false
-    }
-    if (props.filter.status && item.status !== props.filter.status) {
-      return false
-    }
-    if (keyword) {
-      const taskName = item.taskName.toLowerCase()
-      const summary = (item.summary || '').toLowerCase()
-      if (!taskName.includes(keyword) && !summary.includes(keyword)) {
-        return false
-      }
-    }
-    return true
-  })
-})
+function getClientTotalPages(totalCount: number) {
+  return totalCount > 0 ? Math.ceil(totalCount / Math.max(pageSize.value, 1)) : 0
+}
+
+function reloadFromFirstPage() {
+  if (pageNo.value === 1) {
+    void loadTasks()
+    return
+  }
+
+  pageNo.value = 1
+}
 
 async function loadTasks() {
   const requestSeq = ++loadRequestSeq
   loading.value = true
   errorMessage.value = ''
   try {
-    const page = await automationTaskApi.getTasks(props.workspaceCode)
+    const page = await automationTaskApi.getTasks(props.workspaceCode, {
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
+      keyword: props.filter.keyword,
+      status: props.filter.status,
+      engineType: props.engineType,
+    })
     if (requestSeq === loadRequestSeq) {
       tasks.value = Array.isArray(page.items) ? page.items : []
       total.value = page.total
-      emit('loaded', filteredTasks.value)
+      pageNo.value = page.pageNo || pageNo.value
+      totalPages.value = getClientTotalPages(page.total)
+      emit('loaded', tasks.value)
     }
   } catch (error) {
     if (requestSeq === loadRequestSeq) {
@@ -81,13 +90,33 @@ async function loadTasks() {
 }
 
 watch(
-  () => props.workspaceCode,
+  () => [props.workspaceCode, props.engineType] as const,
   () => {
-    void loadTasks()
+    reloadFromFirstPage()
   },
 )
 
-watch(filteredTasks, (items) => emit('loaded', items), { immediate: true })
+watch(
+  () => props.filter,
+  () => {
+    reloadFromFirstPage()
+  },
+  { deep: true },
+)
+
+watch(pageNo, (value, oldValue) => {
+  if (value !== oldValue) {
+    void loadTasks()
+  }
+})
+
+watch(pageSize, (value, oldValue) => {
+  if (value !== oldValue) {
+    reloadFromFirstPage()
+  }
+})
+
+watch(totalPages, normalizePageNo)
 
 onMounted(() => {
   void loadTasks()
@@ -121,14 +150,14 @@ defineExpose({
       <div class="automation-task-list-panel__toolbar">
         <div>
           <strong>任务列表</strong>
-          <span>共 {{ filteredTasks.length }} 条 / 已加载 {{ total }} 条</span>
+          <span>共 {{ total }} 条</span>
         </div>
       </div>
 
       <div class="automation-task-list-panel__table-wrap">
         <el-table
           v-loading="loading"
-          :data="filteredTasks"
+          :data="tasks"
           class="automation-task-list-panel__table"
           size="small"
           row-key="id"
@@ -169,10 +198,22 @@ defineExpose({
       </div>
 
       <AppEmptyState
-        v-if="!loading && !filteredTasks.length && !errorMessage"
+        v-if="!loading && !tasks.length && !errorMessage"
         title="暂无匹配任务"
         description="当前工作空间或筛选条件下没有可展示的自动化任务。"
       />
+
+      <div v-if="tasks.length || total > 0" class="automation-task-list-panel__pagination">
+        <span>共 {{ total }} 条 / {{ totalPages }} 页</span>
+        <el-pagination
+          v-model:current-page="pageNo"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 30, 50]"
+          :total="total"
+          size="small"
+          layout="sizes, prev, pager, next, jumper"
+        />
+      </div>
     </div>
   </section>
 </template>
@@ -250,5 +291,17 @@ defineExpose({
   align-items: center;
   gap: var(--app-space-1);
   white-space: nowrap;
+}
+
+.automation-task-list-panel__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding-top: var(--app-space-3);
+  border-top: 1px solid var(--app-border-soft);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
 }
 </style>

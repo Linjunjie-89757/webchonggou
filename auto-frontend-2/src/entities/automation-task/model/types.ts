@@ -25,6 +25,14 @@ export interface AutomationTaskClientFilter {
   status: string
 }
 
+export interface AutomationTaskListQuery {
+  keyword?: string
+  status?: string
+  engineType?: string
+  pageNo?: number
+  pageSize?: number
+}
+
 export interface AutomationTaskStat {
   label: string
   value: number
