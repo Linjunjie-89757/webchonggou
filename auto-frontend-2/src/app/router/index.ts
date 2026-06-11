@@ -2,7 +2,6 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
-import AutomationTasksPage from '@/pages/automation-tasks/AutomationTasksPage.vue'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
 import DefectsPage from '@/pages/defects/DefectsPage.vue'
@@ -81,19 +80,19 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'automation/web',
         name: 'automation-web',
-        component: AutomationTasksPage,
+        component: PlaceholderPage,
         meta: {
           title: 'Web UI 自动化',
-          description: '按工作空间查看 Web UI 自动化任务；当前阶段先接入真实任务读取闭环。',
+          description: '旧项目当前为占位模块，后续确认真实业务边界后再接入。',
         },
       },
       {
         path: 'automation/app',
         name: 'automation-app',
-        component: AutomationTasksPage,
+        component: PlaceholderPage,
         meta: {
           title: 'APP 自动化',
-          description: '按工作空间查看 APP 自动化任务；当前阶段先接入真实任务读取闭环。',
+          description: '旧项目当前为占位模块，后续确认真实业务边界后再接入。',
         },
       },
     ],
