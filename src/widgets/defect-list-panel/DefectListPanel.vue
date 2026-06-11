@@ -537,7 +537,7 @@ defineExpose({
 }
 
 .defect-list-panel__table {
-  min-width: 1160px;
+  min-width: 1550px;
 }
 
 .defect-list-panel__code {
@@ -559,6 +559,15 @@ defineExpose({
 
 .defect-list-panel__actions > * {
   flex: 0 0 auto;
+}
+
+.defect-list-panel__actions :deep(.el-button) {
+  padding-right: var(--app-space-2);
+  padding-left: var(--app-space-2);
+}
+
+.defect-list-panel__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .defect-list-panel__pagination {

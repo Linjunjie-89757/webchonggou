@@ -60,6 +60,7 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Mutation success paths | Goal 51 opened create/edit/assign/transition dialogs but skipped saves to avoid changing real data. | Payload validation, permissions, and success refresh behavior still need disposable-data verification. | Use explicit disposable defect records before release. |
 | Full module regression | Goal 49 ran a light-to-medium smoke pass, and Goal 51 added real-data read-only integration evidence; destructive success paths were skipped. | Interactions around real create/edit/assign/transition success may hide regressions. | Run a disposable-data regression before release. |
 | Workspace first-load stability | Goal 58 gates the defect list until workspace resolution completes, avoiding an initial `ALL` list request followed by a default-workspace reload. | Browser smoke covered the current default workspace only; unusual workspace API failures still need final regression coverage. | Recheck with a failing workspace API mock and multiple real workspace defaults. |
+| UI parity depth | Goal 59 only aligned density, table width, action spacing, drawer text blocks, and dialog footers. | Rich text rendering, activity timeline, attachment actions, and old-project drawer toolbar parity remain out of scope. | Revisit during a dedicated defect detail parity target after mutation workflows are disposable-data verified. |
 
 ## Automation Tasks
 

@@ -167,7 +167,7 @@ watch(
         </div>
 
         <header class="defect-detail-drawer__summary">
-          <div>
+          <div class="defect-detail-drawer__summary-main">
             <span class="defect-detail-drawer__code">{{ displayText(detail.bugNo) }}</span>
             <h3>{{ displayText(detail.title) }}</h3>
             <p>{{ displayText(detail.sourceType) }}</p>
@@ -275,11 +275,16 @@ watch(
 
 .defect-detail-drawer__summary {
   display: flex;
+  min-width: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--app-space-4);
   padding-bottom: var(--app-space-4);
   border-bottom: 1px solid var(--app-border-soft);
+}
+
+.defect-detail-drawer__summary-main {
+  min-width: 0;
 }
 
 .defect-detail-drawer__summary h3 {
@@ -359,10 +364,10 @@ watch(
   margin: 0;
   max-height: 340px;
   overflow: auto;
-  padding: var(--app-space-3);
-  border: 1px solid var(--app-border-soft);
+  padding: var(--app-space-2) var(--app-space-3);
+  border-left: 3px solid var(--app-border-strong);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-page);
+  background: var(--app-bg-subtle);
   color: var(--app-text-main);
   font-size: var(--app-font-size-sm);
   line-height: 22px;
@@ -386,10 +391,10 @@ watch(
   min-width: 0;
   flex-direction: column;
   gap: var(--app-space-1);
-  padding: var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
   border: 1px solid var(--app-border-soft);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-page);
+  background: var(--app-bg-subtle);
 }
 
 .defect-detail-drawer__list-item strong {
@@ -418,10 +423,10 @@ watch(
 
 .defect-detail-drawer__muted {
   margin: 0;
-  padding: var(--app-space-3);
+  padding: var(--app-space-2) var(--app-space-3);
   border: 1px dashed var(--app-border);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-page);
+  background: var(--app-bg-subtle);
 }
 
 .defect-detail-drawer__inline-error {
