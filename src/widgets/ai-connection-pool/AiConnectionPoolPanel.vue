@@ -177,7 +177,12 @@ onMounted(() => {
     </header>
 
     <div class="settings-stat-grid">
-      <div v-for="item in stats" :key="item.label" class="settings-stat">
+      <div
+        v-for="(item, index) in stats"
+        :key="item.label"
+        class="settings-stat"
+        :class="`settings-stat--tone-${index}`"
+      >
         <span>{{ item.label }}</span>
         <strong>{{ item.value }}</strong>
       </div>
@@ -210,7 +215,8 @@ onMounted(() => {
       </template>
     </AppEmptyState>
 
-    <el-table v-else v-loading="loading" :data="providers" class="settings-table" row-key="id">
+    <div v-else class="settings-table-card">
+      <el-table v-loading="loading" :data="providers" class="settings-table" row-key="id">
       <el-table-column prop="connectionName" label="连接名称" min-width="180" show-overflow-tooltip />
       <el-table-column label="状态" width="110">
         <template #default="{ row }: { row: AiProviderConnectionItem }">
@@ -304,7 +310,8 @@ onMounted(() => {
           </div>
         </template>
       </el-table-column>
-    </el-table>
+      </el-table>
+    </div>
 
     <AiConnectionCreateEditDialog
       v-model="dialogVisible"
@@ -335,6 +342,8 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--app-space-4);
+  padding-bottom: var(--app-space-4);
+  border-bottom: 1px solid var(--app-border-soft);
 }
 
 .settings-panel-header__actions {
@@ -354,6 +363,7 @@ onMounted(() => {
   margin: var(--app-space-1) 0 0;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-md);
 }
 
 .settings-stat-grid {
@@ -363,25 +373,59 @@ onMounted(() => {
 }
 
 .settings-stat {
+  position: relative;
   display: flex;
   min-width: 0;
+  min-height: 92px;
   flex-direction: column;
   gap: var(--app-space-1);
-  padding: var(--app-space-3);
+  justify-content: space-between;
+  overflow: hidden;
+  padding: var(--app-space-4);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
+  background: var(--app-bg-panel);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.settings-stat::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--app-primary);
+  content: "";
+}
+
+.settings-stat:hover {
+  border-color: var(--app-border-strong);
+  box-shadow: var(--app-shadow-card);
+  transform: translateY(-1px);
+}
+
+.settings-stat--tone-1::before {
+  background: var(--app-success);
+}
+
+.settings-stat--tone-2::before {
+  background: var(--app-danger);
+}
+
+.settings-stat--tone-3::before {
+  background: var(--app-purple);
 }
 
 .settings-stat span {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
+  font-weight: 600;
+  line-height: var(--app-line-height-xs);
 }
 
 .settings-stat strong {
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-xl);
-  line-height: 26px;
+  font-size: var(--app-font-size-page-title);
+  line-height: 28px;
 }
 
 .settings-inline-error {
@@ -397,24 +441,55 @@ onMounted(() => {
   font-size: var(--app-font-size-sm);
 }
 
+.settings-table-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
 .settings-table {
   width: 100%;
+}
+
+.settings-table :deep(.el-table__header th) {
+  height: 44px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+}
+
+.settings-table :deep(.el-table__row) {
+  height: var(--app-table-row-height);
+}
+
+.settings-table :deep(.el-table__cell) {
+  padding: var(--app-space-2) 0;
+}
+
+.settings-table :deep(.el-table__fixed-right::before) {
+  background: var(--app-border-soft);
 }
 
 .ai-connection-actions {
   display: flex;
   flex-wrap: nowrap;
-  gap: var(--app-space-1);
+  gap: 6px;
 }
 
 .ai-connection-actions__button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   gap: 4px;
-  min-height: 28px;
-  padding: 0 var(--app-space-2);
-  border: 0;
+  min-width: 44px;
+  min-height: var(--app-control-height-sm);
+  padding: 0 7px;
+  border: 1px solid transparent;
   border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-primary);
@@ -424,15 +499,22 @@ onMounted(() => {
   transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
 }
 
-.ai-connection-actions__button:hover {
+.ai-connection-actions__button:hover:not(:disabled) {
+  border-color: var(--app-primary);
   background: var(--app-primary-soft);
+}
+
+.ai-connection-actions__button:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: 2px;
 }
 
 .ai-connection-actions__button.is-danger {
   color: var(--app-danger);
 }
 
-.ai-connection-actions__button.is-danger:hover {
+.ai-connection-actions__button.is-danger:hover:not(:disabled) {
+  border-color: var(--app-danger);
   background: var(--app-danger-soft);
 }
 
@@ -455,6 +537,17 @@ onMounted(() => {
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .settings-stat,
+  .ai-connection-actions__button {
+    transition: none;
+  }
+
+  .settings-stat:hover {
+    transform: none;
+  }
+}
+
 @media (max-width: 960px) {
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -470,8 +563,17 @@ onMounted(() => {
     justify-content: flex-start;
   }
 
+  .settings-panel-header__actions,
+  .settings-panel-header__actions :deep(.app-button) {
+    width: 100%;
+  }
+
   .settings-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .settings-table-card {
+    overflow-x: auto;
   }
 }
 </style>
