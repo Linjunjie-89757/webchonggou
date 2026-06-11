@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
+import ApiAutomationPage from '@/pages/automation-api/ApiAutomationPage.vue'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
 import DefectsPage from '@/pages/defects/DefectsPage.vue'
@@ -71,7 +72,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'automation/api',
         name: 'automation-api',
-        component: PlaceholderPage,
+        component: ApiAutomationPage,
         meta: {
           title: '接口自动化',
           description: '后续先输出拆分方案，再迁移执行工作台，不复制旧大组件。',
