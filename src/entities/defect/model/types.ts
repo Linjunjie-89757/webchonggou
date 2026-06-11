@@ -29,6 +29,32 @@ export interface DefectSummaryItem {
   workspaceName: string
 }
 
+export interface DefectDetail extends DefectSummaryItem {
+  description: string
+  sourceType: string | null
+  assigneeId: number | null
+  reporterId: number | null
+  relatedReportId: number | null
+  relatedTaskId: number | null
+  createdAt: string | null
+  attachments?: unknown[]
+  sourceContext?: unknown
+  activities?: unknown[]
+  flows?: unknown[]
+  comments?: unknown[]
+}
+
+export interface SaveDefectPayload {
+  workspaceCode?: string
+  title: string
+  description: string
+  priority: string
+  severity: string
+  assigneeId: number | null
+  relatedCaseId: number | null
+  tags: string[]
+}
+
 export interface DefectStatistics {
   total: number
   todo: number
