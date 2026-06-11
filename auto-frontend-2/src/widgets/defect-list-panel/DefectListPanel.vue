@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { Plus, RefreshRight } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 import {
+  type DefectDetail,
   DefectPriorityBadge,
   DefectSeverityBadge,
   DefectStatusBadge,
@@ -10,8 +12,10 @@ import {
   formatDefectDateTime,
   formatDefectTags,
   type DefectClientFilter,
+  type SaveDefectPayload,
   type DefectSummaryItem,
 } from '@/entities/defect'
+import { DefectCreateEditDialog, type DefectDialogMode } from '@/features/defect-create-edit'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -38,7 +42,16 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const totalPages = ref(0)
+const dialogVisible = ref(false)
+const dialogMode = ref<DefectDialogMode>('create')
+const activeDefect = ref<DefectSummaryItem | null>(null)
+const activeDefectDetail = ref<DefectDetail | null>(null)
+const detailLoading = ref(false)
+const detailErrorMessage = ref('')
+const saving = ref(false)
+const editingRowId = ref<number | null>(null)
 let loadRequestSeq = 0
+let detailRequestSeq = 0
 
 const pagedDefects = computed(() => defects.value)
 
@@ -79,10 +92,70 @@ async function loadDefects() {
   }
 }
 
+function openCreateDialog() {
+  dialogMode.value = 'create'
+  activeDefect.value = null
+  activeDefectDetail.value = null
+  detailErrorMessage.value = ''
+  detailLoading.value = false
+  dialogVisible.value = true
+}
+
+async function loadDefectDetail(item: DefectSummaryItem) {
+  const requestSeq = ++detailRequestSeq
+  detailLoading.value = true
+  detailErrorMessage.value = ''
+  editingRowId.value = item.id
+  try {
+    const detail = await defectApi.getDefectDetail(props.workspaceCode, item.id)
+    if (requestSeq === detailRequestSeq) {
+      activeDefectDetail.value = detail
+    }
+  } catch (error) {
+    if (requestSeq === detailRequestSeq) {
+      detailErrorMessage.value = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestSeq === detailRequestSeq) {
+      detailLoading.value = false
+      editingRowId.value = null
+    }
+  }
+}
+
+function openEditDialog(item: DefectSummaryItem) {
+  dialogMode.value = 'edit'
+  activeDefect.value = item
+  activeDefectDetail.value = null
+  detailErrorMessage.value = ''
+  dialogVisible.value = true
+  void loadDefectDetail(item)
+}
+
+async function submitDefect(payload: SaveDefectPayload) {
+  saving.value = true
+  try {
+    if (dialogMode.value === 'edit' && activeDefect.value) {
+      await defectApi.updateDefect(props.workspaceCode, activeDefect.value.id, payload)
+      ElMessage.success('缺陷更新成功')
+    } else {
+      await defectApi.createDefect(props.workspaceCode, payload)
+      ElMessage.success('缺陷创建成功')
+    }
+    dialogVisible.value = false
+    await loadDefects()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
+}
+
 watch(
   () => props.workspaceCode,
   () => {
     pageNo.value = 1
+    dialogVisible.value = false
     void loadDefects()
   },
 )
@@ -138,6 +211,14 @@ defineExpose({
       <div v-if="errorMessage" class="defect-list-panel__inline-error">
         <span>{{ errorMessage }}</span>
         <AppButton size="small" :icon="RefreshRight" @click="loadDefects">重试</AppButton>
+      </div>
+
+      <div class="defect-list-panel__toolbar">
+        <div>
+          <strong>缺陷列表</strong>
+          <span>共 {{ total }} 条</span>
+        </div>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增缺陷</AppButton>
       </div>
 
       <div class="defect-list-panel__table-wrap">
@@ -204,10 +285,17 @@ defineExpose({
             </template>
           </el-table-column>
           <el-table-column label="操作" width="132" fixed="right">
-            <template #default>
+            <template #default="{ row }: { row: DefectSummaryItem }">
               <div class="defect-list-panel__actions">
                 <AppButton size="small" disabled>详情</AppButton>
-                <AppButton size="small" disabled>编辑</AppButton>
+                <AppButton
+                  size="small"
+                  :loading="editingRowId === row.id"
+                  :disabled="saving"
+                  @click="openEditDialog(row)"
+                >
+                  编辑
+                </AppButton>
               </div>
             </template>
           </el-table-column>
@@ -232,6 +320,19 @@ defineExpose({
         />
       </div>
     </div>
+
+    <DefectCreateEditDialog
+      v-model="dialogVisible"
+      :mode="dialogMode"
+      :defect-item="activeDefect"
+      :defect-detail="activeDefectDetail"
+      :saving="saving"
+      :loading-detail="detailLoading"
+      :detail-error-message="detailErrorMessage"
+      :default-workspace-code="workspaceCode"
+      @submit="submitDefect"
+      @retry-detail="activeDefect && loadDefectDetail(activeDefect)"
+    />
   </section>
 </template>
 
@@ -269,6 +370,30 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.defect-list-panel__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
+.defect-list-panel__toolbar > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.defect-list-panel__toolbar strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+}
+
+.defect-list-panel__toolbar span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
 }
 
 .defect-list-panel__table-wrap {

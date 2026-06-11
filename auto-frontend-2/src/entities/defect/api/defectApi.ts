@@ -1,6 +1,13 @@
-import { httpGet, type ApiResponse } from '@/shared/api/request'
+import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
-import type { DefectListQuery, DefectListResponse, DefectStatistics, DefectSummaryItem } from '../model/types'
+import type {
+  DefectDetail,
+  DefectListQuery,
+  DefectListResponse,
+  DefectStatistics,
+  DefectSummaryItem,
+  SaveDefectPayload,
+} from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
@@ -39,6 +46,26 @@ function normalizeDefectItem(item: DefectSummaryItem): DefectSummaryItem {
   }
 }
 
+function normalizeDefectDetail(item: DefectDetail): DefectDetail {
+  const summary = normalizeDefectItem(item)
+
+  return {
+    ...item,
+    ...summary,
+    description: item.description || '',
+    sourceType: item.sourceType || null,
+    assigneeId: item.assigneeId ?? null,
+    reporterId: item.reporterId ?? null,
+    relatedCaseId: item.relatedCaseId ?? null,
+    relatedReportId: item.relatedReportId ?? null,
+    relatedTaskId: item.relatedTaskId ?? null,
+    attachments: Array.isArray(item.attachments) ? item.attachments : [],
+    activities: Array.isArray(item.activities) ? item.activities : [],
+    flows: Array.isArray(item.flows) ? item.flows : [],
+    comments: Array.isArray(item.comments) ? item.comments : [],
+  }
+}
+
 function normalizeDefectListResponse(page: DefectListResponse): DefectListResponse {
   const items = Array.isArray(page.items) ? page.items.map(normalizeDefectItem) : []
   const total = Number(page.total ?? items.length)
@@ -69,5 +96,29 @@ export const defectApi = {
     })
 
     return unwrapApiResponse(payload)
+  },
+
+  async getDefectDetail(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<DefectDetail>>(`/bugs/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async createDefect(workspaceCode = 'ALL', data: SaveDefectPayload) {
+    const payload = await httpPost<ApiResponse<DefectDetail>, SaveDefectPayload>('/bugs', data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async updateDefect(workspaceCode = 'ALL', id: number, data: SaveDefectPayload) {
+    const payload = await httpPut<ApiResponse<DefectDetail>, SaveDefectPayload>(`/bugs/${id}`, data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
   },
 }
