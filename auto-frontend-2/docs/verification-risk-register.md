@@ -67,10 +67,23 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Area | Not Fully Verified | Risk | Follow-up |
 | --- | --- | --- | --- |
 | Web/App automation scope | Goal 57 restored `/automation/web` and `/automation/app` to placeholders because the old project treats them as placeholder modules. | Existing automation-task read-view code is retained but no longer reachable from the Web/App navigation entries, so it is exploratory code outside the current migration line. | Do not extend Web/App automation until the real business boundary is confirmed. Start interface automation from `/automation/api` instead. |
-| API automation route | `/automation/api` remains a placeholder and is intentionally not backed by `/tasks`. | Interface automation uses a separate large workspace and may need a different split strategy. | Split API automation as its own module after task/report flow stabilizes. |
+| API automation route | `/automation/api` has moved from placeholder to a dedicated interface automation workspace. | It is intentionally separate from `/tasks`; Web/App automation placeholders still should not reuse this workspace. | Continue interface automation under `/automation/api` only. |
 | Multi-page task data | Goal 56 adds server-side filtering and pagination for `/tasks`, but current smoke data may not cover many pages per engine. | Page navigation and page-size behavior may hide edge cases until seeded data is larger. | Validate with more than one page of WEB and APP tasks. |
 | Backend runtime reload | Goal 56 backend compile passed, but the running backend instance used by Playwright still returned the old all-task response until restart. | Browser smoke confirmed frontend query parameters, but not the live filtered response after restart. | Restart backend and re-run `/automation/web` query smoke before relying on server-side filtering. |
 | Task mutations | Current automation task UI is read-only. | Create/edit/delete/transition payload and permission behavior remain unverified in the new frontend. | Add disposable-data tests when mutation goals start. |
+
+## Interface Automation
+
+| Area | Not Fully Verified | Risk | Follow-up |
+| --- | --- | --- | --- |
+| Read loop | `/automation/api` real login smoke verified workspace selector, module tree, interface definition list, and empty case state with current seed data. | Current data has no interface cases for the selected definitions, so case-table flows are mostly compile-verified rather than browser-verified. | Seed or create disposable interface cases before final regression. |
+| Server filtering and pagination | Definition keyword/module/page requests and case `definitionId` requests were wired to real endpoints. | Current data only has one page, so multi-page behavior and edge page transitions remain lightly covered. | Validate with more than one page of definitions and cases. |
+| Definition create/edit | Dialog open, validation, and detail refill were smoke-tested; real saves were avoided except prior focused paths. | Save payload success and permission behavior can still vary with backend validation and workspace data. | Use disposable interface definitions for full mutation regression. |
+| Case create/edit | Dialog code and API wiring passed typecheck/build, but current selected definitions showed zero cases during latest smoke. | Edit, run, delete, and history actions for real case rows remain under-tested in the browser. | Add disposable interface cases under a disposable definition. |
+| Debug/run success paths | Definition debug-run was previously verified against a real endpoint; case run could not be verified without case rows. | Case execution may still expose payload, report, or history persistence issues. | Verify with a disposable case and known stable endpoint. |
+| Delete success paths | Definition and case delete use real DELETE endpoints and confirmation dialogs; latest smoke only canceled definition delete. | Real delete failures from references, permission, or cascade rules may need clearer copy; case delete was not browser-verified without rows. | Use disposable definitions/cases and avoid referenced records. |
+| Run history drawer | Real endpoints `/automation/api/cases/{id}/run-history` and `/automation/api/cases/run-history/{historyId}` are wired; latest data had no case rows to open the drawer. | Drawer loading, empty, and failure states are type/build covered but not fully browser-verified with real history data. | Run a disposable case, then open history and verify real history rendering. |
+| Playwright stability | Goal 67 Playwright session hung after a delete-cancel attempt; CLI artifacts were cleaned afterward. | The app build was stable, but one browser request-confirmation check did not finish cleanly. | Prefer shorter sessions and fresh Playwright sessions during final regression. |
 
 ## Recommended Next Regression Goals
 
