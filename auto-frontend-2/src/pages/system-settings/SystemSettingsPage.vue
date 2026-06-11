@@ -67,7 +67,7 @@ const placeholderMeta = computed(() => {
 .system-settings-page__content {
   min-width: 0;
   flex: 1;
-  padding: var(--app-space-6);
+  padding: var(--app-space-5);
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);

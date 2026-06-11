@@ -82,6 +82,7 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Member management | Goal 77 verified member list read, add-member validation, edit-member refill, and remove cancel. Real add/update/remove success paths were not executed to avoid changing current members. | Role payload, duplicate membership handling, permission failures, and successful refresh behavior still need disposable-data verification. | Use a disposable workspace and user account for full member mutation regression. |
 | Role permissions and settings tabs | Role permissions, notification, security, and appearance remain unified placeholders. | Users cannot configure those areas in the rebuilt frontend yet. | Split only after backend controllers and business scope are confirmed. |
 | Full system settings regression | Goal 78 runs focused smoke rather than a full destructive regression. | Cross-panel interactions and rare 401/500 states may still hide edge cases. | Add mock failure and disposable-data checks before release. |
+| UI parity depth | Goal 79 keeps the current table-based AI connection pool and only tightens density and operation-column stability. | Old-project provider-card pool, supplier grid, and richer settings tabs are still outside this small UI alignment pass. | Revisit after disposable-data regression and confirmed provider UX scope. |
 
 ## Interface Automation
 

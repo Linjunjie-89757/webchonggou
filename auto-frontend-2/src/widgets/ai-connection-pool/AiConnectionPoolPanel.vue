@@ -250,7 +250,7 @@ onMounted(() => {
           {{ formatAiProviderDate(row.lastVerifiedAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="230" fixed="right">
+      <el-table-column label="操作" width="224" fixed="right">
         <template #default="{ row }: { row: AiProviderConnectionItem }">
           <div class="ai-connection-actions">
             <button
@@ -403,13 +403,14 @@ onMounted(() => {
 
 .ai-connection-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--app-space-1);
 }
 
 .ai-connection-actions__button {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 4px;
   min-height: 28px;
   padding: 0 var(--app-space-2);

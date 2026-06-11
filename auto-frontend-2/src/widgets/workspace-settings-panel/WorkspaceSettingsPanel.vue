@@ -665,13 +665,14 @@ watch(memberWorkspaceCode, () => {
 
 .workspace-member-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--app-space-1);
 }
 
 .workspace-action-button {
   display: inline-flex;
   align-items: center;
+  flex: 0 0 auto;
   gap: 4px;
   min-height: 28px;
   padding: 0 var(--app-space-2);
