@@ -84,6 +84,7 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Delete success paths | Definition and case delete use real DELETE endpoints and confirmation dialogs; latest smoke only canceled definition delete. | Real delete failures from references, permission, or cascade rules may need clearer copy; case delete was not browser-verified without rows. | Use disposable definitions/cases and avoid referenced records. |
 | Run history drawer | Real endpoints `/automation/api/cases/{id}/run-history` and `/automation/api/cases/run-history/{historyId}` are wired; latest data had no case rows to open the drawer. | Drawer loading, empty, and failure states are type/build covered but not fully browser-verified with real history data. | Run a disposable case, then open history and verify real history rendering. |
 | Playwright stability | Goal 67 Playwright session hung after a delete-cancel attempt; CLI artifacts were cleaned afterward. | The app build was stable, but one browser request-confirmation check did not finish cleanly. | Prefer shorter sessions and fresh Playwright sessions during final regression. |
+| UI parity depth | Goal 69 only tightened summary density and operation-column button sizing for the current read/manage workspace. | The old `ApiAutomationWorkspace.vue` includes request editors, response panels, scenarios, variables, assertions, and AI generation surfaces that are still outside the current UI. | Revisit UI parity after those capabilities are migrated into sliced widgets. |
 
 ## Recommended Next Regression Goals
 

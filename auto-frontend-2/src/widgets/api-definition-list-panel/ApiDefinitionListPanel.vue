@@ -301,13 +301,14 @@ defineExpose({
             <span class="api-definition-list-panel__muted">{{ formatApiTags(row.tags) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="168" fixed="right">
+        <el-table-column label="操作" width="156" fixed="right">
           <template #default="{ row }">
             <div class="api-definition-list-panel__actions">
-              <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
-              <AppButton :loading="runningDefinitionId === row.id" @click.stop="handleRunDefinition(row)">调试</AppButton>
+              <AppButton size="small" :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
+              <AppButton size="small" :loading="runningDefinitionId === row.id" @click.stop="handleRunDefinition(row)">调试</AppButton>
               <AppButton
                 type="danger"
+                size="small"
                 plain
                 :loading="deletingDefinitionId === row.id"
                 @click.stop="handleDeleteDefinition(row)"
@@ -431,6 +432,7 @@ defineExpose({
 
 .api-definition-list-panel__actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--app-space-1);
 }

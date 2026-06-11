@@ -282,13 +282,19 @@ defineExpose({
             <span class="api-case-list-panel__muted">{{ formatApiTags(row.tags) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="188" fixed="right">
           <template #default="{ row }">
             <div class="api-case-list-panel__actions">
-              <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
-              <AppButton :loading="runningCaseId === row.id" @click.stop="handleRunCase(row)">运行</AppButton>
-              <AppButton @click.stop="openHistoryDrawer(row)">历史</AppButton>
-              <AppButton type="danger" plain :loading="deletingCaseId === row.id" @click.stop="handleDeleteCase(row)">
+              <AppButton size="small" :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
+              <AppButton size="small" :loading="runningCaseId === row.id" @click.stop="handleRunCase(row)">运行</AppButton>
+              <AppButton size="small" @click.stop="openHistoryDrawer(row)">历史</AppButton>
+              <AppButton
+                type="danger"
+                size="small"
+                plain
+                :loading="deletingCaseId === row.id"
+                @click.stop="handleDeleteCase(row)"
+              >
                 删除
               </AppButton>
             </div>
@@ -421,6 +427,7 @@ defineExpose({
 
 .api-case-list-panel__actions {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--app-space-1);
 }
