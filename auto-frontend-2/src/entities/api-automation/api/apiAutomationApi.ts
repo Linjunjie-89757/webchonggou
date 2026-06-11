@@ -8,6 +8,8 @@ import type {
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
+  ApiRunPayload,
+  ApiRunResult,
   PageResponse,
   SaveApiDefinitionCasePayload,
   SaveApiDefinitionPayload,
@@ -147,6 +149,19 @@ function normalizeCaseDetail(item: ApiDefinitionCaseDetail): ApiDefinitionCaseDe
   }
 }
 
+function normalizeRunResult(item: ApiRunResult): ApiRunResult {
+  return {
+    ...item,
+    taskId: item.taskId ?? null,
+    reportId: item.reportId ?? null,
+    taskName: item.taskName || null,
+    reportName: item.reportName || null,
+    result: item.result || null,
+    failureSummary: item.failureSummary || null,
+    stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
 export const apiAutomationApi = {
   async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionItem>>>('/automation/api/definitions', {
@@ -237,5 +252,29 @@ export const apiAutomationApi = {
     )
 
     return normalizeCaseDetail(unwrapApiResponse(payload))
+  },
+
+  async debugRunDefinition(workspaceCode = 'ALL', id: number, data?: ApiRunPayload) {
+    const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
+      `/automation/api/definitions/${id}/debug-run`,
+      data || {},
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunResult(unwrapApiResponse(payload))
+  },
+
+  async runCase(workspaceCode = 'ALL', id: number, data?: ApiRunPayload) {
+    const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
+      `/automation/api/cases/${id}/run`,
+      data || {},
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunResult(unwrapApiResponse(payload))
   },
 }
