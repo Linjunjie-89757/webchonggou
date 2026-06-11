@@ -117,6 +117,27 @@ export interface ApiDefinitionCaseItem {
   updatedAt: string | null
 }
 
+export interface ApiDefinitionCaseDetail extends ApiDefinitionCaseItem {
+  requestConfig: ApiRequestConfigInput
+  assertions: unknown[]
+  extractors: unknown[]
+  preProcessors: unknown[]
+  postProcessors: unknown[]
+  createdAt: string | null
+}
+
+export interface SaveApiDefinitionCasePayload {
+  workspaceCode?: string
+  definitionId: number
+  name: string
+  description?: string | null
+  tags: string[]
+  requestConfig: ApiRequestConfigInput
+  assertions: unknown[]
+  preProcessors: unknown[]
+  postProcessors: unknown[]
+}
+
 export interface ApiDefinitionListQuery {
   keyword?: string
   moduleId?: number | null

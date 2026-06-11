@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { RefreshRight } from '@element-plus/icons-vue'
 
 import {
@@ -8,9 +9,12 @@ import {
   ApiRunResultBadge,
   formatApiDateTime,
   formatApiTags,
+  type ApiDefinitionCaseDetail,
   type ApiDefinitionCaseItem,
   type ApiDefinitionItem,
+  type SaveApiDefinitionCasePayload,
 } from '@/entities/api-automation'
+import { ApiCaseCreateEditDialog, type ApiCaseDialogMode } from '@/features/api-case-create-edit'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -39,7 +43,69 @@ const pageNo = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const totalPages = ref(0)
+const dialogVisible = ref(false)
+const dialogMode = ref<ApiCaseDialogMode>('create')
+const editingCase = ref<ApiDefinitionCaseItem | null>(null)
+const editingCaseDetail = ref<ApiDefinitionCaseDetail | null>(null)
+const detailLoading = ref(false)
+const detailErrorMessage = ref('')
+const saving = ref(false)
+const rowLoadingId = ref<number | null>(null)
 let loadRequestSeq = 0
+
+function openCreateDialog() {
+  dialogMode.value = 'create'
+  editingCase.value = null
+  editingCaseDetail.value = null
+  detailErrorMessage.value = ''
+  dialogVisible.value = true
+}
+
+async function openEditDialog(item: ApiDefinitionCaseItem) {
+  dialogMode.value = 'edit'
+  editingCase.value = item
+  editingCaseDetail.value = null
+  detailErrorMessage.value = ''
+  dialogVisible.value = true
+  await loadCaseDetail(item)
+}
+
+async function loadCaseDetail(item = editingCase.value) {
+  if (!item) {
+    return
+  }
+
+  detailLoading.value = true
+  rowLoadingId.value = item.id
+  detailErrorMessage.value = ''
+  try {
+    editingCaseDetail.value = await apiAutomationApi.getCaseDetail(props.workspaceCode, item.id)
+  } catch (error) {
+    detailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    detailLoading.value = false
+    rowLoadingId.value = null
+  }
+}
+
+async function handleDialogSubmit(payload: SaveApiDefinitionCasePayload) {
+  saving.value = true
+  try {
+    if (dialogMode.value === 'edit' && editingCase.value) {
+      await apiAutomationApi.updateCase(props.workspaceCode, editingCase.value.id, payload)
+      ElMessage.success('接口用例已更新')
+    } else {
+      await apiAutomationApi.createCase(props.workspaceCode, payload)
+      ElMessage.success('接口用例已创建')
+    }
+    dialogVisible.value = false
+    await loadCases({ keepPage: dialogMode.value === 'edit' })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
+}
 
 async function loadCases(options: { keepPage?: boolean } = {}) {
   if (!props.definition) {
@@ -112,7 +178,10 @@ defineExpose({
         <span v-if="definition">{{ definition.name }} · 共 {{ total }} 条</span>
         <span v-else>请选择接口定义</span>
       </div>
-      <AppButton :icon="RefreshRight" :loading="loading" :disabled="!definition" @click="loadCases">刷新</AppButton>
+      <div class="api-case-list-panel__tools">
+        <AppButton type="primary" :disabled="!definition" @click="openCreateDialog">新增用例</AppButton>
+        <AppButton :icon="RefreshRight" :loading="loading" :disabled="!definition" @click="loadCases">刷新</AppButton>
+      </div>
     </header>
 
     <AppEmptyState
@@ -164,9 +233,9 @@ defineExpose({
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
-          <template #default>
+          <template #default="{ row }">
             <div class="api-case-list-panel__actions">
-              <AppButton disabled>编辑</AppButton>
+              <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
               <AppButton disabled>运行</AppButton>
             </div>
           </template>
@@ -187,6 +256,20 @@ defineExpose({
         />
       </footer>
     </div>
+
+    <ApiCaseCreateEditDialog
+      v-model="dialogVisible"
+      :mode="dialogMode"
+      :definition="definition"
+      :case-item="editingCase"
+      :case-detail="editingCaseDetail"
+      :saving="saving"
+      :loading-detail="detailLoading"
+      :detail-error-message="detailErrorMessage"
+      :default-workspace-code="workspaceCode"
+      @submit="handleDialogSubmit"
+      @retry-detail="loadCaseDetail"
+    />
   </section>
 </template>
 
@@ -228,6 +311,17 @@ defineExpose({
   font-size: var(--app-font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.api-case-list-panel__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.api-case-list-panel__tools :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .api-case-list-panel__table-wrap {

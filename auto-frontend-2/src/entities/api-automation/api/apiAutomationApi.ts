@@ -2,12 +2,14 @@ import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/reque
 
 import type {
   ApiCaseListQuery,
+  ApiDefinitionCaseDetail,
   ApiDefinitionDetail,
   ApiDefinitionListQuery,
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
   PageResponse,
+  SaveApiDefinitionCasePayload,
   SaveApiDefinitionPayload,
 } from '../model/types'
 
@@ -133,6 +135,18 @@ function normalizeCase(item: ApiDefinitionCaseItem): ApiDefinitionCaseItem {
   }
 }
 
+function normalizeCaseDetail(item: ApiDefinitionCaseDetail): ApiDefinitionCaseDetail {
+  return {
+    ...normalizeCase(item),
+    requestConfig: normalizeRequestConfig(item.requestConfig),
+    assertions: Array.isArray(item.assertions) ? item.assertions : [],
+    extractors: Array.isArray(item.extractors) ? item.extractors : [],
+    preProcessors: Array.isArray(item.preProcessors) ? item.preProcessors : [],
+    postProcessors: Array.isArray(item.postProcessors) ? item.postProcessors : [],
+    createdAt: item.createdAt || null,
+  }
+}
+
 export const apiAutomationApi = {
   async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionItem>>>('/automation/api/definitions', {
@@ -191,5 +205,37 @@ export const apiAutomationApi = {
     })
 
     return normalizePageResponse(unwrapApiResponse(payload), normalizeCase)
+  },
+
+  async getCaseDetail(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<ApiDefinitionCaseDetail>>(`/automation/api/cases/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeCaseDetail(unwrapApiResponse(payload))
+  },
+
+  async createCase(workspaceCode = 'ALL', data: SaveApiDefinitionCasePayload) {
+    const payload = await httpPost<ApiResponse<ApiDefinitionCaseDetail>, SaveApiDefinitionCasePayload>(
+      '/automation/api/cases',
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeCaseDetail(unwrapApiResponse(payload))
+  },
+
+  async updateCase(workspaceCode = 'ALL', id: number, data: SaveApiDefinitionCasePayload) {
+    const payload = await httpPut<ApiResponse<ApiDefinitionCaseDetail>, SaveApiDefinitionCasePayload>(
+      `/automation/api/cases/${id}`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeCaseDetail(unwrapApiResponse(payload))
   },
 }
