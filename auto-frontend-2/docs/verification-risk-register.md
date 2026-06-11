@@ -48,8 +48,11 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Comment create path | Only read-only comments are displayed. Comment creation is not implemented or verified. | Users cannot add comments from the new frontend yet. | Add comment creation after read-only detail stabilization. |
 | Attachment actions | Attachments are displayed from detail data only. Upload/download/delete are not implemented or verified. | File workflows may still depend on old frontend. | Add attachment actions with disposable files and permission checks. |
 | Comment failure states | Comment read failure is handled locally in the drawer, but only smoke-tested against real service behavior. | Mocked 401/500 comment failures may reveal UI edge cases. | Add focused mock failure tests for comments. |
+| Filter contract evidence | Keyword input smoke did not visibly reduce the current real-data list. | The backend may be returning broad matches, or the smoke data may all match the query. | Verify with distinctive seeded data or inspect network response during contract pass. |
+| Duplicate list requests | Workspace/filter/pageSize reload now uses a single first-page reload helper. | Only browser smoke was run; network request counts were not instrumented. | Confirm with network tracing during final regression if request volume matters. |
+| Assign/transition failure UX | Entry dialogs were opened and non-mutating validation paths were lightly checked. | Real 4xx/5xx failures may still reveal dialog persistence or message issues. | Test against disposable records or mocked failures. |
 | Failure mock paths | No mocked 500/401 assign-transition failures were run. | Some failure UI edge cases may remain. | Add focused mock failure smoke tests. |
-| Full module regression | Only lightweight smoke checks have been run for latest goals. | Interactions between create/edit/detail/assign/transition may hide regressions. | Run defect stabilization goal after feature set is complete. |
+| Full module regression | Goal 49 ran a light-to-medium smoke pass, but destructive success paths were skipped. | Interactions around real create/edit/assign/transition success may hide regressions. | Run a disposable-data regression before release. |
 
 ## Recommended Next Regression Goals
 
