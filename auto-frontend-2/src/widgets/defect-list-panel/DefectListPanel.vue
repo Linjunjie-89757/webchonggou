@@ -20,6 +20,7 @@ import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
+import { DefectDetailDrawer } from '@/widgets/defect-detail-drawer'
 
 const props = withDefaults(
   defineProps<{
@@ -50,6 +51,8 @@ const detailLoading = ref(false)
 const detailErrorMessage = ref('')
 const saving = ref(false)
 const editingRowId = ref<number | null>(null)
+const detailDrawerVisible = ref(false)
+const detailDefectId = ref<number | null>(null)
 let loadRequestSeq = 0
 let detailRequestSeq = 0
 
@@ -132,6 +135,11 @@ function openEditDialog(item: DefectSummaryItem) {
   void loadDefectDetail(item)
 }
 
+function openDetailDrawer(item: DefectSummaryItem) {
+  detailDefectId.value = item.id
+  detailDrawerVisible.value = true
+}
+
 async function submitDefect(payload: SaveDefectPayload) {
   saving.value = true
   try {
@@ -156,6 +164,7 @@ watch(
   () => {
     pageNo.value = 1
     dialogVisible.value = false
+    detailDrawerVisible.value = false
     void loadDefects()
   },
 )
@@ -287,7 +296,7 @@ defineExpose({
           <el-table-column label="操作" width="132" fixed="right">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <div class="defect-list-panel__actions">
-                <AppButton size="small" disabled>详情</AppButton>
+                <AppButton size="small" @click="openDetailDrawer(row)">详情</AppButton>
                 <AppButton
                   size="small"
                   :loading="editingRowId === row.id"
@@ -332,6 +341,12 @@ defineExpose({
       :default-workspace-code="workspaceCode"
       @submit="submitDefect"
       @retry-detail="activeDefect && loadDefectDetail(activeDefect)"
+    />
+
+    <DefectDetailDrawer
+      v-model="detailDrawerVisible"
+      :defect-id="detailDefectId"
+      :workspace-code="workspaceCode"
     />
   </section>
 </template>
