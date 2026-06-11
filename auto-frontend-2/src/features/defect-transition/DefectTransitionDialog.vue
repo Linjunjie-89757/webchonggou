@@ -114,8 +114,10 @@ watch(
     </div>
 
     <template #footer>
-      <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
-      <AppButton type="primary" :loading="saving" @click="submit">保存流转</AppButton>
+      <div class="defect-transition-dialog__footer">
+        <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
+        <AppButton type="primary" :loading="saving" @click="submit">保存流转</AppButton>
+      </div>
     </template>
   </AppDialog>
 </template>
@@ -208,6 +210,16 @@ watch(
   margin: 0;
   color: var(--app-danger);
   font-size: var(--app-font-size-sm);
+}
+
+.defect-transition-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
+}
+
+.defect-transition-dialog__footer :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 @media (max-width: 640px) {

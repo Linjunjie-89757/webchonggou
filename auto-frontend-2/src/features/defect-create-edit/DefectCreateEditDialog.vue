@@ -186,15 +186,17 @@ watch(
     </div>
 
     <template #footer>
-      <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
-      <AppButton
-        type="primary"
-        :loading="saving"
-        :disabled="loadingDetail || Boolean(detailErrorMessage)"
-        @click="submit"
-      >
-        保存
-      </AppButton>
+      <div class="defect-dialog__footer">
+        <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
+        <AppButton
+          type="primary"
+          :loading="saving"
+          :disabled="loadingDetail || Boolean(detailErrorMessage)"
+          @click="submit"
+        >
+          保存
+        </AppButton>
+      </div>
     </template>
   </AppDialog>
 </template>
@@ -301,6 +303,16 @@ watch(
   margin: 0;
   color: var(--app-danger);
   font-size: var(--app-font-size-sm);
+}
+
+.defect-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
+}
+
+.defect-dialog__footer :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 @media (max-width: 720px) {
