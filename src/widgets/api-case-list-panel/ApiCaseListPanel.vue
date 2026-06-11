@@ -15,6 +15,7 @@ import {
   type SaveApiDefinitionCasePayload,
 } from '@/entities/api-automation'
 import { ApiCaseCreateEditDialog, type ApiCaseDialogMode } from '@/features/api-case-create-edit'
+import { runApiCase } from '@/features/api-run'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -51,6 +52,7 @@ const detailLoading = ref(false)
 const detailErrorMessage = ref('')
 const saving = ref(false)
 const rowLoadingId = ref<number | null>(null)
+const runningCaseId = ref<number | null>(null)
 let loadRequestSeq = 0
 
 function openCreateDialog() {
@@ -104,6 +106,20 @@ async function handleDialogSubmit(payload: SaveApiDefinitionCasePayload) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     saving.value = false
+  }
+}
+
+async function handleRunCase(item: ApiDefinitionCaseItem) {
+  runningCaseId.value = item.id
+  try {
+    const result = await runApiCase(props.workspaceCode, item.id)
+    const resultText = result.result ? `，结果：${result.result}` : ''
+    ElMessage.success(`接口用例运行已完成${resultText}`)
+    await loadCases({ keepPage: true })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    runningCaseId.value = null
   }
 }
 
@@ -236,7 +252,7 @@ defineExpose({
           <template #default="{ row }">
             <div class="api-case-list-panel__actions">
               <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
-              <AppButton disabled>运行</AppButton>
+              <AppButton :loading="runningCaseId === row.id" @click.stop="handleRunCase(row)">运行</AppButton>
             </div>
           </template>
         </el-table-column>

@@ -138,6 +138,22 @@ export interface SaveApiDefinitionCasePayload {
   postProcessors: unknown[]
 }
 
+export interface ApiRunPayload {
+  workspaceCode?: string
+  environmentId?: number | null
+  variableSetId?: number | null
+}
+
+export interface ApiRunResult {
+  taskId: number | null
+  reportId: number | null
+  taskName: string | null
+  reportName: string | null
+  result: string | null
+  failureSummary: string | null
+  stepResults: unknown[]
+}
+
 export interface ApiDefinitionListQuery {
   keyword?: string
   moduleId?: number | null

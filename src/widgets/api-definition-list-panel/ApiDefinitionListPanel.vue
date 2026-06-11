@@ -16,6 +16,7 @@ import {
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
 import { ApiDefinitionCreateEditDialog, type ApiDefinitionDialogMode } from '@/features/api-definition-create-edit'
+import { runApiDefinition } from '@/features/api-run'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -57,6 +58,7 @@ const detailLoading = ref(false)
 const detailErrorMessage = ref('')
 const saving = ref(false)
 const rowLoadingId = ref<number | null>(null)
+const runningDefinitionId = ref<number | null>(null)
 let loadRequestSeq = 0
 
 function selectDefinition(item: ApiDefinitionItem) {
@@ -114,6 +116,20 @@ async function handleDialogSubmit(payload: SaveApiDefinitionPayload) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     saving.value = false
+  }
+}
+
+async function handleRunDefinition(item: ApiDefinitionItem) {
+  runningDefinitionId.value = item.id
+  try {
+    const result = await runApiDefinition(props.workspaceCode, item.id)
+    const resultText = result.result ? `，结果：${result.result}` : ''
+    ElMessage.success(`接口调试已完成${resultText}`)
+    await loadDefinitions({ keepPage: true })
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    runningDefinitionId.value = null
   }
 }
 
@@ -259,7 +275,7 @@ defineExpose({
           <template #default="{ row }">
             <div class="api-definition-list-panel__actions">
               <AppButton :loading="rowLoadingId === row.id" @click.stop="openEditDialog(row)">编辑</AppButton>
-              <AppButton disabled>调试</AppButton>
+              <AppButton :loading="runningDefinitionId === row.id" @click.stop="handleRunDefinition(row)">调试</AppButton>
             </div>
           </template>
         </el-table-column>
