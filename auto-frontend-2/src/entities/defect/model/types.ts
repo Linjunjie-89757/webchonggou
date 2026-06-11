@@ -54,6 +54,15 @@ export interface DefectClientFilter {
   severity: string
 }
 
+export interface DefectListQuery {
+  keyword?: string
+  status?: string
+  priority?: string
+  severity?: string
+  pageNo?: number
+  pageSize?: number
+}
+
 export interface DefectStat {
   label: string
   value: number

@@ -1,6 +1,6 @@
 import { httpGet, type ApiResponse } from '@/shared/api/request'
 
-import type { DefectListResponse, DefectStatistics, DefectSummaryItem } from '../model/types'
+import type { DefectListQuery, DefectListResponse, DefectStatistics, DefectSummaryItem } from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
@@ -14,6 +14,16 @@ function unwrapApiResponse<T>(payload: ApiResponse<T>) {
   }
 
   return payload.data
+}
+
+function cleanQuery(query?: DefectListQuery) {
+  if (!query) {
+    return undefined
+  }
+
+  return Object.fromEntries(
+    Object.entries(query).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
 }
 
 function normalizeDefectItem(item: DefectSummaryItem): DefectSummaryItem {
@@ -44,9 +54,10 @@ function normalizeDefectListResponse(page: DefectListResponse): DefectListRespon
 }
 
 export const defectApi = {
-  async getDefects(workspaceCode = 'ALL') {
+  async getDefects(workspaceCode = 'ALL', query?: DefectListQuery) {
     const payload = await httpGet<ApiResponse<DefectListResponse>>('/bugs', {
       headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
     })
 
     return normalizeDefectListResponse(unwrapApiResponse(payload))

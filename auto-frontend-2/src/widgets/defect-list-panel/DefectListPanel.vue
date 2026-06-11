@@ -9,7 +9,6 @@ import {
   defectApi,
   formatDefectDateTime,
   formatDefectTags,
-  matchesDefectClientFilter,
   type DefectClientFilter,
   type DefectSummaryItem,
 } from '@/entities/defect'
@@ -37,19 +36,14 @@ const loading = ref(false)
 const errorMessage = ref('')
 const pageNo = ref(1)
 const pageSize = ref(10)
+const total = ref(0)
+const totalPages = ref(0)
 let loadRequestSeq = 0
 
-const filteredDefects = computed(() => defects.value.filter((item) => matchesDefectClientFilter(item, props.filter)))
-
-const total = computed(() => filteredDefects.value.length)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
-const pagedDefects = computed(() => {
-  const start = (pageNo.value - 1) * pageSize.value
-  return filteredDefects.value.slice(start, start + pageSize.value)
-})
+const pagedDefects = computed(() => defects.value)
 
 function normalizePageNo() {
-  if (pageNo.value > totalPages.value) {
+  if (totalPages.value > 0 && pageNo.value > totalPages.value) {
     pageNo.value = totalPages.value
   }
 }
@@ -59,10 +53,19 @@ async function loadDefects() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const page = await defectApi.getDefects(props.workspaceCode)
+    const page = await defectApi.getDefects(props.workspaceCode, {
+      pageNo: pageNo.value,
+      pageSize: pageSize.value,
+      keyword: props.filter.keyword,
+      status: props.filter.status,
+      priority: props.filter.priority,
+      severity: props.filter.severity,
+    })
     if (requestSeq === loadRequestSeq) {
       defects.value = Array.isArray(page.items) ? page.items : []
-      pageNo.value = 1
+      pageNo.value = page.pageNo
+      total.value = page.total
+      totalPages.value = page.totalPages
       emit('loaded', defects.value)
     }
   } catch (error) {
@@ -79,6 +82,7 @@ async function loadDefects() {
 watch(
   () => props.workspaceCode,
   () => {
+    pageNo.value = 1
     void loadDefects()
   },
 )
@@ -87,9 +91,23 @@ watch(
   () => props.filter,
   () => {
     pageNo.value = 1
+    void loadDefects()
   },
   { deep: true },
 )
+
+watch(pageNo, (value, oldValue) => {
+  if (value !== oldValue) {
+    void loadDefects()
+  }
+})
+
+watch(pageSize, (value, oldValue) => {
+  if (value !== oldValue) {
+    pageNo.value = 1
+    void loadDefects()
+  }
+})
 
 watch(totalPages, normalizePageNo)
 
@@ -197,18 +215,12 @@ defineExpose({
       </div>
 
       <AppEmptyState
-        v-if="!loading && defects.length && !pagedDefects.length"
-        title="暂无匹配缺陷"
-        description="当前筛选条件下没有可展示的缺陷记录。"
-      />
-
-      <AppEmptyState
         v-if="!loading && !defects.length && !errorMessage"
-        title="暂无缺陷"
-        description="当前工作空间下还没有缺陷记录。"
+        title="暂无匹配缺陷"
+        description="当前工作空间或筛选条件下没有可展示的缺陷记录。"
       />
 
-      <div v-if="defects.length" class="defect-list-panel__pagination">
+      <div v-if="defects.length || total > 0" class="defect-list-panel__pagination">
         <span>共 {{ total }} 条 / {{ totalPages }} 页</span>
         <el-pagination
           v-model:current-page="pageNo"
