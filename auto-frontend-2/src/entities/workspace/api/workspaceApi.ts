@@ -2,6 +2,12 @@ import { httpGet, type ApiResponse } from '@/shared/api/request'
 
 import type { WorkspaceItem } from '../model/types'
 
+function workspaceHeaders(workspaceCode = 'ALL') {
+  return {
+    'X-Workspace-Code': workspaceCode,
+  }
+}
+
 function normalizeWorkspaceItem(item: WorkspaceItem): WorkspaceItem {
   const workspaceCode = item.workspaceCode || item.code || 'ALL'
   const workspaceName = item.workspaceName || item.name || workspaceCode
@@ -23,8 +29,17 @@ function unwrapWorkspaceResponse(payload: ApiResponse<WorkspaceItem[]>) {
 }
 
 export const workspaceApi = {
+  async getWorkspaces() {
+    const payload = await httpGet<ApiResponse<WorkspaceItem[]>>('/workspaces', {
+      headers: workspaceHeaders('ALL'),
+    })
+    return unwrapWorkspaceResponse(payload)
+  },
+
   async getSwitchableWorkspaces() {
-    const payload = await httpGet<ApiResponse<WorkspaceItem[]>>('/workspaces/switchable')
+    const payload = await httpGet<ApiResponse<WorkspaceItem[]>>('/workspaces/switchable', {
+      headers: workspaceHeaders('ALL'),
+    })
     return unwrapWorkspaceResponse(payload)
   },
 }

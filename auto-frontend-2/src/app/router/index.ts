@@ -8,6 +8,7 @@ import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
 import DefectsPage from '@/pages/defects/DefectsPage.vue'
 import LoginPage from '@/pages/login/LoginPage.vue'
 import PlaceholderPage from '@/pages/placeholder/PlaceholderPage.vue'
+import SystemSettingsPage from '@/pages/system-settings/SystemSettingsPage.vue'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -36,7 +37,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'settings',
         name: 'settings',
-        component: PlaceholderPage,
+        component: SystemSettingsPage,
         meta: {
           title: '系统设置',
           description: '后续拆分为设置分类侧栏、AI 连接池、空间配置等 widgets。',
