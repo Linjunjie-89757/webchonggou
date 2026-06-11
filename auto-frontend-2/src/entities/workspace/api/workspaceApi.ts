@@ -1,6 +1,6 @@
-import { httpGet, type ApiResponse } from '@/shared/api/request'
+import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
-import type { WorkspaceItem } from '../model/types'
+import type { SaveWorkspacePayload, WorkspaceItem } from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
@@ -41,5 +41,33 @@ export const workspaceApi = {
       headers: workspaceHeaders('ALL'),
     })
     return unwrapWorkspaceResponse(payload)
+  },
+
+  async createWorkspace(payload: SaveWorkspacePayload) {
+    const response = await httpPost<ApiResponse<WorkspaceItem>, SaveWorkspacePayload>('/workspaces', payload, {
+      headers: workspaceHeaders('ALL'),
+    })
+
+    if (response.success === false) {
+      throw new Error(response.message || '工作空间创建失败')
+    }
+
+    return normalizeWorkspaceItem(response.data)
+  },
+
+  async updateWorkspace(workspaceCode: string, payload: SaveWorkspacePayload) {
+    const response = await httpPut<ApiResponse<WorkspaceItem>, SaveWorkspacePayload>(
+      `/workspaces/${encodeURIComponent(workspaceCode)}`,
+      payload,
+      {
+        headers: workspaceHeaders('ALL'),
+      },
+    )
+
+    if (response.success === false) {
+      throw new Error(response.message || '工作空间更新失败')
+    }
+
+    return normalizeWorkspaceItem(response.data)
   },
 }

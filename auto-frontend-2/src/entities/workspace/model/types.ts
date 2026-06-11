@@ -17,3 +17,12 @@ export interface WorkspaceItem {
   createdAt?: string | null
   updatedAt?: string | null
 }
+
+export interface SaveWorkspacePayload {
+  workspaceCode?: string
+  workspaceName: string
+  description?: string | null
+  workspaceType?: string | null
+  ownerUserId?: number | null
+  status?: number | null
+}

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
-import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import { workspaceApi, type SaveWorkspacePayload, type WorkspaceItem } from '@/entities/workspace'
 import {
   formatUserWorkspaceNames,
   getUserDisplayName,
@@ -11,6 +12,7 @@ import {
   type UserItem,
   userApi,
 } from '@/entities/user'
+import { WorkspaceCreateEditDialog, type WorkspaceDialogMode } from '@/features/workspace-create-edit'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -21,8 +23,12 @@ const workspaces = ref<WorkspaceItem[]>([])
 const users = ref<UserItem[]>([])
 const workspaceLoading = ref(false)
 const userLoading = ref(false)
+const savingWorkspace = ref(false)
 const workspaceErrorMessage = ref('')
 const userErrorMessage = ref('')
+const workspaceDialogVisible = ref(false)
+const workspaceDialogMode = ref<WorkspaceDialogMode>('create')
+const editingWorkspace = ref<WorkspaceItem | null>(null)
 
 const businessWorkspaces = computed(() => workspaces.value.filter((item) => !item.allScope && item.workspaceCode !== 'ALL'))
 
@@ -73,6 +79,37 @@ function reloadAll() {
   void loadUsers()
 }
 
+function openCreateWorkspaceDialog() {
+  workspaceDialogMode.value = 'create'
+  editingWorkspace.value = null
+  workspaceDialogVisible.value = true
+}
+
+function openEditWorkspaceDialog(workspace: WorkspaceItem) {
+  workspaceDialogMode.value = 'edit'
+  editingWorkspace.value = workspace
+  workspaceDialogVisible.value = true
+}
+
+async function submitWorkspace(payload: SaveWorkspacePayload) {
+  savingWorkspace.value = true
+  try {
+    if (workspaceDialogMode.value === 'edit' && editingWorkspace.value) {
+      await workspaceApi.updateWorkspace(editingWorkspace.value.workspaceCode, payload)
+      ElMessage.success('工作空间已更新')
+    } else {
+      await workspaceApi.createWorkspace(payload)
+      ElMessage.success('工作空间已创建')
+    }
+    workspaceDialogVisible.value = false
+    await loadWorkspaces()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    savingWorkspace.value = false
+  }
+}
+
 onMounted(() => {
   reloadAll()
 })
@@ -85,13 +122,16 @@ onMounted(() => {
         <h2>工作空间设置</h2>
         <p>查看平台工作空间和用户账号概览，成员管理写操作后续单独接入。</p>
       </div>
-      <AppButton
-        :icon="RefreshRight"
-        :loading="workspaceLoading || userLoading"
-        @click="reloadAll"
-      >
-        刷新
-      </AppButton>
+      <div class="settings-panel-header__actions">
+        <AppButton
+          :icon="RefreshRight"
+          :loading="workspaceLoading || userLoading"
+          @click="reloadAll"
+        >
+          刷新
+        </AppButton>
+        <AppButton type="primary" :icon="Plus" @click="openCreateWorkspaceDialog">新增空间</AppButton>
+      </div>
     </header>
 
     <div class="settings-stat-grid">
@@ -104,9 +144,12 @@ onMounted(() => {
     <div class="settings-panel-block">
       <div class="settings-panel-block__header">
         <h3>工作空间</h3>
-        <span v-if="workspaceErrorMessage && businessWorkspaces.length > 0" class="settings-inline-error">
-          {{ workspaceErrorMessage }}
-        </span>
+        <div class="settings-panel-block__actions">
+          <span v-if="workspaceErrorMessage && businessWorkspaces.length > 0" class="settings-inline-error">
+            {{ workspaceErrorMessage }}
+          </span>
+          <AppButton size="small" type="primary" :icon="Plus" @click="openCreateWorkspaceDialog">新增空间</AppButton>
+        </div>
       </div>
 
       <AppLoadingState v-if="workspaceLoading && businessWorkspaces.length === 0" text="正在加载工作空间" />
@@ -125,7 +168,11 @@ onMounted(() => {
         v-else-if="businessWorkspaces.length === 0"
         title="暂无工作空间"
         description="当前平台暂无可展示的业务工作空间。"
-      />
+      >
+        <template #actions>
+          <AppButton type="primary" :icon="Plus" @click="openCreateWorkspaceDialog">新增空间</AppButton>
+        </template>
+      </AppEmptyState>
 
       <el-table v-else v-loading="workspaceLoading" :data="businessWorkspaces" class="settings-table" row-key="workspaceCode">
         <el-table-column prop="workspaceName" label="空间名称" min-width="180" show-overflow-tooltip />
@@ -156,6 +203,19 @@ onMounted(() => {
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }: { row: WorkspaceItem }">
             {{ formatDateTime(row.updatedAt) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="88" fixed="right">
+          <template #default="{ row }: { row: WorkspaceItem }">
+            <button
+              type="button"
+              class="workspace-action-button"
+              aria-label="编辑空间"
+              @click="openEditWorkspaceDialog(row)"
+            >
+              <el-icon><Edit /></el-icon>
+              <span>编辑</span>
+            </button>
           </template>
         </el-table-column>
       </el-table>
@@ -215,6 +275,14 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </div>
+
+    <WorkspaceCreateEditDialog
+      v-model="workspaceDialogVisible"
+      :mode="workspaceDialogMode"
+      :workspace="editingWorkspace"
+      :saving="savingWorkspace"
+      @submit="submitWorkspace"
+    />
   </section>
 </template>
 
@@ -230,6 +298,13 @@ onMounted(() => {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--app-space-4);
+}
+
+.settings-panel-header__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
 }
 
 .settings-panel-header h2 {
@@ -286,6 +361,14 @@ onMounted(() => {
   gap: var(--app-space-3);
 }
 
+.settings-panel-block__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
+}
+
 .settings-panel-block h3 {
   margin: 0;
   color: var(--app-text-primary);
@@ -311,6 +394,26 @@ onMounted(() => {
   width: 100%;
 }
 
+.workspace-action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0 var(--app-space-2);
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  transition: background-color 160ms ease;
+}
+
+.workspace-action-button:hover {
+  background: var(--app-primary-soft);
+}
+
 @media (max-width: 960px) {
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -322,6 +425,11 @@ onMounted(() => {
   .settings-panel-block__header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .settings-panel-header__actions,
+  .settings-panel-block__actions {
+    justify-content: flex-start;
   }
 
   .settings-stat-grid {
