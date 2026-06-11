@@ -28,14 +28,14 @@ defineProps<{
 .api-automation-summary-panel {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
-  gap: var(--app-space-3);
+  gap: var(--app-space-2);
 }
 
 .api-automation-summary-panel__item {
   min-width: 0;
-  padding: var(--app-space-3) var(--app-space-4);
+  padding: var(--app-space-2) var(--app-space-3);
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
 
@@ -47,10 +47,10 @@ defineProps<{
 
 .api-automation-summary-panel__item strong {
   display: block;
-  margin-top: var(--app-space-1);
+  margin-top: 2px;
   color: var(--app-text-primary);
-  font-size: 22px;
-  line-height: 28px;
+  font-size: var(--app-font-size-xl);
+  line-height: 24px;
 }
 
 .api-automation-summary-panel__item--primary strong {
