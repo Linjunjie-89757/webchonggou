@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { RefreshRight } from '@element-plus/icons-vue'
 
@@ -208,24 +208,13 @@ function handlePageSizeChange(value: number) {
 }
 
 watch(
-  () => props.workspaceCode,
+  () => [props.workspaceCode, props.filter.keyword, props.selectedModuleId] as const,
   () => {
     emit('select', null)
     void loadDefinitions()
   },
+  { immediate: true },
 )
-
-watch(
-  () => [props.filter.keyword, props.selectedModuleId],
-  () => {
-    emit('select', null)
-    void loadDefinitions()
-  },
-)
-
-onMounted(() => {
-  void loadDefinitions()
-})
 
 defineExpose({
   reload: loadDefinitions,
