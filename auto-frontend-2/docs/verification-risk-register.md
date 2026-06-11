@@ -19,6 +19,17 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Backend compile | Open | Earlier backend compile was blocked by unrelated `ApiExecutionEngineSupport.readScenarioSteps` error. | Recheck when backend work resumes. |
 | Encoding | Monitoring | PowerShell may display UTF-8 Chinese as mojibake, while source files are UTF-8. | Prefer editor/file checks over console display for Chinese text. |
 
+## Release Disposable Regression
+
+| Area | Status | Finding | Follow-up |
+| --- | --- | --- | --- |
+| Config Center | Fixed/Verified | Goal 82 disposable env and param create/edit/status/delete succeeded. Disposable DB connection create/delete succeeded; invalid DB test returned a stable backend 400. | UI should keep failed test dialogs/lists stable; backend may optionally return business `success=false` instead of HTTP 400 for test failures. |
+| Case Center | Verified | Goal 82 disposable case create/detail/edit/review/execute/batch-update/delete succeeded under `retail-onboarding`. | Keep a disposable case script for future release checks. |
+| Defect Management | Partially Verified | Goal 82 disposable defect create/detail/comments/edit/assign/transition succeeded. No delete endpoint is currently wired, so disposable defect remains in real data. | Add/confirm defect delete support or provide a cleanup script before repeated release regressions. |
+| Interface Automation | Partially Verified | Goal 82 disposable API definition and case create/detail/edit/run/history/delete succeeded. Deleting the definition left an empty `DISPOSABLE` module in the module tree. | Confirm whether backend should clean empty definition modules or expose module delete cleanup. |
+| System Settings | Partially Fixed/Verified | Goal 82 found AI connection timeout frontend allowed 1-9 seconds while backend requires 10-600 seconds; frontend validation was aligned. AI provider create/models/update/delete then succeeded. Invalid AI test returned a backend 400. | Keep frontend timeout minimum at 10. Consider backend business result for test failures if global error toast is too coarse. |
+| Workspace Settings | Partially Verified | Goal 82 disposable workspace create/edit succeeded. No workspace delete endpoint is currently in frontend scope, so disposable workspace remains in real data. Duplicate member add returned stable backend 400. | Add workspace delete or cleanup tooling before repeated release regressions; keep member failure UX stable. |
+
 ## Config Center
 
 | Area | Not Fully Verified | Risk | Follow-up |

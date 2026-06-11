@@ -153,7 +153,7 @@ watch(
       <div class="ai-connection-dialog__grid">
         <label class="ai-connection-dialog__field">
           <span>请求超时（秒）</span>
-          <el-input-number v-model="form.requestTimeoutSeconds" :min="1" :max="600" />
+          <el-input-number v-model="form.requestTimeoutSeconds" :min="10" :max="600" />
         </label>
 
         <div class="ai-connection-dialog__field">

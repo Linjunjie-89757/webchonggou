@@ -88,8 +88,8 @@ export function validateAiConnectionForm(form: AiConnectionForm, mode: AiConnect
   if (mode === 'create' && !form.apiKey.trim()) {
     return '请输入 API Key'
   }
-  if (!Number.isFinite(form.requestTimeoutSeconds) || form.requestTimeoutSeconds <= 0) {
-    return '请求超时时间必须大于 0'
+  if (!Number.isFinite(form.requestTimeoutSeconds) || form.requestTimeoutSeconds < 10 || form.requestTimeoutSeconds > 600) {
+    return '请求超时时间必须在 10 到 600 秒之间'
   }
   return ''
 }
