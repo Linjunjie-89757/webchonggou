@@ -464,6 +464,7 @@ defineExpose({
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-card);
 }
 
 .defect-list-panel__inline-error {
@@ -533,6 +534,11 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: var(--app-space-1);
+  white-space: nowrap;
+}
+
+.defect-list-panel__actions > * {
+  flex: 0 0 auto;
 }
 
 .defect-list-panel__pagination {
@@ -541,6 +547,8 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-3);
+  padding-top: var(--app-space-3);
+  border-top: 1px solid var(--app-border-soft);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
 }

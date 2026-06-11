@@ -154,6 +154,12 @@ watch(
 .defect-transition-dialog__summary strong {
   color: var(--app-text-primary);
   font-size: var(--app-font-size-base);
+  line-height: var(--app-line-height-md);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .defect-transition-dialog__field {
