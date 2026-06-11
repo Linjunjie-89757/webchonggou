@@ -59,6 +59,7 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Failure mock paths | No mocked 500/401 assign-transition failures were run. | Some failure UI edge cases may remain. | Add focused mock failure smoke tests. |
 | Mutation success paths | Goal 51 opened create/edit/assign/transition dialogs but skipped saves to avoid changing real data. | Payload validation, permissions, and success refresh behavior still need disposable-data verification. | Use explicit disposable defect records before release. |
 | Full module regression | Goal 49 ran a light-to-medium smoke pass, and Goal 51 added real-data read-only integration evidence; destructive success paths were skipped. | Interactions around real create/edit/assign/transition success may hide regressions. | Run a disposable-data regression before release. |
+| Workspace first-load stability | Goal 58 gates the defect list until workspace resolution completes, avoiding an initial `ALL` list request followed by a default-workspace reload. | Browser smoke covered the current default workspace only; unusual workspace API failures still need final regression coverage. | Recheck with a failing workspace API mock and multiple real workspace defaults. |
 
 ## Automation Tasks
 

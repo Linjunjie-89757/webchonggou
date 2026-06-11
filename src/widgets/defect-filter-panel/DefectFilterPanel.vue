@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { nextTick, reactive, watch } from 'vue'
 import { RefreshRight, Search } from '@element-plus/icons-vue'
 
 import {
@@ -25,11 +25,27 @@ const form = reactive<DefectClientFilter>({
   priority: props.modelValue.priority,
   severity: props.modelValue.severity,
 })
+let syncingFromModel = false
+
+function isSameFilter(left: DefectClientFilter, right: DefectClientFilter) {
+  return (
+    left.keyword === right.keyword &&
+    left.status === right.status &&
+    left.priority === right.priority &&
+    left.severity === right.severity
+  )
+}
 
 watch(
   () => props.modelValue,
   (value) => {
-    Object.assign(form, value)
+    if (!isSameFilter(form, value)) {
+      syncingFromModel = true
+      Object.assign(form, value)
+      void nextTick(() => {
+        syncingFromModel = false
+      })
+    }
   },
   { deep: true },
 )
@@ -37,7 +53,14 @@ watch(
 watch(
   form,
   () => {
-    emit('update:modelValue', { ...form })
+    if (syncingFromModel) {
+      return
+    }
+
+    const nextFilter = { ...form }
+    if (!isSameFilter(nextFilter, props.modelValue)) {
+      emit('update:modelValue', nextFilter)
+    }
   },
   { deep: true },
 )

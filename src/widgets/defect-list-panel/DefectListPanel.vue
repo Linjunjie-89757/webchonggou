@@ -65,6 +65,7 @@ const transitioningDefect = ref<DefectSummaryItem | null>(null)
 const transitioningDefectId = ref<number | null>(null)
 let loadRequestSeq = 0
 let detailRequestSeq = 0
+let pendingLoadSignature = ''
 
 const pagedDefects = computed(() => defects.value)
 
@@ -88,7 +89,21 @@ function reloadFromFirstPage() {
 }
 
 async function loadDefects() {
+  const loadSignature = JSON.stringify({
+    workspaceCode: props.workspaceCode,
+    pageNo: pageNo.value,
+    pageSize: pageSize.value,
+    keyword: props.filter.keyword,
+    status: props.filter.status,
+    priority: props.filter.priority,
+    severity: props.filter.severity,
+  })
+  if (loading.value && pendingLoadSignature === loadSignature) {
+    return
+  }
+
   const requestSeq = ++loadRequestSeq
+  pendingLoadSignature = loadSignature
   loading.value = true
   errorMessage.value = ''
   try {
@@ -114,6 +129,7 @@ async function loadDefects() {
   } finally {
     if (requestSeq === loadRequestSeq) {
       loading.value = false
+      pendingLoadSignature = ''
     }
   }
 }

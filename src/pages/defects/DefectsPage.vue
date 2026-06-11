@@ -13,6 +13,7 @@ const workspaceCode = ref('ALL')
 const workspaceSelectorCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
+const workspaceReady = ref(false)
 const workspaceErrorMessage = ref('')
 const statistics = ref<DefectStatistics | null>(null)
 const statisticsLoading = ref(false)
@@ -45,6 +46,7 @@ function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
 
 async function loadWorkspaces() {
   workspaceLoading.value = true
+  workspaceReady.value = false
   workspaceErrorMessage.value = ''
   try {
     const items = await workspaceApi.getSwitchableWorkspaces()
@@ -57,6 +59,7 @@ async function loadWorkspaces() {
     workspaceErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     workspaceLoading.value = false
+    workspaceReady.value = true
   }
 }
 
@@ -132,6 +135,7 @@ onMounted(() => {
         @retry="loadStatistics"
       />
       <DefectListPanel
+        v-if="workspaceReady"
         :workspace-code="workspaceCode"
         :filter="filter"
         @loaded="currentDefects = $event"
