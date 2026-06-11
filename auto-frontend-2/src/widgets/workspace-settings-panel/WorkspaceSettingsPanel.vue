@@ -256,7 +256,7 @@ watch(memberWorkspaceCode, () => {
     <header class="settings-panel-header">
       <div>
         <h2>工作空间设置</h2>
-        <p>查看平台工作空间和用户账号概览，成员管理写操作后续单独接入。</p>
+        <p>查看和维护平台工作空间、空间成员与用户账号概览。</p>
       </div>
       <div class="settings-panel-header__actions">
         <AppButton

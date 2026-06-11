@@ -40,7 +40,7 @@ const routes: RouteRecordRaw[] = [
         component: SystemSettingsPage,
         meta: {
           title: '系统设置',
-          description: '后续拆分为设置分类侧栏、AI 连接池、空间配置等 widgets。',
+          description: '管理 AI 连接、工作空间、成员与用户账号。',
         },
       },
       {

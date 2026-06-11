@@ -39,7 +39,7 @@ const placeholderMeta = computed(() => {
 <template>
   <AppPage
     title="系统设置"
-    description="管理平台级 AI 连接、工作空间与用户账号。当前阶段先完成只读闭环，写操作在后续目标逐步接入。"
+    description="管理平台级 AI 连接、工作空间、成员与用户账号，未接入的设置分类保持占位。"
   >
     <div class="system-settings-page">
       <SettingsSidebar v-model:active-tab="activeTab" />

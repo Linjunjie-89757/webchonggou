@@ -72,6 +72,17 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Backend runtime reload | Goal 56 backend compile passed, but the running backend instance used by Playwright still returned the old all-task response until restart. | Browser smoke confirmed frontend query parameters, but not the live filtered response after restart. | Restart backend and re-run `/automation/web` query smoke before relying on server-side filtering. |
 | Task mutations | Current automation task UI is read-only. | Create/edit/delete/transition payload and permission behavior remain unverified in the new frontend. | Add disposable-data tests when mutation goals start. |
 
+## System Settings
+
+| Area | Not Fully Verified | Risk | Follow-up |
+| --- | --- | --- | --- |
+| AI connection mutations | Create/edit dialogs, required validation, test connection, delete cancel, and models drawer were smoke-tested. Real create/update/delete success paths were not exhaustively run against disposable providers. | Provider payload validation, API key retention rules, and delete reference constraints may still surface with real data. | Use disposable AI provider connections for full mutation regression. |
+| AI provider models | Models drawer reads the real provider models endpoint when opened. | Current data may not cover providers with long model names, many models, or model-read failures. | Recheck with providers that have multiple model entries and forced failures. |
+| Workspace mutations | Workspace create/edit dialogs and validation were smoke-tested; real save success was kept limited. | Backend uniqueness rules and owner/status edge cases may still need coverage. | Use disposable workspaces for full create/edit regression. |
+| Member management | Goal 77 verified member list read, add-member validation, edit-member refill, and remove cancel. Real add/update/remove success paths were not executed to avoid changing current members. | Role payload, duplicate membership handling, permission failures, and successful refresh behavior still need disposable-data verification. | Use a disposable workspace and user account for full member mutation regression. |
+| Role permissions and settings tabs | Role permissions, notification, security, and appearance remain unified placeholders. | Users cannot configure those areas in the rebuilt frontend yet. | Split only after backend controllers and business scope are confirmed. |
+| Full system settings regression | Goal 78 runs focused smoke rather than a full destructive regression. | Cross-panel interactions and rare 401/500 states may still hide edge cases. | Add mock failure and disposable-data checks before release. |
+
 ## Interface Automation
 
 | Area | Not Fully Verified | Risk | Follow-up |
