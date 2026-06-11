@@ -8,6 +8,8 @@ import type {
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
+  ApiRunHistoryDetail,
+  ApiRunHistoryItem,
   ApiRunPayload,
   ApiRunResult,
   PageResponse,
@@ -162,6 +164,34 @@ function normalizeRunResult(item: ApiRunResult): ApiRunResult {
   }
 }
 
+function normalizeRunHistoryItem(item: ApiRunHistoryItem): ApiRunHistoryItem {
+  return {
+    ...item,
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    caseName: item.caseName || '-',
+    reportId: item.reportId ?? null,
+    result: item.result || null,
+    failureSummary: item.failureSummary || null,
+    statusCode: item.statusCode ?? null,
+    durationMs: item.durationMs ?? null,
+    responseSize: item.responseSize ?? null,
+    environmentId: item.environmentId ?? null,
+    environmentName: item.environmentName || null,
+    variableSetId: item.variableSetId ?? null,
+    variableSetName: item.variableSetName || null,
+    operator: item.operator || null,
+    createdAt: item.createdAt || null,
+  }
+}
+
+function normalizeRunHistoryDetail(item: ApiRunHistoryDetail): ApiRunHistoryDetail {
+  return {
+    ...normalizeRunHistoryItem(item),
+    stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
 export const apiAutomationApi = {
   async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionItem>>>('/automation/api/definitions', {
@@ -292,5 +322,27 @@ export const apiAutomationApi = {
     )
 
     return normalizeRunResult(unwrapApiResponse(payload))
+  },
+
+  async getCaseRunHistory(workspaceCode = 'ALL', caseId: number) {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiRunHistoryItem>>>(
+      `/automation/api/cases/${caseId}/run-history`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeRunHistoryItem)
+  },
+
+  async getCaseRunHistoryDetail(workspaceCode = 'ALL', historyId: number) {
+    const payload = await httpGet<ApiResponse<ApiRunHistoryDetail>>(
+      `/automation/api/cases/run-history/${historyId}`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunHistoryDetail(unwrapApiResponse(payload))
   },
 }

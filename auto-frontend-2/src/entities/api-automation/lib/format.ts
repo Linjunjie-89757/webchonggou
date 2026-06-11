@@ -51,6 +51,33 @@ export function formatApiTags(tags?: string[] | null) {
   return Array.isArray(tags) && tags.length > 0 ? tags.join(' / ') : '-'
 }
 
+export function formatApiDuration(value?: number | null) {
+  if (value === null || value === undefined || value < 0) {
+    return '-'
+  }
+
+  if (value < 1000) {
+    return `${value} ms`
+  }
+
+  return `${(value / 1000).toFixed(2)} s`
+}
+
+export function formatApiSize(value?: number | null) {
+  if (!value || value <= 0) {
+    return '-'
+  }
+
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
 export function getApiModuleDisplayName(module?: ApiDefinitionModuleItem | null) {
   if (!module) {
     return '未分组'

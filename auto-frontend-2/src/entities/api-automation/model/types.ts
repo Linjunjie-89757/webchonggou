@@ -154,6 +154,31 @@ export interface ApiRunResult {
   stepResults: unknown[]
 }
 
+export interface ApiRunHistoryItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  caseId: number
+  definitionId: number
+  caseName: string
+  reportId: number | null
+  result: string | null
+  failureSummary: string | null
+  statusCode: number | null
+  durationMs: number | null
+  responseSize: number | null
+  environmentId: number | null
+  environmentName: string | null
+  variableSetId: number | null
+  variableSetName: string | null
+  operator: string | null
+  createdAt: string | null
+}
+
+export interface ApiRunHistoryDetail extends ApiRunHistoryItem {
+  stepResults: unknown[]
+}
+
 export interface ApiDefinitionListQuery {
   keyword?: string
   moduleId?: number | null
