@@ -62,6 +62,7 @@ This file tracks known unverified paths and residual risks during the frontend r
 
 ## Recommended Next Regression Goals
 
-1. Defect management stabilization: full smoke plus real-data issue list for read, filter, create/edit, detail, assign, transition.
-2. Defect UI parity: compare density, operation menu, dialogs, drawer, empty/error states against old frontend.
+1. Defect disposable-data regression: real create/edit, assign, transition, attachment-bearing detail, and allowed state transitions.
+2. Defect backend contract check: keyword/status/severity/priority filtering, multi-page pagination, and `PageResponse.pageSize` semantics.
 3. Cross-module session regression: login, 401, logout, protected route redirect, and modal save failure behavior.
+4. Next business module split: pick the next module only after confirming its backend API surface and old-frontend structure.
