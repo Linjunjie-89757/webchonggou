@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Connection, Edit, Loading, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Connection, Delete, Edit, Loading, Plus, RefreshRight, Tickets } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -13,12 +13,14 @@ import {
   type SaveAiProviderConnectionPayload,
 } from '@/entities/ai-provider'
 import { AiConnectionCreateEditDialog, type AiConnectionDialogMode } from '@/features/ai-connection-create-edit'
+import { deleteAiConnection } from '@/features/ai-connection-delete'
 import { testAiConnection } from '@/features/ai-connection-test'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
+import { AiConnectionModelsDrawer } from '@/widgets/ai-connection-models-drawer'
 
 const providers = ref<AiProviderConnectionItem[]>([])
 const loading = ref(false)
@@ -28,6 +30,9 @@ const dialogVisible = ref(false)
 const dialogMode = ref<AiConnectionDialogMode>('create')
 const editingProvider = ref<AiProviderConnectionItem | null>(null)
 const testingProviderIds = ref<Set<number>>(new Set())
+const deletingProviderIds = ref<Set<number>>(new Set())
+const modelsDrawerVisible = ref(false)
+const modelsProvider = ref<AiProviderConnectionItem | null>(null)
 
 const stats = computed(() => [
   { label: '连接总数', value: providers.value.length },
@@ -71,8 +76,31 @@ function setTestingProvider(id: number, value: boolean) {
   testingProviderIds.value = nextIds
 }
 
+function setDeletingProvider(id: number, value: boolean) {
+  const nextIds = new Set(deletingProviderIds.value)
+  if (value) {
+    nextIds.add(id)
+  } else {
+    nextIds.delete(id)
+  }
+  deletingProviderIds.value = nextIds
+}
+
 function isProviderTesting(id: number) {
   return testingProviderIds.value.has(id)
+}
+
+function isProviderDeleting(id: number) {
+  return deletingProviderIds.value.has(id)
+}
+
+function isProviderBusy(id: number) {
+  return isProviderTesting(id) || isProviderDeleting(id)
+}
+
+function openModelsDrawer(provider: AiProviderConnectionItem) {
+  modelsProvider.value = provider
+  modelsDrawerVisible.value = true
 }
 
 async function submitProvider(payload: SaveAiProviderConnectionPayload) {
@@ -108,6 +136,25 @@ async function testProvider(provider: AiProviderConnectionItem) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     setTestingProvider(provider.id, false)
+  }
+}
+
+async function deleteProvider(provider: AiProviderConnectionItem) {
+  setDeletingProvider(provider.id, true)
+  try {
+    await deleteAiConnection(provider, 'ALL')
+    ElMessage.success('AI 连接已删除')
+    if (modelsProvider.value?.id === provider.id) {
+      modelsDrawerVisible.value = false
+      modelsProvider.value = null
+    }
+    await loadProviders()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    setDeletingProvider(provider.id, false)
   }
 }
 
@@ -203,14 +250,14 @@ onMounted(() => {
           {{ formatAiProviderDate(row.lastVerifiedAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="138" fixed="right">
+      <el-table-column label="操作" width="230" fixed="right">
         <template #default="{ row }: { row: AiProviderConnectionItem }">
           <div class="ai-connection-actions">
             <button
               type="button"
               class="ai-connection-actions__button"
               :class="{ 'is-loading': isProviderTesting(row.id) }"
-              :disabled="isProviderTesting(row.id)"
+              :disabled="isProviderBusy(row.id)"
               aria-label="测试连接"
               @click="testProvider(row)"
             >
@@ -224,11 +271,35 @@ onMounted(() => {
               type="button"
               class="ai-connection-actions__button"
               aria-label="编辑连接"
-              :disabled="isProviderTesting(row.id)"
+              :disabled="isProviderBusy(row.id)"
               @click="openEditDialog(row)"
             >
               <el-icon><Edit /></el-icon>
               <span>编辑</span>
+            </button>
+            <button
+              type="button"
+              class="ai-connection-actions__button"
+              aria-label="查看模型"
+              :disabled="isProviderBusy(row.id)"
+              @click="openModelsDrawer(row)"
+            >
+              <el-icon><Tickets /></el-icon>
+              <span>模型</span>
+            </button>
+            <button
+              type="button"
+              class="ai-connection-actions__button is-danger"
+              :class="{ 'is-loading': isProviderDeleting(row.id) }"
+              :disabled="isProviderBusy(row.id)"
+              aria-label="删除连接"
+              @click="deleteProvider(row)"
+            >
+              <el-icon>
+                <Loading v-if="isProviderDeleting(row.id)" />
+                <Delete v-else />
+              </el-icon>
+              <span>删除</span>
             </button>
           </div>
         </template>
@@ -242,6 +313,12 @@ onMounted(() => {
       :saving="saving"
       default-workspace-code="ALL"
       @submit="submitProvider"
+    />
+
+    <AiConnectionModelsDrawer
+      v-model="modelsDrawerVisible"
+      :provider="modelsProvider"
+      workspace-code="ALL"
     />
   </section>
 </template>
@@ -326,6 +403,7 @@ onMounted(() => {
 
 .ai-connection-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--app-space-1);
 }
 
@@ -347,6 +425,14 @@ onMounted(() => {
 
 .ai-connection-actions__button:hover {
   background: var(--app-primary-soft);
+}
+
+.ai-connection-actions__button.is-danger {
+  color: var(--app-danger);
+}
+
+.ai-connection-actions__button.is-danger:hover {
+  background: var(--app-danger-soft);
 }
 
 .ai-connection-actions__button:disabled {

@@ -2,6 +2,7 @@ import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shar
 
 import type {
   AiProviderConnectionItem,
+  AiProviderModelItem,
   AiProviderSyncModelsResult,
   AiProviderTestResult,
   SaveAiProviderConnectionPayload,
@@ -80,6 +81,14 @@ export const aiProviderApi = {
 
   async deleteProviderConnection(workspaceCode: string, id: number) {
     const response = await httpDelete<ApiResponse<null>>(`/cases/ai/providers/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(response)
+  },
+
+  async getProviderModels(workspaceCode: string, id: number) {
+    const response = await httpGet<ApiResponse<AiProviderModelItem[]>>(`/cases/ai/providers/${id}/models`, {
       headers: workspaceHeaders(workspaceCode),
     })
 
