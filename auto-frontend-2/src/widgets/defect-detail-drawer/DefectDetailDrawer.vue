@@ -8,6 +8,8 @@ import {
   defectApi,
   formatDefectDateTime,
   formatDefectTags,
+  type DefectAttachment,
+  type DefectComment,
   type DefectDetail,
 } from '@/entities/defect'
 import { getRequestErrorMessage } from '@/shared/api/error'
@@ -33,9 +35,13 @@ const emit = defineEmits<{
 }>()
 
 const detail = ref<DefectDetail | null>(null)
+const comments = ref<DefectComment[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
+const commentsLoading = ref(false)
+const commentsErrorMessage = ref('')
 let detailRequestSeq = 0
+let commentsRequestSeq = 0
 
 const drawerTitle = computed(() => {
   if (detail.value?.bugNo) {
@@ -55,6 +61,25 @@ function displayText(value: string | number | null | undefined) {
   }
 
   return String(value)
+}
+
+function formatFileSize(value: number | null | undefined) {
+  if (!value || value <= 0) {
+    return '-'
+  }
+
+  if (value < 1024) {
+    return `${value} B`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
+function getAttachments(value: DefectDetail | null): DefectAttachment[] {
+  return Array.isArray(value?.attachments) ? value.attachments : []
 }
 
 async function loadDetail() {
@@ -82,11 +107,37 @@ async function loadDetail() {
   }
 }
 
+async function loadComments() {
+  if (!props.defectId) {
+    return
+  }
+
+  const requestSeq = ++commentsRequestSeq
+  commentsLoading.value = true
+  commentsErrorMessage.value = ''
+  comments.value = []
+  try {
+    const nextComments = await defectApi.getDefectComments(props.workspaceCode, props.defectId)
+    if (requestSeq === commentsRequestSeq) {
+      comments.value = nextComments
+    }
+  } catch (error) {
+    if (requestSeq === commentsRequestSeq) {
+      commentsErrorMessage.value = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestSeq === commentsRequestSeq) {
+      commentsLoading.value = false
+    }
+  }
+}
+
 watch(
   () => [props.modelValue, props.defectId, props.workspaceCode] as const,
   ([visible]) => {
     if (visible) {
       void loadDetail()
+      void loadComments()
     }
   },
   { immediate: true },
@@ -166,6 +217,45 @@ watch(
         <section class="defect-detail-drawer__section">
           <h4>缺陷描述</h4>
           <p class="defect-detail-drawer__text">{{ displayText(detail.description) }}</p>
+        </section>
+
+        <section class="defect-detail-drawer__section">
+          <h4>附件</h4>
+          <div v-if="getAttachments(detail).length" class="defect-detail-drawer__list">
+            <div
+              v-for="attachment in getAttachments(detail)"
+              :key="attachment.id"
+              class="defect-detail-drawer__list-item"
+            >
+              <strong>{{ displayText(attachment.fileName) }}</strong>
+              <span>
+                {{ formatFileSize(attachment.fileSize) }}
+                · {{ displayText(attachment.uploadedByName) }}
+                · {{ formatDefectDateTime(attachment.createdAt) }}
+              </span>
+            </div>
+          </div>
+          <p v-else class="defect-detail-drawer__muted">暂无附件</p>
+        </section>
+
+        <section class="defect-detail-drawer__section">
+          <h4>评论</h4>
+          <AppLoadingState v-if="commentsLoading && !comments.length" text="正在加载评论..." />
+
+          <div v-else-if="commentsErrorMessage && !comments.length" class="defect-detail-drawer__inline-error">
+            <span>{{ commentsErrorMessage }}</span>
+            <AppButton size="small" @click="loadComments">重试</AppButton>
+          </div>
+
+          <div v-else-if="comments.length" class="defect-detail-drawer__list">
+            <div v-for="comment in comments" :key="comment.id" class="defect-detail-drawer__list-item">
+              <strong>{{ displayText(comment.commenterName) }}</strong>
+              <p>{{ displayText(comment.content) }}</p>
+              <span>{{ formatDefectDateTime(comment.createdAt) }}</span>
+            </div>
+          </div>
+
+          <p v-else class="defect-detail-drawer__muted">暂无评论</p>
         </section>
       </template>
     </div>
@@ -282,6 +372,56 @@ watch(
 
 .defect-detail-drawer__text.is-compact {
   max-height: 120px;
+}
+
+.defect-detail-drawer__list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-2);
+}
+
+.defect-detail-drawer__list-item {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-1);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+}
+
+.defect-detail-drawer__list-item strong {
+  min-width: 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.defect-detail-drawer__list-item p {
+  margin: 0;
+  color: var(--app-text-main);
+  font-size: var(--app-font-size-sm);
+  line-height: 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.defect-detail-drawer__list-item span,
+.defect-detail-drawer__muted {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  overflow-wrap: anywhere;
+}
+
+.defect-detail-drawer__muted {
+  margin: 0;
+  padding: var(--app-space-3);
+  border: 1px dashed var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
 }
 
 .defect-detail-drawer__inline-error {

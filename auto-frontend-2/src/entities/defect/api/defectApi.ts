@@ -3,6 +3,8 @@ import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/reque
 import type {
   AssignDefectPayload,
   AssignDefectResult,
+  DefectAttachment,
+  DefectComment,
   DefectDetail,
   DefectListQuery,
   DefectListResponse,
@@ -50,6 +52,28 @@ function normalizeDefectItem(item: DefectSummaryItem): DefectSummaryItem {
   }
 }
 
+function normalizeDefectComment(item: DefectComment): DefectComment {
+  return {
+    ...item,
+    commenterId: item.commenterId ?? null,
+    commenterName: item.commenterName || null,
+    content: item.content || '',
+    createdAt: item.createdAt || null,
+  }
+}
+
+function normalizeDefectAttachment(item: DefectAttachment): DefectAttachment {
+  return {
+    ...item,
+    fileName: item.fileName || '-',
+    contentType: item.contentType || null,
+    fileSize: item.fileSize ?? null,
+    downloadUrl: item.downloadUrl || null,
+    uploadedByName: item.uploadedByName || null,
+    createdAt: item.createdAt || null,
+  }
+}
+
 function normalizeDefectDetail(item: DefectDetail): DefectDetail {
   const summary = normalizeDefectItem(item)
 
@@ -63,10 +87,10 @@ function normalizeDefectDetail(item: DefectDetail): DefectDetail {
     relatedCaseId: item.relatedCaseId ?? null,
     relatedReportId: item.relatedReportId ?? null,
     relatedTaskId: item.relatedTaskId ?? null,
-    attachments: Array.isArray(item.attachments) ? item.attachments : [],
+    attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeDefectAttachment) : [],
     activities: Array.isArray(item.activities) ? item.activities : [],
     flows: Array.isArray(item.flows) ? item.flows : [],
-    comments: Array.isArray(item.comments) ? item.comments : [],
+    comments: Array.isArray(item.comments) ? item.comments.map(normalizeDefectComment) : [],
   }
 }
 
@@ -108,6 +132,15 @@ export const defectApi = {
     })
 
     return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async getDefectComments(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<DefectComment[]>>(`/bugs/${id}/comments`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    const comments = unwrapApiResponse(payload)
+    return Array.isArray(comments) ? comments.map(normalizeDefectComment) : []
   },
 
   async createDefect(workspaceCode = 'ALL', data: SaveDefectPayload) {

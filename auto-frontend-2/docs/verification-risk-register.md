@@ -45,6 +45,9 @@ This file tracks known unverified paths and residual risks during the frontend r
 | Assign success | Assign dialog validation was checked; real success request was skipped. | Permission or payload issues may remain. | Validate with disposable record and known user ID. |
 | Transition success | Transition dialog opening was checked; real success request was skipped. | Backend may reject invalid state transitions. | Confirm allowed transition matrix and test real allowed transitions. |
 | Transition options | Frontend currently shows all statuses. | User can choose a status the backend does not allow from current state. | Restrict options after backend contract is confirmed. |
+| Comment create path | Only read-only comments are displayed. Comment creation is not implemented or verified. | Users cannot add comments from the new frontend yet. | Add comment creation after read-only detail stabilization. |
+| Attachment actions | Attachments are displayed from detail data only. Upload/download/delete are not implemented or verified. | File workflows may still depend on old frontend. | Add attachment actions with disposable files and permission checks. |
+| Comment failure states | Comment read failure is handled locally in the drawer, but only smoke-tested against real service behavior. | Mocked 401/500 comment failures may reveal UI edge cases. | Add focused mock failure tests for comments. |
 | Failure mock paths | No mocked 500/401 assign-transition failures were run. | Some failure UI edge cases may remain. | Add focused mock failure smoke tests. |
 | Full module regression | Only lightweight smoke checks have been run for latest goals. | Interactions between create/edit/detail/assign/transition may hide regressions. | Run defect stabilization goal after feature set is complete. |
 
@@ -53,4 +56,3 @@ This file tracks known unverified paths and residual risks during the frontend r
 1. Defect management stabilization: full smoke plus real-data issue list for read, filter, create/edit, detail, assign, transition.
 2. Defect UI parity: compare density, operation menu, dialogs, drawer, empty/error states against old frontend.
 3. Cross-module session regression: login, 401, logout, protected route redirect, and modal save failure behavior.
-

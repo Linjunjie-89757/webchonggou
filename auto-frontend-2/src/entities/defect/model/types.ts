@@ -37,11 +37,29 @@ export interface DefectDetail extends DefectSummaryItem {
   relatedReportId: number | null
   relatedTaskId: number | null
   createdAt: string | null
-  attachments?: unknown[]
+  attachments?: DefectAttachment[]
   sourceContext?: unknown
   activities?: unknown[]
   flows?: unknown[]
-  comments?: unknown[]
+  comments?: DefectComment[]
+}
+
+export interface DefectComment {
+  id: number
+  content: string
+  commenterId: number | null
+  commenterName: string | null
+  createdAt: string | null
+}
+
+export interface DefectAttachment {
+  id: number
+  fileName: string
+  contentType: string | null
+  fileSize: number | null
+  downloadUrl: string | null
+  uploadedByName: string | null
+  createdAt: string | null
 }
 
 export interface SaveDefectPayload {
