@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
+import AutomationTasksPage from '@/pages/automation-tasks/AutomationTasksPage.vue'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
 import DefectsPage from '@/pages/defects/DefectsPage.vue'
@@ -80,19 +81,19 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'automation/web',
         name: 'automation-web',
-        component: PlaceholderPage,
+        component: AutomationTasksPage,
         meta: {
           title: 'Web UI 自动化',
-          description: '当前阶段仅建立占位页。',
+          description: '按工作空间查看 Web UI 自动化任务；当前阶段先接入真实任务读取闭环。',
         },
       },
       {
         path: 'automation/app',
         name: 'automation-app',
-        component: PlaceholderPage,
+        component: AutomationTasksPage,
         meta: {
           title: 'APP 自动化',
-          description: '当前阶段仅建立占位页。',
+          description: '按工作空间查看 APP 自动化任务；当前阶段先接入真实任务读取闭环。',
         },
       },
     ],
