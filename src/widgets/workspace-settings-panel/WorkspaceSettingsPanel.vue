@@ -1270,13 +1270,6 @@ watch(
             <el-radio value="MEMBER">成员</el-radio>
           </el-radio-group>
         </label>
-        <label v-if="userDialogMode === 'edit'" class="user-edit-dialog__field">
-          <span>状态</span>
-          <select v-model.number="userForm.status" class="user-edit-dialog__select">
-            <option :value="1">启用</option>
-            <option :value="0">停用</option>
-          </select>
-        </label>
         <template v-if="!isPlatformAdminSelected">
           <label class="user-edit-dialog__field is-full">
             <span>可访问空间</span>
