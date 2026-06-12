@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
-import { Database, Edit2, Trash2, Wifi } from '@lucide/vue'
+import { AlertCircle, Database, Edit2, Trash2, Wifi, WifiOff } from '@lucide/vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -11,7 +11,6 @@ import {
   getAiProviderBrandInitial,
   getAiProviderEndpointSummary,
   getAiProviderProtocolLabel,
-  getAiProviderStatusMeta,
   hasAiProviderBrandConnection,
   inferAiProviderBrand,
   type AiProviderConnectionItem,
@@ -24,7 +23,6 @@ import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
-import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 
 const providers = ref<AiProviderConnectionItem[]>([])
 const loading = ref(false)
@@ -45,6 +43,15 @@ const stats = computed(() => [
 
 const providerCardItems = computed(() => providers.value)
 
+const customProviderAvatarPalettes = [
+  { backgroundColor: '#eef2ff', color: '#4f46e5', borderColor: '#c7d2fe' },
+  { backgroundColor: '#ecfeff', color: '#0891b2', borderColor: '#a5f3fc' },
+  { backgroundColor: '#f0fdf4', color: '#16a34a', borderColor: '#bbf7d0' },
+  { backgroundColor: '#fff7ed', color: '#ea580c', borderColor: '#fed7aa' },
+  { backgroundColor: '#fdf2f8', color: '#db2777', borderColor: '#fbcfe8' },
+  { backgroundColor: '#f8fafc', color: '#475569', borderColor: '#cbd5e1' },
+]
+
 function getProviderBrand(provider: AiProviderConnectionItem) {
   return inferAiProviderBrand(provider)
 }
@@ -52,6 +59,34 @@ function getProviderBrand(provider: AiProviderConnectionItem) {
 function providerHasBrandConnection(brandId: string) {
   const brand = aiProviderBrands.find((item) => item.id === brandId)
   return brand ? hasAiProviderBrandConnection(brand, providers.value) : false
+}
+
+function getCustomProviderAvatarStyle(provider: AiProviderConnectionItem) {
+  const source = provider.connectionName.trim() || String(provider.id)
+  const hash = Array.from(source).reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  return customProviderAvatarPalettes[hash % customProviderAvatarPalettes.length]
+}
+
+function getProviderConnectionStatus(provider: AiProviderConnectionItem) {
+  if (provider.status === 0) {
+    return {
+      label: '连接异常',
+      className: 'is-error',
+      icon: WifiOff,
+    }
+  }
+  if (provider.lastVerifiedAt) {
+    return {
+      label: '已连接',
+      className: 'is-connected',
+      icon: Wifi,
+    }
+  }
+  return {
+    label: '未测试',
+    className: 'is-untested',
+    icon: AlertCircle,
+  }
 }
 
 async function loadProviders() {
@@ -221,28 +256,40 @@ onMounted(() => {
     <section v-else class="ai-connection-card-grid" v-loading="loading">
       <article v-for="provider in providerCardItems" :key="provider.id" class="ai-connection-card">
         <div
+          v-if="getProviderBrand(provider).id === 'custom'"
+          class="ai-provider-logo ai-provider-logo--custom-initial"
+          :style="getCustomProviderAvatarStyle(provider)"
+          aria-hidden="true"
+        >
+          <span>{{ getAiProviderBrandInitial(provider) }}</span>
+        </div>
+        <div
+          v-else
           class="ai-provider-logo"
           :class="[
             getProviderBrand(provider).logoClass,
-            { 'has-logo-image': getProviderBrand(provider).logoSrc, 'is-custom': getProviderBrand(provider).id === 'custom' },
+            { 'has-logo-image': getProviderBrand(provider).logoSrc },
           ]"
           aria-hidden="true"
         >
           <img
-            v-if="getProviderBrand(provider).id !== 'custom' && getProviderBrand(provider).logoSrc"
+            v-if="getProviderBrand(provider).logoSrc"
             :src="getProviderBrand(provider).logoSrc"
             :alt="getProviderBrand(provider).name"
           >
-          <span>{{ getProviderBrand(provider).id === 'custom' ? getAiProviderBrandInitial(provider) : getProviderBrand(provider).mark }}</span>
+          <span>{{ getProviderBrand(provider).mark }}</span>
         </div>
 
         <div class="ai-connection-card__main">
           <div class="ai-connection-card__title-row">
             <h3>{{ provider.connectionName }}</h3>
-            <AppStatusBadge
-              :label="getAiProviderStatusMeta(provider).label"
-              :tone="getAiProviderStatusMeta(provider).tone"
-            />
+            <span
+              class="ai-connection-status"
+              :class="getProviderConnectionStatus(provider).className"
+            >
+              <component :is="getProviderConnectionStatus(provider).icon" :size="12" />
+              {{ getProviderConnectionStatus(provider).label }}
+            </span>
           </div>
 
           <div class="ai-connection-card__tags">
@@ -255,10 +302,9 @@ onMounted(() => {
             <span class="ai-connection-model-chip">{{ provider.modelName || '-' }}</span>
           </div>
 
-          <div class="ai-connection-url">{{ getAiProviderEndpointSummary(provider.baseUrl) }}</div>
+          <div class="ai-connection-url">{{ provider.baseUrl || getAiProviderEndpointSummary(provider.baseUrl) }}</div>
           <div class="ai-connection-date">
-            <span>{{ getAiProviderProtocolLabel(provider.protocolType) }}</span>
-            <span>最近验证 {{ formatAiProviderDate(provider.lastVerifiedAt) }}</span>
+            最近验证 {{ formatAiProviderDate(provider.lastVerifiedAt) }}
           </div>
 
           <dl class="ai-connection-meta">
@@ -544,55 +590,87 @@ onMounted(() => {
   margin: 0;
   overflow: hidden;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-md);
+  font-size: var(--app-font-size-sm);
   font-weight: 700;
   line-height: var(--app-line-height-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.ai-connection-status {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: var(--app-font-size-xs);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.ai-connection-status.is-connected {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.ai-connection-status.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #ef4444;
+}
+
+.ai-connection-status.is-untested {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #9ca3af;
+}
+
 .ai-connection-card__tags {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--app-space-2);
+  gap: 10px;
   margin-top: var(--app-space-2);
 }
 
 .ai-provider-chip {
   display: inline-flex;
-  min-height: 22px;
+  min-height: 20px;
   align-items: center;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
   font-size: var(--app-font-size-xs);
   font-weight: 600;
-  line-height: 16px;
+  line-height: 1.3;
 }
 
 .ai-connection-model-chip {
   display: inline-flex;
   max-width: 220px;
-  min-height: 22px;
+  min-height: 20px;
   align-items: center;
   overflow: hidden;
-  padding: 3px 9px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: 999px;
-  background: var(--app-bg-muted);
+  border-radius: 8px;
+  background: #f9fafb;
   color: var(--app-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--app-font-size-xs);
-  line-height: 16px;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ai-connection-url {
   max-width: 520px;
-  margin-top: 10px;
+  margin-top: 8px;
   overflow: hidden;
-  color: var(--app-text-muted);
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: var(--app-text-subtle);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: var(--app-font-size-xs);
   line-height: var(--app-line-height-xs);
   text-overflow: ellipsis;
@@ -600,10 +678,7 @@ onMounted(() => {
 }
 
 .ai-connection-date {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--app-space-2);
-  margin-top: 6px;
+  margin-top: 2px;
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
   line-height: var(--app-line-height-xs);
@@ -656,6 +731,17 @@ onMounted(() => {
   background: var(--app-bg-muted);
   color: var(--app-text-subtle);
   box-shadow: none;
+}
+
+.ai-provider-logo--custom-initial {
+  border: 1px solid;
+  box-shadow: none;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.ai-provider-logo--custom-initial span {
+  transform: translateY(-1px);
 }
 
 .ai-provider-logo--small {
@@ -721,10 +807,6 @@ onMounted(() => {
 }
 
 .ai-connection-actions {
-  position: absolute;
-  z-index: 2;
-  right: var(--app-space-4);
-  top: var(--app-space-4);
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
@@ -885,10 +967,6 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
-  .ai-connection-actions {
-    position: static;
-    margin-top: var(--app-space-4);
-  }
 }
 
 @media (max-width: 640px) {
