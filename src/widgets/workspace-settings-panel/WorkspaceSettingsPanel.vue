@@ -99,6 +99,12 @@ const memberWorkspaceOptions = computed(() => businessWorkspaces.value.map((item
   label: item.workspaceName || item.workspaceCode,
   value: item.workspaceCode,
 })))
+const workspaceOwnerOptions = computed(() => users.value
+  .filter((user) => Number(user.status) === 1)
+  .map((user) => ({
+    label: getUserDisplayName(user),
+    value: user.id,
+  })))
 const managingWorkspace = computed(() => businessWorkspaces.value.find((item) => workspaceDisplayCode(item) === managingWorkspaceCode.value) || null)
 
 const workspaceStats = computed(() => [
@@ -1272,6 +1278,7 @@ watch(memberWorkspaceCode, () => {
       v-model="workspaceDialogVisible"
       :mode="workspaceDialogMode"
       :workspace="editingWorkspace"
+      :owner-options="workspaceOwnerOptions"
       :saving="savingWorkspace"
       @submit="submitWorkspace"
     />

@@ -3,6 +3,7 @@ defineProps<{
   modelValue: boolean
   title?: string
   width?: string | number
+  modalClass?: string
 }>()
 
 const emit = defineEmits<{
@@ -15,6 +16,7 @@ const emit = defineEmits<{
     :model-value="modelValue"
     :title="title"
     :width="width"
+    :modal-class="modalClass"
     append-to-body
     @update:model-value="emit('update:modelValue', $event)"
   >

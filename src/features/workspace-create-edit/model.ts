@@ -12,14 +12,14 @@ export interface WorkspaceForm {
 }
 
 export const workspaceTypeOptions = [
-  { value: 'PROJECT', label: '项目空间' },
-  { value: 'TEAM', label: '团队空间' },
-  { value: 'PERSONAL', label: '个人空间' },
+  { value: 'PROJECT', label: '项目空间', description: '项目专用', icon: 'package' },
+  { value: 'TEAM', label: '团队空间', description: '团队协作', icon: 'users' },
+  { value: 'PRODUCT', label: '产品空间', description: '产品测试', icon: 'target' },
 ] as const
 
 export const workspaceStatusOptions = [
   { value: 1, label: '启用' },
-  { value: 0, label: '停用' },
+  { value: 0, label: '禁用' },
 ] as const
 
 export function createDefaultWorkspaceForm(): WorkspaceForm {
