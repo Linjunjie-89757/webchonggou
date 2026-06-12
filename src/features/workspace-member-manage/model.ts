@@ -7,34 +7,34 @@ import type {
 export type WorkspaceMemberDialogMode = 'create' | 'edit'
 
 export interface WorkspaceMemberForm {
-  userId: number | null
+  userIds: number[]
   roleCode: string
 }
 
 export const workspaceMemberRoleOptions = [
   { value: 'ADMIN', label: '管理员' },
-  { value: 'MEMBER', label: '成员' },
+  { value: 'MEMBER', label: '普通成员' },
 ] as const
 
 export function createDefaultWorkspaceMemberForm(): WorkspaceMemberForm {
   return {
-    userId: null,
+    userIds: [],
     roleCode: 'MEMBER',
   }
 }
 
 export function createWorkspaceMemberFormFromItem(item: WorkspaceMemberItem): WorkspaceMemberForm {
   return {
-    userId: item.userId,
+    userIds: [item.userId],
     roleCode: item.roleCode || 'MEMBER',
   }
 }
 
-export function buildCreateWorkspaceMemberPayload(form: WorkspaceMemberForm): CreateWorkspaceMemberPayload {
-  return {
-    userId: Number(form.userId),
+export function buildCreateWorkspaceMemberPayload(form: WorkspaceMemberForm): CreateWorkspaceMemberPayload[] {
+  return form.userIds.map((userId) => ({
+    userId: Number(userId),
     roleCode: form.roleCode,
-  }
+  }))
 }
 
 export function buildUpdateWorkspaceMemberPayload(form: WorkspaceMemberForm): UpdateWorkspaceMemberPayload {
@@ -44,8 +44,8 @@ export function buildUpdateWorkspaceMemberPayload(form: WorkspaceMemberForm): Up
 }
 
 export function validateWorkspaceMemberForm(form: WorkspaceMemberForm, mode: WorkspaceMemberDialogMode) {
-  if (mode === 'create' && (!form.userId || form.userId <= 0)) {
-    return '请输入有效的用户 ID'
+  if (mode === 'create' && form.userIds.length === 0) {
+    return '请选择用户'
   }
   if (!form.roleCode) {
     return '请选择成员角色'

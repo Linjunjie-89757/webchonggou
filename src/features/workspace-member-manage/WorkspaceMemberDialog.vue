@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
 
+import type { UserItem } from '@/entities/user'
 import type { WorkspaceMemberItem } from '@/entities/workspace'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
@@ -21,11 +22,13 @@ const props = withDefaults(
     modelValue: boolean
     mode: WorkspaceMemberDialogMode
     member?: WorkspaceMemberItem | null
+    users?: UserItem[]
     initialRole?: string
     saving?: boolean
   }>(),
   {
     member: null,
+    users: () => [],
     initialRole: 'MEMBER',
   },
 )
@@ -64,6 +67,14 @@ function submit() {
   }
 }
 
+function getUserOptionLabel(user: UserItem) {
+  return user.displayName || user.username || `用户 ${user.id}`
+}
+
+function getUserOptionMeta(user: UserItem) {
+  return [user.username, user.email].filter(Boolean).join(' / ')
+}
+
 watch(
   () => props.modelValue,
   (visible) => {
@@ -92,18 +103,32 @@ watch(
   >
     <div class="workspace-member-dialog">
       <label class="workspace-member-dialog__field">
-        <span>用户 ID {{ mode === 'create' ? '*' : '' }}</span>
-        <el-input-number
-          v-model="form.userId"
-          :min="1"
-          :controls="false"
+        <span>用户 {{ mode === 'create' ? '*' : '' }}</span>
+        <el-select
+          v-model="form.userIds"
+          multiple
+          filterable
+          collapse-tags
+          collapse-tags-tooltip
           :disabled="mode === 'edit'"
-          placeholder="请输入用户 ID"
-        />
+          placeholder="选择系统成员"
+        >
+          <el-option
+            v-for="user in users"
+            :key="user.id"
+            :label="getUserOptionLabel(user)"
+            :value="user.id"
+          >
+            <div class="workspace-member-dialog__option">
+              <strong>{{ getUserOptionLabel(user) }}</strong>
+              <small>{{ getUserOptionMeta(user) }}</small>
+            </div>
+          </el-option>
+        </el-select>
       </label>
 
       <div class="workspace-member-dialog__field">
-        <span>角色</span>
+        <span>成员角色</span>
         <div class="workspace-member-dialog__segment">
           <button
             v-for="item in workspaceMemberRoleOptions"
@@ -171,6 +196,30 @@ watch(
   border-color: var(--app-primary);
   background: var(--app-primary);
   color: var(--app-text-inverse);
+}
+
+.workspace-member-dialog__option {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.35;
+}
+
+.workspace-member-dialog__option strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-member-dialog__option small {
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-member-dialog__error {

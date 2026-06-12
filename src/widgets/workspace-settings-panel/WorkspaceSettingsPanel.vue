@@ -168,6 +168,8 @@ const filteredUsers = computed(() => {
 const workspaceAdminMembers = computed(() => members.value.filter((member) => String(member.roleCode || '').toUpperCase().includes('ADMIN')))
 const workspaceRegularMembers = computed(() => members.value.filter((member) => !String(member.roleCode || '').toUpperCase().includes('ADMIN')))
 const workspaceMemberTotal = computed(() => members.value.length + (managingWorkspace.value ? 1 : 0))
+const workspaceMemberUserIds = computed(() => new Set(members.value.map((member) => member.userId)))
+const selectableWorkspaceUsers = computed(() => users.value.filter((user) => !workspaceMemberUserIds.value.has(user.id)))
 
 function resetUserFilters() {
   userKeyword.value = ''
@@ -614,15 +616,15 @@ function isMemberDeleting(id: number) {
   return deletingMemberIds.value.has(id)
 }
 
-async function submitCreateMember(payload: CreateWorkspaceMemberPayload) {
+async function submitCreateMember(payloads: CreateWorkspaceMemberPayload[]) {
   if (!memberWorkspaceCode.value) {
     return
   }
 
   savingMember.value = true
   try {
-    await workspaceApi.createWorkspaceMember(memberWorkspaceCode.value, payload)
-    ElMessage.success('成员已添加')
+    await Promise.all(payloads.map((payload) => workspaceApi.createWorkspaceMember(memberWorkspaceCode.value, payload)))
+    ElMessage.success(payloads.length > 1 ? `已添加 ${payloads.length} 名成员` : '成员已添加')
     memberDialogVisible.value = false
     await loadMembers()
   } catch (error) {
@@ -1158,9 +1160,15 @@ watch(memberWorkspaceCode, () => {
             </div>
           </div>
         </div>
-        <button type="button" class="workspace-save-button" @click="openEditWorkspaceDialog(managingWorkspace)">
-          编辑空间
-        </button>
+        <div class="workspace-manage-actions">
+          <button type="button" class="workspace-add-member-button" @click="openCreateMemberDialog('MEMBER')">
+            <Plus />
+            添加成员
+          </button>
+          <button type="button" class="workspace-save-button" @click="openEditWorkspaceDialog(managingWorkspace)">
+            编辑空间
+          </button>
+        </div>
       </div>
 
       <nav class="workspace-manage-tabs">
@@ -1209,14 +1217,6 @@ watch(memberWorkspaceCode, () => {
                 <Shield :size="16" />
                 <h3>空间管理员 ({{ workspaceAdminMembers.length }}人)</h3>
               </div>
-              <button
-                type="button"
-                class="workspace-member-add is-admin"
-                @click="openCreateMemberDialog('ADMIN')"
-              >
-                <Plus />
-                添加空间管理员
-              </button>
             </div>
             <div v-if="workspaceAdminMembers.length" class="workspace-member-list">
               <div v-for="item in workspaceAdminMembers" :key="item.id" class="workspace-member-row">
@@ -1236,7 +1236,7 @@ watch(memberWorkspaceCode, () => {
                 </div>
               </div>
             </div>
-            <div v-else class="workspace-member-empty">暂无管理员，点击右上角添加</div>
+            <div v-else class="workspace-member-empty">暂无管理员，可通过顶部添加成员维护</div>
           </section>
 
           <section class="workspace-member-section">
@@ -1245,10 +1245,6 @@ watch(memberWorkspaceCode, () => {
                 <Users :size="16" />
                 <h3>普通成员 ({{ workspaceRegularMembers.length }}人)</h3>
               </div>
-              <button type="button" class="workspace-member-add" @click="openCreateMemberDialog('MEMBER')">
-                <Plus />
-                添加普通成员
-              </button>
             </div>
             <div v-if="workspaceRegularMembers.length" class="workspace-member-list">
               <div v-for="item in workspaceRegularMembers" :key="item.id" class="workspace-member-row">
@@ -1268,7 +1264,7 @@ watch(memberWorkspaceCode, () => {
                 </div>
               </div>
             </div>
-            <div v-else class="workspace-member-empty">暂无成员，点击右上角添加</div>
+            <div v-else class="workspace-member-empty">暂无成员，可通过顶部添加成员维护</div>
           </section>
         </template>
       </div>
@@ -1355,6 +1351,7 @@ watch(memberWorkspaceCode, () => {
       v-model="memberDialogVisible"
       :mode="memberDialogMode"
       :member="editingMember"
+      :users="memberDialogMode === 'create' ? selectableWorkspaceUsers : users"
       :initial-role="memberCreateRole"
       :saving="savingMember"
       @create="submitCreateMember"
@@ -2035,22 +2032,53 @@ watch(memberWorkspaceCode, () => {
   font-size: 12px;
 }
 
-.workspace-save-button {
+.workspace-manage-actions {
+  display: inline-flex;
   flex: 0 0 auto;
   margin-top: 32px;
+  align-items: center;
+  gap: 10px;
+}
+
+.workspace-save-button,
+.workspace-add-member-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
   padding: 8px 16px;
-  border: 0;
   border-radius: 8px;
-  background: var(--app-primary);
-  color: var(--app-text-inverse);
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
-  transition: background-color 180ms ease;
+  transition: background-color 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.workspace-save-button {
+  border: 0;
+  background: var(--app-primary);
+  color: var(--app-text-inverse);
 }
 
 .workspace-save-button:hover {
   background: var(--app-primary-hover);
+}
+
+.workspace-add-member-button {
+  border: 1px solid #bfdbfe;
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.workspace-add-member-button:hover {
+  border-color: #93c5fd;
+  background: #dbeafe;
+}
+
+.workspace-add-member-button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .workspace-manage-tabs {
@@ -2261,32 +2289,6 @@ watch(memberWorkspaceCode, () => {
   padding: 0 8px !important;
   color: var(--app-primary) !important;
   font-size: 12px;
-}
-
-.workspace-member-add {
-  display: inline-flex;
-  height: 34px;
-  align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  border: 1px solid var(--app-border);
-  border-radius: 8px;
-  background: var(--app-bg-panel);
-  color: var(--app-text-secondary);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.workspace-member-add.is-admin,
-.workspace-member-add:hover {
-  border-color: #bfdbfe;
-  background: var(--app-primary-soft);
-  color: var(--app-primary);
-}
-
-.workspace-member-add svg {
-  width: 14px;
-  height: 14px;
 }
 
 .workspace-member-empty {
