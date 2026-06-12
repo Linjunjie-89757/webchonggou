@@ -808,7 +808,6 @@ watch(memberWorkspaceCode, () => {
               <div class="team-avatar">{{ getUserInitial(row) }}</div>
               <div>
                 <strong>{{ getUserDisplayName(row) }}</strong>
-                <p>{{ row.username }} · {{ row.email || '-' }}</p>
               </div>
             </div>
           </template>
@@ -2035,6 +2034,7 @@ watch(memberWorkspaceCode, () => {
   min-width: 0;
   align-items: center;
   gap: 12px;
+  padding-left: 8px;
 }
 
 .team-avatar {
@@ -2105,7 +2105,7 @@ watch(memberWorkspaceCode, () => {
   overflow: hidden;
   color: var(--app-text-primary);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
