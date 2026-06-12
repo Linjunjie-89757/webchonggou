@@ -419,7 +419,9 @@ watch(memberWorkspaceCode, () => {
           </div>
 
           <footer class="workspace-card-meta">
-            <span>{{ getWorkspaceTypeLabel(workspace) }}</span>
+            <span class="workspace-type-badge" :class="`is-${normalizeWorkspaceType(workspace)}`">
+              {{ getWorkspaceTypeLabel(workspace) }}
+            </span>
             <span>{{ getWorkspaceOwnerLabel(workspace) }}</span>
             <span>{{ workspaceDisplayCode(workspace) }}</span>
           </footer>
@@ -744,6 +746,28 @@ watch(memberWorkspaceCode, () => {
   line-height: 1.35;
 }
 
+.settings-stat span::after {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border-radius: 6px;
+  background: var(--app-primary-soft);
+  content: "";
+}
+
+.settings-stat:nth-child(2) span::after {
+  background: var(--app-success-soft);
+}
+
+.settings-stat:nth-child(3) span::after {
+  background: var(--app-purple-soft);
+}
+
+.settings-stat:nth-child(4) span::after {
+  background: var(--app-warning-soft);
+}
+
 .settings-stat strong {
   color: var(--app-text-primary);
   font-size: 24px;
@@ -941,6 +965,11 @@ watch(memberWorkspaceCode, () => {
 
 .workspace-card-name-row h3 {
   min-width: 0;
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1005,6 +1034,26 @@ watch(memberWorkspaceCode, () => {
   line-height: 1.35;
 }
 
+.workspace-type-badge {
+  padding: 4px 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: var(--app-primary-soft);
+  color: var(--app-primary-hover) !important;
+}
+
+.workspace-type-badge.is-team {
+  border-color: #bbf7d0;
+  background: var(--app-success-soft);
+  color: var(--app-success) !important;
+}
+
+.workspace-type-badge.is-product {
+  border-color: #e9d5ff;
+  background: var(--app-purple-soft);
+  color: var(--app-purple) !important;
+}
+
 .team-member-cell {
   display: flex;
   min-width: 0;
@@ -1019,10 +1068,10 @@ watch(memberWorkspaceCode, () => {
   flex: 0 0 34px;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 10px;
   background: var(--app-primary-soft);
   color: var(--app-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
