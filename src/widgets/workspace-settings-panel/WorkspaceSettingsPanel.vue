@@ -802,7 +802,7 @@ watch(memberWorkspaceCode, () => {
         </div>
 
         <el-table v-else v-loading="userLoading" :data="filteredUsers" class="settings-table settings-table--users" row-key="id">
-        <el-table-column label="姓名" min-width="140" header-class-name="team-name-header-cell" show-overflow-tooltip>
+        <el-table-column label="姓名" min-width="140" show-overflow-tooltip>
           <template #default="{ row }: { row: UserItem }">
             <div class="team-member-cell">
               <div class="team-avatar">{{ getUserInitial(row) }}</div>
@@ -1348,9 +1348,6 @@ watch(memberWorkspaceCode, () => {
   box-shadow: -8px 0 16px rgb(15 23 42 / 0.04);
 }
 
-.settings-table--users :deep(.team-name-header-cell .cell) {
-  padding-left: 58px;
-}
 
 .settings-panel-block--users :deep(.app-empty-state),
 .settings-panel-block--users :deep(.app-loading-state) {
