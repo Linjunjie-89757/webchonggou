@@ -1458,7 +1458,7 @@ watch(memberWorkspaceCode, () => {
 }
 
 .team-empty-state > svg {
-  color: var(--app-text-muted);
+  color: var(--app-primary);
 }
 
 .team-empty-state__icon {
