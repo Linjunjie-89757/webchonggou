@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   workspaceApi,
@@ -16,9 +16,11 @@ import {
   getUserDisplayName,
   getUserRoleLabel,
   getUserStatusMeta,
+  type UpdateUserPayload,
   type UserItem,
   userApi,
 } from '@/entities/user'
+import { useSession } from '@/entities/session'
 import { WorkspaceCreateEditDialog, type WorkspaceDialogMode } from '@/features/workspace-create-edit'
 import {
   deleteWorkspaceMember,
@@ -28,11 +30,20 @@ import {
 } from '@/features/workspace-member-manage'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 
 type PanelMode = 'workspace' | 'team'
+
+interface UserEditForm {
+  email: string
+  displayName: string
+  roleCode: string
+  status: number
+  workspaceCodesText: string
+}
 
 const props = withDefaults(
   defineProps<{
@@ -43,6 +54,7 @@ const props = withDefaults(
   },
 )
 
+const { currentUser } = useSession()
 const workspaces = ref<WorkspaceItem[]>([])
 const users = ref<UserItem[]>([])
 const members = ref<WorkspaceMemberItem[]>([])
@@ -61,7 +73,18 @@ const memberWorkspaceCode = ref('')
 const memberDialogVisible = ref(false)
 const memberDialogMode = ref<WorkspaceMemberDialogMode>('create')
 const editingMember = ref<WorkspaceMemberItem | null>(null)
+const userDialogVisible = ref(false)
+const editingUser = ref<UserItem | null>(null)
+const savingUser = ref(false)
+const mutatingUserIds = ref<Set<number>>(new Set())
 const deletingMemberIds = ref<Set<number>>(new Set())
+const userForm = ref<UserEditForm>({
+  email: '',
+  displayName: '',
+  roleCode: 'MEMBER',
+  status: 1,
+  workspaceCodesText: '',
+})
 
 const businessWorkspaces = computed(() => workspaces.value.filter((item) => !item.allScope && item.workspaceCode !== 'ALL'))
 const memberWorkspaceOptions = computed(() => businessWorkspaces.value.map((item) => ({
@@ -83,6 +106,11 @@ const teamStats = computed(() => [
   { label: '当前空间成员', value: members.value.length },
 ])
 const isTeamMode = computed(() => props.mode === 'team')
+const canManageUsers = computed(() => {
+  const roleCode = String(currentUser.value?.roleCode || '').toUpperCase()
+  return ['SUPER_ADMIN', 'PLATFORM_ADMIN', 'ADMIN'].includes(roleCode)
+})
+const isCurrentSuperAdmin = computed(() => String(currentUser.value?.roleCode || '').toUpperCase() === 'SUPER_ADMIN')
 const panelTitle = computed(() => (isTeamMode.value ? '用户管理' : '工作空间设置'))
 const panelDescription = computed(() => (
   isTeamMode.value
@@ -188,6 +216,170 @@ function getUserRoleClass(roleCode?: string | null) {
 
 function getUserStatusClass(status?: number | string | null) {
   return Number(status) === 1 ? '' : 'is-disabled'
+}
+
+function getUserMutableReason(user: UserItem) {
+  if (!canManageUsers.value) {
+    return '当前账号无用户维护权限'
+  }
+  if (String(user.roleCode || '').toUpperCase() === 'SUPER_ADMIN') {
+    return '超级管理员账号不可在用户管理中维护'
+  }
+  return ''
+}
+
+function canMutateUser(user: UserItem) {
+  return !getUserMutableReason(user)
+}
+
+function setMutatingUser(userId: number, mutating: boolean) {
+  const nextIds = new Set(mutatingUserIds.value)
+  if (mutating) {
+    nextIds.add(userId)
+  } else {
+    nextIds.delete(userId)
+  }
+  mutatingUserIds.value = nextIds
+}
+
+function isUserMutating(userId: number) {
+  return mutatingUserIds.value.has(userId)
+}
+
+function parseWorkspaceCodes(value: string) {
+  return Array.from(new Set(value
+    .split(/[\n,，\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)))
+}
+
+function buildUserUpdatePayload(user: UserItem, overrides: Partial<UpdateUserPayload> = {}): UpdateUserPayload {
+  return {
+    email: user.email,
+    displayName: getUserDisplayName(user),
+    roleCode: user.roleCode,
+    status: Number(user.status),
+    workspaceCodes: user.workspaceCodes ?? [],
+    ...overrides,
+  }
+}
+
+function openUserEdit(row: UserItem) {
+  if (!canMutateUser(row)) {
+    ElMessage.warning(getUserMutableReason(row))
+    return
+  }
+
+  editingUser.value = row
+  userForm.value = {
+    email: row.email || '',
+    displayName: getUserDisplayName(row) === '-' ? '' : getUserDisplayName(row),
+    roleCode: row.roleCode || 'MEMBER',
+    status: Number(row.status) === 0 ? 0 : 1,
+    workspaceCodesText: (row.workspaceCodes ?? []).join(', '),
+  }
+  userDialogVisible.value = true
+}
+
+async function submitUserEdit() {
+  if (!editingUser.value) {
+    return
+  }
+
+  if (!userForm.value.email.trim()) {
+    ElMessage.error('请填写邮箱')
+    return
+  }
+  if (!userForm.value.displayName.trim()) {
+    ElMessage.error('请填写姓名')
+    return
+  }
+  if (!userForm.value.roleCode) {
+    ElMessage.error('请选择角色')
+    return
+  }
+
+  savingUser.value = true
+  try {
+    await userApi.updateUser(editingUser.value.id, buildUserUpdatePayload(editingUser.value, {
+      email: userForm.value.email.trim(),
+      displayName: userForm.value.displayName.trim(),
+      roleCode: userForm.value.roleCode,
+      status: userForm.value.status,
+      workspaceCodes: parseWorkspaceCodes(userForm.value.workspaceCodesText),
+    }))
+    ElMessage.success('用户信息已更新')
+    userDialogVisible.value = false
+    await loadUsers()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    savingUser.value = false
+  }
+}
+
+async function toggleUserStatus(row: UserItem) {
+  const reason = getUserMutableReason(row)
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
+
+  const nextStatus = Number(row.status) === 1 ? 0 : 1
+  const actionText = nextStatus === 1 ? '启用' : '停用'
+
+  setMutatingUser(row.id, true)
+  try {
+    await ElMessageBox.confirm(
+      `确定${actionText}用户“${getUserDisplayName(row)}”吗？`,
+      `${actionText}用户`,
+      {
+        confirmButtonText: actionText,
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: nextStatus === 0 ? 'el-button--danger' : undefined,
+      },
+    )
+    await userApi.updateUser(row.id, buildUserUpdatePayload(row, { status: nextStatus }))
+    ElMessage.success(`用户已${actionText}`)
+    await loadUsers()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    setMutatingUser(row.id, false)
+  }
+}
+
+async function resetUserPassword(row: UserItem) {
+  const reason = getUserMutableReason(row)
+  if (reason) {
+    ElMessage.warning(reason)
+    return
+  }
+
+  setMutatingUser(row.id, true)
+  try {
+    await ElMessageBox.confirm(
+      `确定重置用户“${getUserDisplayName(row)}”的密码吗？`,
+      '重置密码',
+      {
+        confirmButtonText: '重置',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+    const response = await userApi.resetUserPassword(row.id)
+    ElMessage.success(`密码已重置为 ${response.defaultPassword}`)
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    setMutatingUser(row.id, false)
+  }
 }
 
 function formatDateTime(value?: string | null) {
@@ -744,11 +936,34 @@ watch(memberWorkspaceCode, () => {
           </template>
         </el-table-column>
         <el-table-column label="操作" width="184" fixed="right">
-          <template #default>
+          <template #default="{ row }: { row: UserItem }">
             <div class="team-row-actions">
-              <button type="button" disabled title="用户详情暂未接入">查看</button>
-              <button type="button" disabled title="用户编辑暂未接入">编辑</button>
-              <button type="button" disabled title="密码重置暂未接入">重置密码</button>
+              <button
+                type="button"
+                :disabled="!canMutateUser(row) || isUserMutating(row.id)"
+                :title="getUserMutableReason(row) || '编辑用户'"
+                @click="openUserEdit(row)"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                :class="{ 'is-danger': Number(row.status) === 1 }"
+                :disabled="!canMutateUser(row) || isUserMutating(row.id)"
+                :title="getUserMutableReason(row) || (Number(row.status) === 1 ? '停用用户' : '启用用户')"
+                @click="toggleUserStatus(row)"
+              >
+                {{ Number(row.status) === 1 ? '停用' : '启用' }}
+              </button>
+              <button
+                type="button"
+                class="is-danger"
+                :disabled="!canMutateUser(row) || isUserMutating(row.id)"
+                :title="getUserMutableReason(row) || '重置密码'"
+                @click="resetUserPassword(row)"
+              >
+                {{ isUserMutating(row.id) ? '处理中' : '重置密码' }}
+              </button>
             </div>
           </template>
         </el-table-column>
@@ -763,6 +978,52 @@ watch(memberWorkspaceCode, () => {
       :saving="savingWorkspace"
       @submit="submitWorkspace"
     />
+
+    <AppDialog
+      v-model="userDialogVisible"
+      title="编辑用户"
+      width="560px"
+    >
+      <div class="user-edit-dialog">
+        <label class="user-edit-dialog__field">
+          <span>姓名 *</span>
+          <el-input v-model="userForm.displayName" placeholder="请输入姓名" />
+        </label>
+        <label class="user-edit-dialog__field">
+          <span>邮箱 *</span>
+          <el-input v-model="userForm.email" placeholder="请输入邮箱" />
+        </label>
+        <label class="user-edit-dialog__field">
+          <span>角色</span>
+          <select v-model="userForm.roleCode" class="user-edit-dialog__select">
+            <option value="MEMBER">成员</option>
+            <option v-if="isCurrentSuperAdmin" value="ADMIN">管理员</option>
+            <option v-if="isCurrentSuperAdmin" value="PLATFORM_ADMIN">平台管理员</option>
+          </select>
+        </label>
+        <label class="user-edit-dialog__field">
+          <span>状态</span>
+          <select v-model.number="userForm.status" class="user-edit-dialog__select">
+            <option :value="1">启用</option>
+            <option :value="0">停用</option>
+          </select>
+        </label>
+        <label class="user-edit-dialog__field is-full">
+          <span>可访问空间</span>
+          <el-input
+            v-model="userForm.workspaceCodesText"
+            type="textarea"
+            :rows="3"
+            placeholder="多个空间编码可用逗号、空格或换行分隔"
+          />
+        </label>
+      </div>
+
+      <template #footer>
+        <AppButton :disabled="savingUser" @click="userDialogVisible = false">取消</AppButton>
+        <AppButton type="primary" :loading="savingUser" @click="submitUserEdit">保存</AppButton>
+      </template>
+    </AppDialog>
 
     <WorkspaceMemberDialog
       v-model="memberDialogVisible"
@@ -1418,10 +1679,54 @@ watch(memberWorkspaceCode, () => {
   color: var(--app-primary-hover);
 }
 
+.team-row-actions button.is-danger:hover:not(:disabled) {
+  color: var(--app-danger);
+}
+
 .team-row-actions button:disabled {
   color: var(--app-text-muted);
   cursor: not-allowed;
   opacity: 0.56;
+}
+
+.user-edit-dialog {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.user-edit-dialog__field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-edit-dialog__field.is-full {
+  grid-column: 1 / -1;
+}
+
+.user-edit-dialog__field > span {
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.user-edit-dialog__select {
+  width: 100%;
+  height: var(--app-control-height-md);
+  padding: 0 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  outline: none;
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  font: inherit;
+}
+
+.user-edit-dialog__select:focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px var(--app-primary-soft);
 }
 
 .workspace-member-select {
@@ -1504,6 +1809,10 @@ watch(memberWorkspaceCode, () => {
 
   .team-reset-button {
     width: 100%;
+  }
+
+  .user-edit-dialog {
+    grid-template-columns: 1fr;
   }
 }
 </style>
