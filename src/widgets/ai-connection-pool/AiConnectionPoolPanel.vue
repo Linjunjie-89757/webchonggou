@@ -450,7 +450,7 @@ onMounted(() => {
 .settings-stat {
   display: flex;
   min-width: 0;
-  min-height: 86px;
+  min-height: 95px;
   flex-direction: column;
   padding: 17px 20px;
   border: 1px solid var(--app-border);
