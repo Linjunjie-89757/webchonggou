@@ -123,6 +123,7 @@ const teamStats = computed(() => [
   { label: '当前空间成员', value: members.value.length, tone: 'orange', icon: User },
 ])
 const isTeamMode = computed(() => props.mode === 'team')
+const isCreatePlatformAdmin = computed(() => userDialogMode.value === 'create' && userForm.value.roleCode === 'PLATFORM_ADMIN')
 const canManageUsers = computed(() => {
   const roleCode = String(currentUser.value?.roleCode || '').toUpperCase()
   return ['SUPER_ADMIN', 'PLATFORM_ADMIN', 'ADMIN'].includes(roleCode)
@@ -809,6 +810,15 @@ onMounted(() => {
 watch(memberWorkspaceCode, () => {
   void loadMembers()
 })
+
+watch(
+  () => userForm.value.roleCode,
+  (roleCode) => {
+    if (userDialogMode.value === 'create' && roleCode === 'PLATFORM_ADMIN' && userForm.value.workspaceCodes.length > 0) {
+      userForm.value.workspaceCodes = []
+    }
+  },
+)
 </script>
 
 <template>
@@ -1263,30 +1273,33 @@ watch(memberWorkspaceCode, () => {
             <option :value="0">停用</option>
           </select>
         </label>
-        <label class="user-edit-dialog__field is-full">
-          <span>可访问空间</span>
-          <el-select
-            v-model="userForm.workspaceCodes"
-            class="user-edit-dialog__workspace-select"
-            multiple
-            filterable
-            collapse-tags
-            collapse-tags-tooltip
-            popper-class="user-edit-workspace-dropdown"
-            :disabled="businessWorkspaces.length === 0"
-            placeholder="选择可访问工作空间"
-          >
-            <el-option
-              v-for="workspace in businessWorkspaces"
-              :key="workspace.workspaceCode"
-              :label="workspaceDisplayName(workspace)"
-              :value="workspace.workspaceCode"
+        <template v-if="!isCreatePlatformAdmin">
+          <label class="user-edit-dialog__field is-full">
+            <span>可访问空间</span>
+            <el-select
+              v-model="userForm.workspaceCodes"
+              class="user-edit-dialog__workspace-select"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              popper-class="user-edit-workspace-dropdown"
+              :disabled="businessWorkspaces.length === 0"
+              placeholder="选择可访问工作空间"
             >
-              <span>{{ workspaceDisplayName(workspace) }}</span>
-              <small>{{ workspaceDisplayCode(workspace) }}</small>
-            </el-option>
-          </el-select>
-        </label>
+              <el-option
+                v-for="workspace in businessWorkspaces"
+                :key="workspace.workspaceCode"
+                :label="workspaceDisplayName(workspace)"
+                :value="workspace.workspaceCode"
+              />
+            </el-select>
+          </label>
+        </template>
+        <div v-if="isCreatePlatformAdmin" class="user-edit-dialog__field is-full">
+          <span>可访问空间</span>
+          <div class="user-edit-dialog__readonly-note">平台管理员默认拥有所有空间权限，无需单独分配</div>
+        </div>
         <p v-if="userDialogMode === 'create'" class="user-edit-dialog__note">
           平台账号创建后使用后端默认初始密码，后续可在列表中重置密码。
         </p>
@@ -1334,10 +1347,7 @@ watch(memberWorkspaceCode, () => {
               :key="workspace.workspaceCode"
               :label="workspaceDisplayName(workspace)"
               :value="workspace.workspaceCode"
-            >
-              <span>{{ workspaceDisplayName(workspace) }}</span>
-              <small>{{ workspaceDisplayCode(workspace) }}</small>
-            </el-option>
+            />
           </el-select>
         </label>
         <div v-if="batchUserResults.length" class="batch-user-results">
@@ -2509,16 +2519,17 @@ watch(memberWorkspaceCode, () => {
   border-radius: var(--app-radius-md);
 }
 
-:deep(.user-edit-workspace-dropdown .el-select-dropdown__item) {
+.user-edit-dialog__readonly-note {
   display: flex;
+  min-height: var(--app-control-height-md);
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-:deep(.user-edit-workspace-dropdown small) {
-  color: var(--app-text-muted);
-  font-size: 12px;
+  padding: 0 12px;
+  border: 1px solid rgb(59 130 246 / 0.18);
+  border-radius: var(--app-radius-md);
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .user-edit-dialog__hint {
