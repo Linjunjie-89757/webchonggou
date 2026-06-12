@@ -235,8 +235,10 @@ watch(
 
 <template>
   <AppDialog
+    class="ai-connection-create-edit-dialog"
+    :class="{ 'is-provider-select-step': mode === 'create' && dialogStep === 'provider' }"
     :model-value="modelValue"
-    :title="mode === 'create' && dialogStep === 'provider' ? '选择供应商' : mode === 'create' ? '配置连接' : '编辑 AI 连接'"
+    :title="mode === 'create' && dialogStep === 'provider' ? '选择供应商' : mode === 'create' ? '配置连接' : '编辑连接'"
     width="min(672px, calc(100vw - 32px))"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -489,7 +491,7 @@ watch(
 .ai-connection-dialog {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 0;
 }
 
 .ai-connection-provider-step,
@@ -501,7 +503,7 @@ watch(
 }
 
 .ai-connection-provider-step > p {
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   color: #6b7280;
   font-size: 14px;
   line-height: 1.5;
@@ -517,10 +519,10 @@ watch(
   position: relative;
   display: flex;
   min-width: 0;
-  min-height: 82px;
+  min-height: 86px;
   align-items: center;
   gap: 14px;
-  padding: 16px;
+  padding: 16px 18px;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
   background: #fff;
@@ -561,7 +563,7 @@ watch(
   overflow: hidden;
   color: #6b7280;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -583,7 +585,8 @@ watch(
   min-width: 0;
   align-items: center;
   gap: 12px;
-  padding: 12px;
+  min-height: 66px;
+  padding: 12px 14px;
   border: 1px solid #dbeafe;
   border-radius: 14px;
   background: #f8fbff;
@@ -593,18 +596,20 @@ watch(
 .ai-connection-brand {
   position: relative;
   display: inline-flex;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 42px;
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--app-border);
-  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 14px;
   background: var(--app-bg-muted);
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 800;
   line-height: 1;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, 0.12);
 }
 
 .ai-connection-brand img {
@@ -614,9 +619,10 @@ watch(
 }
 
 .ai-connection-brand.has-logo-image {
-  overflow: hidden;
-  padding: 8px;
-  background: #fff;
+  border-color: transparent !important;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .ai-connection-brand.has-logo-image > span {
@@ -922,7 +928,7 @@ watch(
 .ai-connection-dialog__advanced {
   display: grid;
   gap: var(--app-space-4);
-  padding: 12px;
+  padding: 10px 12px;
   border: 1px solid #eef2f7;
   border-radius: 14px;
   background: #fbfdff;
@@ -1064,6 +1070,84 @@ watch(
     opacity: 0.62;
     transform: scale(0.92);
   }
+}
+
+:global(.ai-connection-create-edit-dialog.el-dialog) {
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__header) {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__title) {
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__headerbtn) {
+  position: static;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  transform: none;
+  transition: background-color 180ms ease;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__headerbtn:hover) {
+  background: #f3f4f6;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__close) {
+  color: #9ca3af;
+  font-size: 18px;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__body) {
+  max-height: calc(90vh - 128px);
+  overflow-y: auto;
+  padding: 24px;
+  scrollbar-width: none;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__body::-webkit-scrollbar) {
+  display: none;
+}
+
+:global(.ai-connection-create-edit-dialog .el-dialog__footer) {
+  padding: 16px 24px;
+  border-top: 1px solid #f3f4f6;
+}
+
+:global(.ai-connection-create-edit-dialog.is-provider-select-step .el-dialog__body) {
+  max-height: calc(90vh - 64px);
+}
+
+:global(.ai-connection-create-edit-dialog.is-provider-select-step .el-dialog__footer) {
+  display: none;
+}
+
+:global(.ai-connection-create-edit-dialog .el-button) {
+  min-height: 36px;
+  padding: 8px 16px;
+  border-radius: 10px;
+}
+
+:global(.ai-connection-create-edit-dialog .el-button--primary) {
+  min-width: 96px;
+  background: #2563eb;
+  border-color: #2563eb;
+  font-weight: 600;
 }
 
 @media (prefers-reduced-motion: reduce) {
