@@ -91,6 +91,44 @@ const panelDescription = computed(() => (
 ))
 const visibleStats = computed(() => (isTeamMode.value ? teamStats.value : workspaceStats.value))
 
+const userKeyword = ref('')
+const userRoleFilter = ref('')
+const userStatusFilter = ref('')
+const userRoleOptions = computed(() => Array.from(new Set(users.value.map((user) => user.roleCode).filter(Boolean))).map((roleCode) => ({
+  label: getUserRoleLabel(roleCode),
+  value: roleCode,
+})))
+const userStatusOptions = computed(() => Array.from(new Set(users.value.map((user) => String(Number(user.status))).filter((status) => status === '0' || status === '1'))).map((status) => ({
+  label: getUserStatusMeta(status).label,
+  value: status,
+})))
+const filteredUsers = computed(() => {
+  const keyword = userKeyword.value.trim().toLowerCase()
+  const role = userRoleFilter.value
+  const status = userStatusFilter.value
+
+  return users.value.filter((user) => {
+    const searchable = [
+      getUserDisplayName(user),
+      user.username,
+      user.email,
+      user.roleCode,
+      getUserRoleLabel(user.roleCode),
+      formatUserWorkspaceNames(user.workspaceNames),
+    ].join(' ').toLowerCase()
+    const matchesKeyword = !keyword || searchable.includes(keyword)
+    const matchesRole = !role || user.roleCode === role
+    const matchesStatus = !status || String(Number(user.status)) === status
+    return matchesKeyword && matchesRole && matchesStatus
+  })
+})
+
+function resetUserFilters() {
+  userKeyword.value = ''
+  userRoleFilter.value = ''
+  userStatusFilter.value = ''
+}
+
 function workspaceDisplayName(workspace: WorkspaceItem) {
   return workspace.workspaceName || workspace.name || workspace.workspaceCode || workspace.code || '-'
 }
@@ -614,13 +652,50 @@ watch(memberWorkspaceCode, () => {
         </template>
       </AppEmptyState>
 
-      <AppEmptyState
-        v-else-if="users.length === 0"
-        title="暂无用户账号"
-        description="当前平台暂无可展示的用户账号。"
-      />
+      <div v-else-if="users.length === 0" class="team-empty-state">
+        <div class="team-empty-state__icon" aria-hidden="true">
+          <span>U</span>
+        </div>
+        <strong>暂无用户账号</strong>
+        <p>当前平台暂无可展示的用户账号。</p>
+      </div>
 
-      <el-table v-else v-loading="userLoading" :data="users" class="settings-table" row-key="id">
+      <template v-else>
+        <section class="team-filter-card">
+          <label class="team-filter-field is-keyword">
+            <span>关键词</span>
+            <input v-model="userKeyword" type="search" placeholder="搜索姓名、账号、邮箱或空间" />
+          </label>
+          <label class="team-filter-field">
+            <span>平台角色</span>
+            <select v-model="userRoleFilter">
+              <option value="">全部角色</option>
+              <option v-for="option in userRoleOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <label class="team-filter-field">
+            <span>状态</span>
+            <select v-model="userStatusFilter">
+              <option value="">全部状态</option>
+              <option v-for="option in userStatusOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <button type="button" class="team-reset-button" @click="resetUserFilters">重置</button>
+        </section>
+
+        <div v-if="filteredUsers.length === 0" class="team-empty-state">
+          <div class="team-empty-state__icon" aria-hidden="true">
+            <span>U</span>
+          </div>
+          <strong>暂无匹配账号</strong>
+          <p>调整筛选条件后再查看用户账号。</p>
+        </div>
+
+        <el-table v-else v-loading="userLoading" :data="filteredUsers" class="settings-table" row-key="id">
         <el-table-column label="姓名" min-width="140" show-overflow-tooltip>
           <template #default="{ row }: { row: UserItem }">
             <div class="team-member-cell">
@@ -652,7 +727,8 @@ watch(memberWorkspaceCode, () => {
             {{ formatUserWorkspaceNames(row.workspaceNames) }}
           </template>
         </el-table-column>
-      </el-table>
+        </el-table>
+      </template>
     </div>
 
     <WorkspaceCreateEditDialog
@@ -885,6 +961,132 @@ watch(memberWorkspaceCode, () => {
 
 .settings-table :deep(.el-table__row) {
   height: 58px;
+}
+
+.settings-panel-block--members :deep(.app-empty-state),
+.settings-panel-block--users :deep(.app-empty-state),
+.settings-panel-block--members :deep(.app-loading-state),
+.settings-panel-block--users :deep(.app-loading-state) {
+  min-height: 180px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 16px;
+  background: var(--app-bg-subtle);
+}
+
+.team-filter-card {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(160px, 180px) minmax(140px, 160px) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 16px;
+  background: var(--app-bg-panel);
+}
+
+.team-filter-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.team-filter-field input,
+.team-filter-field select {
+  width: 100%;
+  height: 38px;
+  min-width: 0;
+  padding: 0 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  outline: none;
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.team-filter-field input::placeholder {
+  color: var(--app-text-muted);
+}
+
+.team-filter-field input:focus,
+.team-filter-field select:focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px var(--app-primary-soft);
+}
+
+.team-reset-button {
+  height: 38px;
+  padding: 0 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-bg-subtle);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.team-reset-button:hover {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.team-empty-state {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 16px;
+  background: var(--app-bg-subtle);
+  text-align: center;
+}
+
+.team-empty-state__icon {
+  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--app-primary-soft), var(--app-purple-soft));
+  color: var(--app-primary);
+}
+
+.team-empty-state__icon span {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--app-bg-panel);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.team-empty-state strong {
+  color: var(--app-text-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.team-empty-state p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .workspace-card-grid {
@@ -1144,6 +1346,10 @@ watch(memberWorkspaceCode, () => {
   .settings-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .team-filter-card {
+    grid-template-columns: minmax(0, 1fr) minmax(140px, 180px);
+  }
 }
 
 @media (max-width: 640px) {
@@ -1164,6 +1370,14 @@ watch(memberWorkspaceCode, () => {
 
   .settings-stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .team-filter-card {
+    grid-template-columns: 1fr;
+  }
+
+  .team-reset-button {
+    width: 100%;
   }
 }
 </style>
