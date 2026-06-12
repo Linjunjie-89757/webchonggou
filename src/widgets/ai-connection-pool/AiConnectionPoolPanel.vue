@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Connection, Delete, Edit, Loading, Plus, RefreshRight, Tickets } from '@element-plus/icons-vue'
+import { Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Edit2, Trash2, Wifi } from '@lucide/vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -24,7 +25,6 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
-import { AiConnectionModelsDrawer } from '@/widgets/ai-connection-models-drawer'
 
 const providers = ref<AiProviderConnectionItem[]>([])
 const loading = ref(false)
@@ -35,8 +35,6 @@ const dialogMode = ref<AiConnectionDialogMode>('create')
 const editingProvider = ref<AiProviderConnectionItem | null>(null)
 const testingProviderIds = ref<Set<number>>(new Set())
 const deletingProviderIds = ref<Set<number>>(new Set())
-const modelsDrawerVisible = ref(false)
-const modelsProvider = ref<AiProviderConnectionItem | null>(null)
 
 const stats = computed(() => [
   { label: '连接总数', value: providers.value.length },
@@ -113,11 +111,6 @@ function isProviderBusy(id: number) {
   return isProviderTesting(id) || isProviderDeleting(id)
 }
 
-function openModelsDrawer(provider: AiProviderConnectionItem) {
-  modelsProvider.value = provider
-  modelsDrawerVisible.value = true
-}
-
 async function submitProvider(payload: SaveAiProviderConnectionPayload) {
   saving.value = true
   try {
@@ -159,10 +152,6 @@ async function deleteProvider(provider: AiProviderConnectionItem) {
   try {
     await deleteAiConnection(provider, 'ALL')
     ElMessage.success('AI 连接已删除')
-    if (modelsProvider.value?.id === provider.id) {
-      modelsDrawerVisible.value = false
-      modelsProvider.value = null
-    }
     await loadProviders()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
@@ -300,33 +289,22 @@ onMounted(() => {
               :class="{ 'is-loading': isProviderTesting(provider.id) }"
               :disabled="isProviderBusy(provider.id)"
               aria-label="测试连接"
+              title="测试连接"
               @click="testProvider(provider)"
             >
-              <el-icon>
-                <Loading v-if="isProviderTesting(provider.id)" />
-                <Connection v-else />
-              </el-icon>
+              <Wifi :size="16" :class="{ 'is-pulsing': isProviderTesting(provider.id) }" />
               <span>测试</span>
             </button>
             <button
               type="button"
               class="ai-connection-actions__button"
               aria-label="编辑连接"
+              title="编辑连接"
               :disabled="isProviderBusy(provider.id)"
               @click="openEditDialog(provider)"
             >
-              <el-icon><Edit /></el-icon>
+              <Edit2 :size="16" />
               <span>编辑</span>
-            </button>
-            <button
-              type="button"
-              class="ai-connection-actions__button"
-              aria-label="查看模型"
-              :disabled="isProviderBusy(provider.id)"
-              @click="openModelsDrawer(provider)"
-            >
-              <el-icon><Tickets /></el-icon>
-              <span>模型</span>
             </button>
             <button
               type="button"
@@ -334,12 +312,10 @@ onMounted(() => {
               :class="{ 'is-loading': isProviderDeleting(provider.id) }"
               :disabled="isProviderBusy(provider.id)"
               aria-label="删除连接"
+              title="删除连接"
               @click="deleteProvider(provider)"
             >
-              <el-icon>
-                <Loading v-if="isProviderDeleting(provider.id)" />
-                <Delete v-else />
-              </el-icon>
+              <Trash2 :size="16" :class="{ 'is-pulsing': isProviderDeleting(provider.id) }" />
               <span>删除</span>
             </button>
           </div>
@@ -381,11 +357,6 @@ onMounted(() => {
       @submit="submitProvider"
     />
 
-    <AiConnectionModelsDrawer
-      v-model="modelsDrawerVisible"
-      :provider="modelsProvider"
-      workspace-code="ALL"
-    />
   </section>
 </template>
 
@@ -717,6 +688,7 @@ onMounted(() => {
 
 .ai-connection-actions {
   position: absolute;
+  z-index: 2;
   right: var(--app-space-4);
   top: var(--app-space-4);
   display: flex;
@@ -728,6 +700,7 @@ onMounted(() => {
 }
 
 .ai-connection-actions__button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -773,8 +746,8 @@ onMounted(() => {
   opacity: 0.52;
 }
 
-.ai-connection-actions__button.is-loading .el-icon {
-  animation: ai-connection-spin 1s linear infinite;
+.ai-connection-actions__button .is-pulsing {
+  animation: ai-connection-pulse 1s ease-in-out infinite;
 }
 
 .supported-providers {
@@ -836,13 +809,16 @@ onMounted(() => {
   background: var(--app-success);
 }
 
-@keyframes ai-connection-spin {
-  from {
-    transform: rotate(0deg);
+@keyframes ai-connection-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
   }
 
-  to {
-    transform: rotate(360deg);
+  50% {
+    opacity: 0.62;
+    transform: scale(0.92);
   }
 }
 
