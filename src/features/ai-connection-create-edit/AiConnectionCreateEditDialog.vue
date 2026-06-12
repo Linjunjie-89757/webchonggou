@@ -66,6 +66,25 @@ let modelRequestSeq = 0
 
 const hasSavedProvider = computed(() => Boolean(props.provider))
 
+const legacyBrandDescriptions: Partial<Record<string, string>> = {
+  openai: 'GPT-4o、GPT-4 Turbo 等系列模型',
+  anthropic: 'Claude 3.5 Sonnet、Claude 3 Opus 等',
+  google: 'Gemini 1.5 Pro、Gemini 1.5 Flash 等',
+  deepseek: 'DeepSeek V3、DeepSeek Coder 等',
+  qwen: 'Qwen-Max、Qwen-Plus、Qwen-Turbo 等',
+  azure: '微软 Azure 托管的 OpenAI 模型',
+  xiaomi: 'MiMo 推理模型，小米开源系列',
+  zhipu: 'GLM-4、GLM-4-Flash 等系列模型',
+  kimi: 'Moonshot AI，擅长长文本理解',
+  minimax: 'MiniMax-Text、abab 系列模型',
+  ollama: '本地运行的开源大模型',
+  custom: '支持所有兼容 OpenAI API 规范的模型提供商',
+}
+
+function getLegacyBrandDescription(brand: AiProviderBrand) {
+  return legacyBrandDescriptions[brand.id] ?? brand.description
+}
+
 function resetForm() {
   const nextForm =
     props.mode === 'edit' && props.provider
@@ -239,12 +258,12 @@ watch(
     :class="{ 'is-provider-select-step': mode === 'create' && dialogStep === 'provider' }"
     :model-value="modelValue"
     :title="mode === 'create' && dialogStep === 'provider' ? '选择供应商' : mode === 'create' ? '配置连接' : '编辑连接'"
-    width="min(672px, calc(100vw - 32px))"
+    width="672px"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="ai-connection-dialog">
       <section v-if="mode === 'create' && dialogStep === 'provider'" class="ai-connection-provider-step">
-        <p>选择要接入的 AI 服务供应商，下一步会带入默认协议、地址和模型建议。</p>
+        <p>选择要接入的 AI 服务供应商</p>
         <div class="ai-connection-provider-grid">
           <button
             v-for="brand in aiProviderBrands"
@@ -266,7 +285,7 @@ watch(
             </span>
             <span>
               <strong>{{ brand.name }}</strong>
-              <small>{{ brand.description }}</small>
+              <small>{{ getLegacyBrandDescription(brand) }}</small>
             </span>
             <ChevronRight class="ai-connection-provider-card__arrow" :size="16" />
           </button>
@@ -298,7 +317,7 @@ watch(
           </span>
           <span>
             <strong>{{ selectedBrand.name }}</strong>
-            <small>{{ selectedBrand.description }}</small>
+            <small>{{ getLegacyBrandDescription(selectedBrand) }}</small>
           </span>
         </div>
 
@@ -309,7 +328,7 @@ watch(
 
         <div class="ai-connection-dialog__field">
           <span class="ai-connection-dialog__label-row">
-            API URL
+            API Url
             <button type="button" @click="restoreDefaultBaseUrl">恢复默认</button>
           </span>
           <el-input v-model="form.baseUrl" class="is-mono" :placeholder="selectedBrand.baseUrl" />
@@ -591,6 +610,13 @@ watch(
   border-radius: 14px;
   background: #f8fbff;
   box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.03);
+}
+
+.ai-connection-selected-provider .ai-connection-brand {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+  border-radius: 12px;
 }
 
 .ai-connection-brand {
