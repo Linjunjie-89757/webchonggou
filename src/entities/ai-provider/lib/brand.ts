@@ -230,12 +230,39 @@ export function getAiProviderSearchText(provider: AiProviderConnectionItem) {
   return `${provider.connectionName} ${provider.baseUrl} ${provider.modelName ?? ''}`.toLowerCase()
 }
 
+function getCustomProviderIntentText(provider: AiProviderConnectionItem) {
+  return `${provider.connectionName} ${provider.baseUrl}`.toLowerCase()
+}
+
+function hasCustomProviderIntent(provider: AiProviderConnectionItem) {
+  const source = getCustomProviderIntentText(provider)
+  const customSignals = [
+    'custom',
+    '自定义',
+    '中转',
+    '代理',
+    '网关',
+    '转发',
+    'proxy',
+    'gateway',
+    'relay',
+  ]
+
+  return customSignals.some((signal) => source.includes(signal))
+}
+
 export function inferAiProviderBrand(provider: AiProviderConnectionItem) {
+  const customBrand = aiProviderBrands.find((brand) => brand.id === 'custom')
+
+  if (customBrand && hasCustomProviderIntent(provider)) {
+    return customBrand
+  }
+
   const source = getAiProviderSearchText(provider)
 
   return (
     aiProviderBrands.find((brand) => brand.aliases.some((alias) => source.includes(alias.toLowerCase()))) ??
-    aiProviderBrands.find((brand) => brand.id === 'custom') ??
+    customBrand ??
     aiProviderBrands[0]
   )
 }
