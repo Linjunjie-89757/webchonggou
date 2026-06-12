@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
-import { Edit2, Trash2, Wifi } from '@lucide/vue'
+import { Database, Edit2, Trash2, Wifi } from '@lucide/vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -209,15 +209,14 @@ onMounted(() => {
       </template>
     </AppEmptyState>
 
-    <AppEmptyState
-      v-else-if="providers.length === 0"
-      title="暂无 AI 连接"
-      description="当前平台视角下还没有可展示的 AI 连接。"
-    >
-      <template #actions>
-        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增连接</AppButton>
-      </template>
-    </AppEmptyState>
+    <section v-else-if="providers.length === 0" class="ai-connection-empty">
+      <span class="ai-connection-empty__icon" aria-hidden="true">
+        <Database :size="34" />
+      </span>
+      <h3>暂无连接配置</h3>
+      <p>点击右上角「添加连接」开始配置 AI 模型</p>
+      <AppButton type="primary" :icon="Plus" @click="openCreateDialog">添加第一个连接</AppButton>
+    </section>
 
     <section v-else class="ai-connection-card-grid" v-loading="loading">
       <article v-for="provider in providerCardItems" :key="provider.id" class="ai-connection-card">
@@ -460,6 +459,43 @@ onMounted(() => {
   background: var(--app-danger-soft);
   color: var(--app-danger);
   font-size: var(--app-font-size-sm);
+}
+
+.ai-connection-empty {
+  display: flex;
+  min-height: 236px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--app-space-3);
+  padding: var(--app-space-8) var(--app-space-4);
+  text-align: center;
+}
+
+.ai-connection-empty__icon {
+  display: inline-flex;
+  width: 64px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 18px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-subtle);
+}
+
+.ai-connection-empty h3 {
+  margin: var(--app-space-1) 0 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+  font-weight: 700;
+  line-height: var(--app-line-height-md);
+}
+
+.ai-connection-empty p {
+  margin: -4px 0 var(--app-space-1);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-md);
 }
 
 .ai-connection-card-grid {
