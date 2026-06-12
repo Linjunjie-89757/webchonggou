@@ -535,31 +535,31 @@ watch(
 
 .ai-connection-provider-card > span:last-child,
 .ai-connection-selected-provider > span:last-child {
-  display: flex;
+  display: block;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
+  flex: 1;
 }
 
 .ai-connection-provider-card strong,
 .ai-connection-selected-provider strong {
+  display: block;
   overflow: hidden;
   color: #111827;
   font-size: 14px;
-  line-height: 1.45;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .ai-connection-provider-card small,
 .ai-connection-selected-provider small {
-  display: -webkit-box;
+  display: block;
+  margin-top: 2px;
   overflow: hidden;
   color: #6b7280;
   font-size: 12px;
-  line-height: 1.35;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  line-height: 1.4;
+  text-overflow: ellipsis;
 }
 
 .ai-connection-provider-card__arrow {

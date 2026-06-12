@@ -106,8 +106,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: rgb(0 0 0 / 30%);
-  backdrop-filter: blur(8px);
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(6px);
 }
 
 .settings-modal-panel {
@@ -119,6 +119,7 @@ onBeforeUnmount(() => {
   border-radius: 16px;
   background: var(--app-bg-panel);
   box-shadow: 0 25px 50px -12px rgb(0 0 0 / 25%);
+  font-family: var(--app-font-family);
 }
 
 .settings-modal-header,
