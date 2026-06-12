@@ -1246,10 +1246,14 @@ watch(
       :title="userDialogMode === 'create' ? '新增账号' : '编辑用户'"
       width="560px"
     >
-      <div class="user-edit-dialog" :class="{ 'is-create-mode': userDialogMode === 'create' }">
-        <label v-if="userDialogMode === 'create'" class="user-edit-dialog__field is-full">
+      <div class="user-edit-dialog">
+        <label class="user-edit-dialog__field is-full">
           <span>账号 <i>*</i></span>
-          <el-input v-model="userForm.username" placeholder="请输入账号" />
+          <el-input
+            v-model="userForm.username"
+            :disabled="userDialogMode === 'edit'"
+            :placeholder="userDialogMode === 'create' ? '请输入账号' : ''"
+          />
         </label>
         <label class="user-edit-dialog__field">
           <span>邮箱 <i>*</i></span>
@@ -2442,11 +2446,6 @@ watch(
 
 .user-edit-dialog {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.user-edit-dialog.is-create-mode {
   grid-template-columns: 1fr;
   gap: 14px;
 }
@@ -2488,6 +2487,16 @@ watch(
 .user-edit-dialog__select:focus {
   border-color: var(--app-primary);
   box-shadow: 0 0 0 3px var(--app-primary-soft);
+}
+
+.user-edit-dialog :deep(.el-input.is-disabled .el-input__wrapper) {
+  background: var(--app-bg-subtle);
+  box-shadow: 0 0 0 1px var(--app-border-soft) inset;
+}
+
+.user-edit-dialog :deep(.el-input.is-disabled .el-input__inner) {
+  color: var(--app-text-secondary);
+  -webkit-text-fill-color: var(--app-text-secondary);
 }
 
 .user-edit-dialog__role-group {
