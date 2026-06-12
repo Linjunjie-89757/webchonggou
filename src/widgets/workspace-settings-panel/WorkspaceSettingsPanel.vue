@@ -1227,28 +1227,28 @@ watch(memberWorkspaceCode, () => {
       :title="userDialogMode === 'create' ? '新增账号' : '编辑用户'"
       width="560px"
     >
-      <div class="user-edit-dialog">
+      <div class="user-edit-dialog" :class="{ 'is-create-mode': userDialogMode === 'create' }">
         <label v-if="userDialogMode === 'create'" class="user-edit-dialog__field is-full">
-          <span>账号 *</span>
+          <span>账号 <i>*</i></span>
           <el-input v-model="userForm.username" placeholder="请输入账号" />
         </label>
         <label class="user-edit-dialog__field">
-          <span>姓名 *</span>
-          <el-input v-model="userForm.displayName" placeholder="请输入姓名" />
-        </label>
-        <label class="user-edit-dialog__field">
-          <span>邮箱 *</span>
+          <span>邮箱 <i>*</i></span>
           <el-input v-model="userForm.email" placeholder="请输入邮箱" />
         </label>
         <label class="user-edit-dialog__field">
-          <span>角色</span>
+          <span>姓名 <i>*</i></span>
+          <el-input v-model="userForm.displayName" placeholder="请输入姓名" />
+        </label>
+        <label class="user-edit-dialog__field">
+          <span>平台角色 <i>*</i></span>
           <select v-model="userForm.roleCode" class="user-edit-dialog__select">
             <option value="MEMBER">成员</option>
             <option v-if="isCurrentSuperAdmin" value="ADMIN">管理员</option>
             <option v-if="isCurrentSuperAdmin" value="PLATFORM_ADMIN">平台管理员</option>
           </select>
         </label>
-        <label class="user-edit-dialog__field">
+        <label v-if="userDialogMode === 'edit'" class="user-edit-dialog__field">
           <span>状态</span>
           <select v-model.number="userForm.status" class="user-edit-dialog__select">
             <option :value="1">启用</option>
@@ -1278,9 +1278,6 @@ watch(memberWorkspaceCode, () => {
               <small>{{ workspaceDisplayCode(workspace) }}</small>
             </el-option>
           </el-select>
-          <p class="user-edit-dialog__hint">
-            {{ businessWorkspaces.length ? '未选择时表示不授予具体业务空间。' : '暂无可选择的业务工作空间。' }}
-          </p>
         </label>
         <p v-if="userDialogMode === 'create'" class="user-edit-dialog__note">
           平台账号创建后使用后端默认初始密码，后续可在列表中重置密码。
@@ -2431,6 +2428,11 @@ watch(memberWorkspaceCode, () => {
   gap: 16px;
 }
 
+.user-edit-dialog.is-create-mode {
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
 .user-edit-dialog__field {
   display: flex;
   min-width: 0;
@@ -2446,6 +2448,11 @@ watch(memberWorkspaceCode, () => {
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 600;
+}
+
+.user-edit-dialog__field > span i {
+  color: var(--app-danger);
+  font-style: normal;
 }
 
 .user-edit-dialog__select {
