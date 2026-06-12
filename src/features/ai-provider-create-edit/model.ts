@@ -1,6 +1,7 @@
 import type {
   AiProviderConnectionItem,
   AiProviderStatus,
+  AiProviderType,
   SaveAiProviderConnectionPayload,
 } from '@/entities/ai-provider'
 
@@ -8,6 +9,7 @@ export type AiProviderDialogMode = 'create' | 'edit'
 
 export interface AiProviderForm {
   workspaceCode: string
+  providerType: AiProviderType
   connectionName: string
   protocolType: string
   baseUrl: string
@@ -26,6 +28,7 @@ export const aiProviderProtocolOptions = [
 export function createDefaultAiProviderForm(workspaceCode = 'ALL'): AiProviderForm {
   return {
     workspaceCode,
+    providerType: 'custom',
     connectionName: '',
     protocolType: 'OPENAI_COMPATIBLE_CHAT',
     baseUrl: '',
@@ -39,6 +42,7 @@ export function createDefaultAiProviderForm(workspaceCode = 'ALL'): AiProviderFo
 export function createAiProviderFormFromItem(item: AiProviderConnectionItem): AiProviderForm {
   return {
     workspaceCode: item.workspaceCode || 'ALL',
+    providerType: item.providerType,
     connectionName: item.connectionName,
     protocolType: item.protocolType || 'OPENAI_COMPATIBLE_CHAT',
     baseUrl: item.baseUrl,
@@ -55,6 +59,7 @@ export function buildSaveAiProviderPayload(
 ): SaveAiProviderConnectionPayload {
   const payload: SaveAiProviderConnectionPayload = {
     workspaceCode: form.workspaceCode.trim() || 'ALL',
+    providerType: form.providerType,
     connectionName: form.connectionName.trim(),
     protocolType: form.protocolType,
     baseUrl: form.baseUrl.trim(),

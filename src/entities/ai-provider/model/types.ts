@@ -1,9 +1,23 @@
 export type AiProviderStatus = 0 | 1
+export type AiProviderType =
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'deepseek'
+  | 'qwen'
+  | 'azure'
+  | 'xiaomi'
+  | 'zhipu'
+  | 'kimi'
+  | 'minimax'
+  | 'ollama'
+  | 'custom'
 
 export interface AiProviderConnectionItem {
   id: number
   workspaceCode: string
   workspaceName: string
+  providerType: AiProviderType
   connectionName: string
   protocolType: string
   baseUrl: string
@@ -19,6 +33,7 @@ export interface AiProviderConnectionItem {
 
 export interface SaveAiProviderConnectionPayload {
   workspaceCode?: string
+  providerType: AiProviderType
   connectionName: string
   protocolType: string
   baseUrl: string

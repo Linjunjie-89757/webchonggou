@@ -8,6 +8,7 @@ import {
 function buildStatusPayload(provider: AiProviderConnectionItem, status: AiProviderStatus): UpdateAiProviderStatusPayload {
   return {
     workspaceCode: provider.workspaceCode || 'ALL',
+    providerType: provider.providerType,
     connectionName: provider.connectionName,
     protocolType: provider.protocolType,
     baseUrl: provider.baseUrl,

@@ -97,6 +97,7 @@ function resetForm() {
 
   if (props.mode === 'edit' && props.provider) {
     selectedBrand.value = inferAiProviderBrand(props.provider)
+    form.providerType = selectedBrand.value.id
     dialogStep.value = 'config'
     void loadProviderModels({ sync: false })
   } else {
@@ -120,6 +121,7 @@ function submit() {
 
 function selectBrand(brand: AiProviderBrand) {
   selectedBrand.value = brand
+  form.providerType = brand.id
   form.connectionName = `${brand.shortName} 连接`
   form.protocolType = brand.protocolType
   form.baseUrl = brand.baseUrl
