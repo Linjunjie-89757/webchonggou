@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue'
-import { Package, Target, Users } from '@lucide/vue'
 
 import type { WorkspaceItem } from '@/entities/workspace'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -43,11 +42,6 @@ const emit = defineEmits<{
 
 const form = reactive<WorkspaceForm>(createDefaultWorkspaceForm())
 const formError = ref('')
-const workspaceTypeIcons = {
-  package: Package,
-  users: Users,
-  target: Target,
-}
 
 function resetForm() {
   const nextForm =
@@ -60,7 +54,7 @@ function resetForm() {
 }
 
 function submit() {
-  const error = validateWorkspaceForm(form, props.mode)
+  const error = validateWorkspaceForm(form)
   if (error) {
     formError.value = error
     return
@@ -100,15 +94,6 @@ watch(
   >
     <div class="workspace-dialog">
       <label class="workspace-dialog__field">
-        <span>空间编码 *</span>
-        <el-input
-          v-model="form.workspaceCode"
-          placeholder="例如：project-alpha"
-          :disabled="mode === 'edit'"
-        />
-      </label>
-
-      <label class="workspace-dialog__field">
         <span>空间名称 *</span>
         <el-input v-model="form.workspaceName" placeholder="例如：开户工作空间" />
       </label>
@@ -133,12 +118,7 @@ watch(
             :class="{ 'is-active': form.workspaceType === item.value }"
             @click="form.workspaceType = item.value"
           >
-            <component
-              :is="workspaceTypeIcons[item.icon]"
-              class="workspace-dialog__type-icon"
-              :size="24"
-              aria-hidden="true"
-            />
+            <span class="workspace-dialog__type-icon" aria-hidden="true">{{ item.icon }}</span>
             <strong>{{ item.label }}</strong>
             <small>{{ item.description }}</small>
           </button>
@@ -346,6 +326,8 @@ watch(
 
 .workspace-dialog__type-icon {
   margin-bottom: 4px;
+  font-size: 24px;
+  line-height: 1;
 }
 
 .workspace-dialog__select {

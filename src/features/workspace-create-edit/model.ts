@@ -12,9 +12,9 @@ export interface WorkspaceForm {
 }
 
 export const workspaceTypeOptions = [
-  { value: 'PROJECT', label: '项目空间', description: '项目专用', icon: 'package' },
-  { value: 'TEAM', label: '团队空间', description: '团队协作', icon: 'users' },
-  { value: 'PRODUCT', label: '产品空间', description: '产品测试', icon: 'target' },
+  { value: 'PROJECT', label: '项目空间', description: '项目专用', icon: '📦' },
+  { value: 'TEAM', label: '团队空间', description: '团队协作', icon: '👥' },
+  { value: 'PRODUCT', label: '产品空间', description: '产品测试', icon: '🎯' },
 ] as const
 
 export const workspaceStatusOptions = [
@@ -45,8 +45,10 @@ export function createWorkspaceFormFromItem(item: WorkspaceItem): WorkspaceForm 
 }
 
 export function buildSaveWorkspacePayload(form: WorkspaceForm): SaveWorkspacePayload {
+  const workspaceCode = form.workspaceCode.trim()
+
   return {
-    workspaceCode: form.workspaceCode.trim(),
+    workspaceCode: workspaceCode || undefined,
     workspaceName: form.workspaceName.trim(),
     description: form.description.trim() || null,
     workspaceType: form.workspaceType.trim() || 'PROJECT',
@@ -55,11 +57,10 @@ export function buildSaveWorkspacePayload(form: WorkspaceForm): SaveWorkspacePay
   }
 }
 
-export function validateWorkspaceForm(form: WorkspaceForm, mode: WorkspaceDialogMode) {
-  if (mode === 'create' && !form.workspaceCode.trim()) {
-    return '请输入空间编码'
-  }
-  if (!/^[a-zA-Z0-9_-]+$/.test(form.workspaceCode.trim())) {
+export function validateWorkspaceForm(form: WorkspaceForm) {
+  const workspaceCode = form.workspaceCode.trim()
+
+  if (workspaceCode && !/^[a-zA-Z0-9_-]+$/.test(workspaceCode)) {
     return '空间编码只能包含字母、数字、下划线和短横线'
   }
   if (!form.workspaceName.trim()) {
