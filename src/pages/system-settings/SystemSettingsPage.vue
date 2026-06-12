@@ -85,6 +85,49 @@ const placeholderMeta = computed(() => {
   display: none;
 }
 
+.system-settings-page__content :deep(.settings-panel-header.settings-panel-header) {
+  display: flex;
+  min-height: 64px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.system-settings-page__content :deep(.settings-panel-header h2) {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.system-settings-page__content :deep(.settings-panel-header p) {
+  max-width: 720px;
+  margin: 2px 0 0;
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.system-settings-page__content :deep(.settings-panel-header__actions.settings-panel-header__actions) {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.system-settings-page__content :deep(.settings-panel-header__actions .el-button.app-button) {
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 @media (max-width: 900px) {
   .system-settings-page {
     flex-direction: column;
@@ -95,6 +138,17 @@ const placeholderMeta = computed(() => {
     width: 100%;
     overflow: visible;
     padding: var(--app-space-4);
+  }
+}
+
+@media (max-width: 640px) {
+  .system-settings-page__content :deep(.settings-panel-header.settings-panel-header) {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .system-settings-page__content :deep(.settings-panel-header__actions.settings-panel-header__actions) {
+    justify-content: flex-start;
   }
 }
 </style>
