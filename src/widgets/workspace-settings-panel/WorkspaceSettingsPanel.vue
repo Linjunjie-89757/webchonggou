@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Delete, Edit, Plus, RefreshRight } from '@element-plus/icons-vue'
+import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { ChevronLeft, Crown, Edit2, Package, Shield, Target, Trash2, User, UserCog, Users } from '@lucide/vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -17,7 +17,6 @@ import {
   getUserDisplayName,
   getUserRoleLabel,
   getUserStatusMeta,
-  type CreateUserPayload,
   type UpdateUserPayload,
   type UserItem,
   userApi,
@@ -26,7 +25,6 @@ import { useSession } from '@/entities/session'
 import { WorkspaceCreateEditDialog, type WorkspaceDialogMode } from '@/features/workspace-create-edit'
 import {
   deleteWorkspaceMember,
-  getWorkspaceMemberRoleLabel,
   WorkspaceMemberDialog,
   type WorkspaceMemberDialogMode,
 } from '@/features/workspace-member-manage'
@@ -35,13 +33,10 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
-import AppStatusBadge from '@/shared/ui/app-status-badge/AppStatusBadge.vue'
 
 type PanelMode = 'workspace' | 'team'
-type UserDialogMode = 'create' | 'edit'
 
 interface UserEditForm {
-  username: string
   email: string
   displayName: string
   roleCode: string
@@ -80,13 +75,11 @@ const memberDialogMode = ref<WorkspaceMemberDialogMode>('create')
 const memberCreateRole = ref<'ADMIN' | 'MEMBER'>('MEMBER')
 const editingMember = ref<WorkspaceMemberItem | null>(null)
 const userDialogVisible = ref(false)
-const userDialogMode = ref<UserDialogMode>('edit')
 const editingUser = ref<UserItem | null>(null)
 const savingUser = ref(false)
 const mutatingUserIds = ref<Set<number>>(new Set())
 const deletingMemberIds = ref<Set<number>>(new Set())
 const userForm = ref<UserEditForm>({
-  username: '',
   email: '',
   displayName: '',
   roleCode: 'MEMBER',
@@ -95,10 +88,6 @@ const userForm = ref<UserEditForm>({
 })
 
 const businessWorkspaces = computed(() => workspaces.value.filter((item) => !item.allScope && item.workspaceCode !== 'ALL'))
-const memberWorkspaceOptions = computed(() => businessWorkspaces.value.map((item) => ({
-  label: item.workspaceName || item.workspaceCode,
-  value: item.workspaceCode,
-})))
 const workspaceOwnerOptions = computed(() => users.value
   .filter((user) => Number(user.status) === 1)
   .map((user) => ({
@@ -243,13 +232,6 @@ function getUserInitial(user: UserItem | WorkspaceMemberItem) {
   return (name || user.username || '-').slice(0, 1).toUpperCase()
 }
 
-function getWorkspaceStatusMeta(status?: number | string | null) {
-  if (Number(status) === 0) {
-    return { label: '停用', tone: 'danger' as const }
-  }
-  return { label: '启用', tone: 'success' as const }
-}
-
 function getUserRoleClass(roleCode?: string | null) {
   const normalizedRole = String(roleCode || '').toUpperCase()
   if (normalizedRole.includes('SUPER') || normalizedRole.includes('ADMIN')) {
@@ -308,35 +290,6 @@ function buildUserUpdatePayload(user: UserItem, overrides: Partial<UpdateUserPay
   }
 }
 
-function buildUserCreatePayload(): CreateUserPayload {
-  return {
-    username: userForm.value.username.trim(),
-    email: userForm.value.email.trim(),
-    displayName: userForm.value.displayName.trim(),
-    roleCode: userForm.value.roleCode,
-    workspaceCodes: normalizeWorkspaceCodes(userForm.value.workspaceCodes),
-  }
-}
-
-function openUserCreate() {
-  if (!canManageUsers.value) {
-    ElMessage.warning('当前账号无用户维护权限')
-    return
-  }
-
-  userDialogMode.value = 'create'
-  editingUser.value = null
-  userForm.value = {
-    username: '',
-    email: '',
-    displayName: '',
-    roleCode: 'MEMBER',
-    status: 1,
-    workspaceCodes: [],
-  }
-  userDialogVisible.value = true
-}
-
 function openUserEdit(row: UserItem) {
   if (!canMutateUser(row)) {
     ElMessage.warning(getUserMutableReason(row))
@@ -344,9 +297,7 @@ function openUserEdit(row: UserItem) {
   }
 
   editingUser.value = row
-  userDialogMode.value = 'edit'
   userForm.value = {
-    username: row.username || '',
     email: row.email || '',
     displayName: getUserDisplayName(row) === '-' ? '' : getUserDisplayName(row),
     roleCode: row.roleCode || 'MEMBER',
@@ -357,8 +308,7 @@ function openUserEdit(row: UserItem) {
 }
 
 async function submitUserEdit() {
-  if (userDialogMode.value === 'create' && !userForm.value.username.trim()) {
-    ElMessage.error('请填写账号')
+  if (!editingUser.value) {
     return
   }
   if (!userForm.value.email.trim()) {
@@ -376,19 +326,14 @@ async function submitUserEdit() {
 
   savingUser.value = true
   try {
-    if (userDialogMode.value === 'create') {
-      await userApi.createUser(buildUserCreatePayload())
-      ElMessage.success('用户已创建，默认密码为 zhyt@2025')
-    } else if (editingUser.value) {
-      await userApi.updateUser(editingUser.value.id, buildUserUpdatePayload(editingUser.value, {
-        email: userForm.value.email.trim(),
-        displayName: userForm.value.displayName.trim(),
-        roleCode: userForm.value.roleCode,
-        status: userForm.value.status,
-        workspaceCodes: normalizeWorkspaceCodes(userForm.value.workspaceCodes),
-      }))
-      ElMessage.success('用户信息已更新')
-    }
+    await userApi.updateUser(editingUser.value.id, buildUserUpdatePayload(editingUser.value, {
+      email: userForm.value.email.trim(),
+      displayName: userForm.value.displayName.trim(),
+      roleCode: userForm.value.roleCode,
+      status: userForm.value.status,
+      workspaceCodes: normalizeWorkspaceCodes(userForm.value.workspaceCodes),
+    }))
+    ElMessage.success('用户信息已更新')
     userDialogVisible.value = false
     await loadUsers()
   } catch (error) {
@@ -460,10 +405,6 @@ async function resetUserPassword(row: UserItem) {
   } finally {
     setMutatingUser(row.id, false)
   }
-}
-
-function formatDateTime(value?: string | null) {
-  return value ? value.replace('T', ' ').slice(0, 16) : '-'
 }
 
 async function loadWorkspaces() {
@@ -696,15 +637,6 @@ watch(memberWorkspaceCode, () => {
         >
           刷新
         </AppButton>
-        <AppButton
-          v-if="isTeamMode"
-          type="primary"
-          :icon="Plus"
-          :disabled="!memberWorkspaceCode"
-          @click="openCreateMemberDialog"
-        >
-          添加成员
-        </AppButton>
         <AppButton v-else type="primary" :icon="Plus" @click="openCreateWorkspaceDialog">新增空间</AppButton>
       </div>
     </header>
@@ -717,17 +649,7 @@ watch(memberWorkspaceCode, () => {
       </div>
     </div>
 
-    <div class="settings-panel-block settings-panel-block--workspaces">
-      <div v-if="isTeamMode" class="settings-panel-block__header">
-        <h3>工作空间配置</h3>
-        <div class="settings-panel-block__actions">
-          <span v-if="workspaceErrorMessage && businessWorkspaces.length > 0" class="settings-inline-error">
-            {{ workspaceErrorMessage }}
-          </span>
-          <AppButton size="small" type="primary" :icon="Plus" @click="openCreateWorkspaceDialog">新增空间</AppButton>
-        </div>
-      </div>
-
+    <div v-if="!isTeamMode" class="settings-panel-block settings-panel-block--workspaces">
       <AppLoadingState v-if="workspaceLoading && businessWorkspaces.length === 0" text="正在加载工作空间" />
 
       <AppEmptyState
@@ -750,7 +672,7 @@ watch(memberWorkspaceCode, () => {
         </template>
       </AppEmptyState>
 
-      <div v-else-if="!isTeamMode" class="workspace-card-grid">
+      <div v-else class="workspace-card-grid">
         <article
           v-for="workspace in businessWorkspaces"
           :key="workspaceDisplayCode(workspace)"
@@ -821,192 +743,9 @@ watch(memberWorkspaceCode, () => {
           </footer>
         </article>
       </div>
-
-      <el-table v-else v-loading="workspaceLoading" :data="businessWorkspaces" class="settings-table" row-key="workspaceCode">
-        <el-table-column prop="workspaceName" label="空间名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="workspaceCode" label="空间编码" min-width="130" show-overflow-tooltip />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }: { row: WorkspaceItem }">
-            <AppStatusBadge
-              :label="getWorkspaceStatusMeta(row.status).label"
-              :tone="getWorkspaceStatusMeta(row.status).tone"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column prop="ownerName" label="负责人" min-width="120" show-overflow-tooltip>
-          <template #default="{ row }: { row: WorkspaceItem }">
-            {{ row.ownerName || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="workspaceType" label="类型" min-width="110" show-overflow-tooltip>
-          <template #default="{ row }: { row: WorkspaceItem }">
-            {{ row.workspaceType || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }: { row: WorkspaceItem }">
-            {{ row.description || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="更新时间" min-width="150">
-          <template #default="{ row }: { row: WorkspaceItem }">
-            {{ formatDateTime(row.updatedAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="88" fixed="right">
-          <template #default="{ row }: { row: WorkspaceItem }">
-            <button
-              type="button"
-              class="workspace-action-button"
-              aria-label="编辑空间"
-              @click="openEditWorkspaceDialog(row)"
-            >
-              <el-icon><Edit /></el-icon>
-              <span>编辑</span>
-            </button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
-
-    <div v-if="isTeamMode" class="settings-panel-block settings-panel-block--members">
-      <div class="settings-panel-block__header">
-        <div>
-          <h3>成员管理</h3>
-          <p class="settings-panel-block__description">选择工作空间后查看和维护成员角色。</p>
-        </div>
-        <div class="settings-panel-block__actions">
-          <el-select
-            v-model="memberWorkspaceCode"
-            class="workspace-member-select"
-            placeholder="选择工作空间"
-            :disabled="workspaceLoading || memberWorkspaceOptions.length === 0"
-          >
-            <el-option
-              v-for="item in memberWorkspaceOptions"
-              :key="item.value"
-              :label="item.label"
-              :value="item.value"
-            />
-          </el-select>
-          <span v-if="memberErrorMessage && members.length > 0" class="settings-inline-error">
-            {{ memberErrorMessage }}
-          </span>
-          <AppButton
-            size="small"
-            type="primary"
-            :icon="Plus"
-            :disabled="!memberWorkspaceCode"
-            @click="openCreateMemberDialog"
-          >
-            添加成员
-          </AppButton>
-        </div>
-      </div>
-
-      <AppLoadingState v-if="memberLoading && members.length === 0" text="正在加载空间成员" />
-
-      <AppEmptyState
-        v-else-if="!memberWorkspaceCode"
-        title="请选择工作空间"
-        description="选择一个工作空间后查看成员列表。"
-      />
-
-      <AppEmptyState
-        v-else-if="memberErrorMessage && members.length === 0"
-        title="成员列表加载失败"
-        :description="memberErrorMessage"
-      >
-        <template #actions>
-          <AppButton :icon="RefreshRight" @click="loadMembers">重试</AppButton>
-        </template>
-      </AppEmptyState>
-
-      <AppEmptyState
-        v-else-if="members.length === 0"
-        title="暂无空间成员"
-        description="当前工作空间暂无可展示的成员。"
-      >
-        <template #actions>
-          <AppButton type="primary" :icon="Plus" @click="openCreateMemberDialog">添加成员</AppButton>
-        </template>
-      </AppEmptyState>
-
-      <el-table v-else v-loading="memberLoading" :data="members" class="settings-table" row-key="id">
-        <el-table-column label="姓名" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }: { row: WorkspaceMemberItem }">
-            <div class="team-member-cell">
-              <div class="team-avatar">{{ getUserInitial(row) }}</div>
-              <div>
-                <strong>{{ row.displayName || row.username || '-' }}</strong>
-                <p>{{ row.username }} · {{ row.email || '-' }}</p>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="username" label="账号" min-width="130" show-overflow-tooltip />
-        <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
-        <el-table-column label="角色" min-width="110">
-          <template #default="{ row }: { row: WorkspaceMemberItem }">
-            {{ getWorkspaceMemberRoleLabel(row.roleCode) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }: { row: WorkspaceMemberItem }">
-            <AppStatusBadge
-              :label="getUserStatusMeta(row.status).label"
-              :tone="getUserStatusMeta(row.status).tone"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="146" fixed="right">
-          <template #default="{ row }: { row: WorkspaceMemberItem }">
-            <div class="workspace-member-actions">
-              <button
-                type="button"
-                class="workspace-action-button"
-                :disabled="isMemberDeleting(row.id)"
-                aria-label="编辑成员"
-                @click="openEditMemberDialog(row)"
-              >
-                <el-icon><Edit /></el-icon>
-                <span>编辑</span>
-              </button>
-              <button
-                type="button"
-                class="workspace-action-button is-danger"
-                :disabled="isMemberDeleting(row.id)"
-                aria-label="移除成员"
-                @click="removeMember(row)"
-              >
-                <el-icon><Delete /></el-icon>
-                <span>{{ isMemberDeleting(row.id) ? '移除中' : '移除' }}</span>
-              </button>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
     </div>
 
     <div v-if="isTeamMode" class="settings-panel-block settings-panel-block--users">
-      <div class="settings-panel-block__header">
-        <h3>用户账号</h3>
-        <div class="settings-panel-block__actions">
-          <span v-if="userErrorMessage && users.length > 0" class="settings-inline-error">
-            {{ userErrorMessage }}
-          </span>
-          <AppButton
-            size="small"
-            type="primary"
-            :icon="Plus"
-            :disabled="!canManageUsers"
-            @click="openUserCreate"
-          >
-            新增用户
-          </AppButton>
-        </div>
-      </div>
-
       <AppLoadingState v-if="userLoading && users.length === 0" text="正在加载用户账号" />
 
       <AppEmptyState
@@ -1281,14 +1020,10 @@ watch(memberWorkspaceCode, () => {
 
     <AppDialog
       v-model="userDialogVisible"
-      :title="userDialogMode === 'create' ? '新增用户' : '编辑用户'"
+      title="编辑用户"
       width="560px"
     >
       <div class="user-edit-dialog">
-        <label v-if="userDialogMode === 'create'" class="user-edit-dialog__field is-full">
-          <span>账号 *</span>
-          <el-input v-model="userForm.username" placeholder="请输入登录账号" />
-        </label>
         <label class="user-edit-dialog__field">
           <span>姓名 *</span>
           <el-input v-model="userForm.displayName" placeholder="请输入姓名" />
@@ -1305,7 +1040,7 @@ watch(memberWorkspaceCode, () => {
             <option v-if="isCurrentSuperAdmin" value="PLATFORM_ADMIN">平台管理员</option>
           </select>
         </label>
-        <label v-if="userDialogMode === 'edit'" class="user-edit-dialog__field">
+        <label class="user-edit-dialog__field">
           <span>状态</span>
           <select v-model.number="userForm.status" class="user-edit-dialog__select">
             <option :value="1">启用</option>
@@ -1507,10 +1242,15 @@ watch(memberWorkspaceCode, () => {
   overflow: visible;
 }
 
+.workspace-settings-panel.is-team-mode .settings-panel-block--users {
+  padding: 20px;
+}
+
 .settings-panel-block > :not(.settings-panel-block__header) {
   margin: 0 20px 20px;
 }
 
+.workspace-settings-panel.is-team-mode .settings-panel-block--users > :not(.settings-panel-block__header),
 .workspace-settings-panel.is-workspace-mode .settings-panel-block--workspaces > :not(.settings-panel-block__header) {
   margin: 0;
 }
@@ -1518,15 +1258,6 @@ watch(memberWorkspaceCode, () => {
 .workspace-settings-panel.is-workspace-mode .settings-panel-block--workspaces,
 .workspace-settings-panel.is-team-mode .settings-panel-block--users {
   order: 1;
-}
-
-.workspace-settings-panel.is-team-mode .settings-panel-block--members {
-  order: 2;
-}
-
-.workspace-settings-panel.is-workspace-mode .settings-panel-block--members,
-.workspace-settings-panel.is-team-mode .settings-panel-block--workspaces {
-  order: 3;
 }
 
 .settings-panel-block__header {
@@ -1618,9 +1349,7 @@ watch(memberWorkspaceCode, () => {
   box-shadow: -8px 0 16px rgb(15 23 42 / 0.04);
 }
 
-.settings-panel-block--members :deep(.app-empty-state),
 .settings-panel-block--users :deep(.app-empty-state),
-.settings-panel-block--members :deep(.app-loading-state),
 .settings-panel-block--users :deep(.app-loading-state) {
   min-height: 180px;
   border: 1px solid var(--app-border-soft);
