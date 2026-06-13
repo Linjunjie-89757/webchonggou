@@ -69,6 +69,8 @@ let loadedCaseOptionsWorkspaceCode = ''
 let loadingCaseOptionsWorkspaceCode = ''
 
 const activeWorkspaceCode = computed(() => form.workspaceCode || props.defaultWorkspaceCode || 'ALL')
+const dialogTitle = computed(() => (props.mode === 'create' ? '新增缺陷' : '编辑缺陷'))
+const introTitle = computed(() => (props.mode === 'create' ? '填写缺陷基础信息' : '调整缺陷基础信息'))
 
 function getUserLabel(user: UserItem) {
   return user.displayName || user.username || `用户 ${user.id}`
@@ -250,15 +252,15 @@ watch(
 <template>
   <AppDialog
     :model-value="modelValue"
-    :title="mode === 'create' ? '新增缺陷' : '编辑缺陷'"
-    width="820px"
+    :title="dialogTitle"
+    width="1120px"
     modal-class="defect-dialog-overlay"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="defect-dialog">
       <div class="defect-dialog__intro">
-        <strong>{{ mode === 'create' ? '填写缺陷基础信息' : '调整缺陷基础信息' }}</strong>
-        <span>保持当前后端字段契约，附件、富文本和流转能力后续单独补齐。</span>
+        <strong>{{ introTitle }}</strong>
+        <span>保持当前后端字段契约，先把弹窗布局、字段节奏和按钮区收拢到旧项目方向。</span>
       </div>
 
       <div v-if="loadingDetail" class="defect-dialog__hint">正在加载缺陷详情...</div>
@@ -267,156 +269,155 @@ watch(
         <AppButton size="small" @click="emit('retryDetail')">重试</AppButton>
       </div>
 
-      <div class="defect-dialog__section">
-        <div class="defect-dialog__section-header">
-          <h4>主要信息</h4>
-          <span>缺陷名称和描述</span>
-        </div>
-
-        <label class="defect-dialog__field">
-          <span class="is-required">缺陷标题</span>
-          <el-input v-model="form.title" :disabled="loadingDetail" placeholder="请输入缺陷标题" />
-        </label>
-
-        <label class="defect-dialog__field">
-          <span class="is-required">缺陷描述</span>
-          <el-input
-            v-model="form.description"
-            type="textarea"
-            :rows="6"
-            :disabled="loadingDetail"
-            placeholder="请输入复现现象、影响范围或必要上下文"
-          />
-        </label>
-      </div>
-
-      <div class="defect-dialog__section">
-        <div class="defect-dialog__section-header">
-          <h4>流转字段</h4>
-          <span>本轮只调整视觉，不改变字段含义</span>
-        </div>
-
-        <div class="defect-dialog__grid">
-          <label class="defect-dialog__field">
-            <span class="is-required">工作空间</span>
-            <el-select
-              v-model="form.workspaceCode"
-              class="defect-dialog__select"
-              :disabled="mode === 'edit' || loadingDetail || workspaceOptionsLoading"
-              :loading="workspaceOptionsLoading"
-              filterable
-              placeholder="请选择工作空间"
-            >
-              <el-option
-                v-for="workspace in getConcreteWorkspaces()"
-                :key="workspace.workspaceCode"
-                :label="getWorkspaceLabel(workspace)"
-                :value="workspace.workspaceCode"
-              >
-                <div class="defect-dialog__option">
-                  <span>{{ getWorkspaceLabel(workspace) }}</span>
-                  <small>{{ workspace.workspaceCode }}</small>
-                </div>
-              </el-option>
-            </el-select>
-            <small v-if="workspaceOptionsError" class="defect-dialog__field-error">{{ workspaceOptionsError }}</small>
-          </label>
-
-          <label class="defect-dialog__field">
-            <span class="is-required">处理人</span>
-            <el-select
-              v-model="form.assigneeId"
-              class="defect-dialog__select"
-              :disabled="loadingDetail || userOptionsLoading"
-              :loading="userOptionsLoading"
-              filterable
-              placeholder="请选择处理人"
-            >
-              <el-option
-                v-for="user in users"
-                :key="user.id"
-                :label="getUserLabel(user)"
-                :value="String(user.id)"
-              >
-                <div class="defect-dialog__option">
-                  <span>{{ getUserLabel(user) }}</span>
-                  <small>{{ user.username }}</small>
-                </div>
-              </el-option>
-            </el-select>
-            <small v-if="userOptionsError" class="defect-dialog__field-error">{{ userOptionsError }}</small>
-          </label>
-        </div>
-
-        <div class="defect-dialog__grid">
-          <div class="defect-dialog__field">
-            <span class="is-required">优先级</span>
-            <div class="defect-dialog__segment is-four">
-              <button
-                v-for="item in defectPriorityOptions"
-                :key="item.value"
-                type="button"
-                :class="{ 'is-active': form.priority === item.value }"
-                :disabled="loadingDetail"
-                @click="form.priority = item.value"
-              >
-                {{ item.label }}
-              </button>
+      <div class="defect-dialog__surface">
+        <div class="defect-dialog__columns">
+          <section class="defect-dialog__main">
+            <div class="defect-dialog__section-header defect-dialog__section-header--stack">
+              <h4>主要信息</h4>
+              <span>填写缺陷标题和现象描述</span>
             </div>
-          </div>
 
-          <div class="defect-dialog__field">
-            <span class="is-required">严重级别</span>
-            <el-select
-              v-model="form.severity"
-              class="defect-dialog__select"
-              :disabled="loadingDetail"
-            >
-              <el-option
-                v-for="item in defectSeverityOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
+            <label class="defect-dialog__field">
+              <span class="is-required">缺陷标题</span>
+              <el-input v-model="form.title" :disabled="loadingDetail" placeholder="请输入缺陷标题" />
+            </label>
+
+            <label class="defect-dialog__field">
+              <span class="is-required">缺陷描述</span>
+              <el-input
+                v-model="form.description"
+                type="textarea"
+                :rows="14"
+                resize="none"
+                :disabled="loadingDetail"
+                placeholder="请输入复现现象、影响范围或必要上下文"
               />
-            </el-select>
-          </div>
-        </div>
+            </label>
+          </section>
 
-        <div class="defect-dialog__grid">
-          <label class="defect-dialog__field">
-            <span>关联用例</span>
-            <el-select
-              v-model="form.relatedCaseId"
-              class="defect-dialog__select"
-              :disabled="loadingDetail || caseOptionsLoading"
-              :loading="caseOptionsLoading"
-              clearable
-              filterable
-              placeholder="可选"
-            >
-              <el-option
-                v-for="item in caseOptions"
-                :key="item.id"
-                :label="getCaseLabel(item)"
-                :value="String(item.id)"
+          <aside class="defect-dialog__side">
+            <div class="defect-dialog__section-header defect-dialog__section-header--stack">
+              <h4>流转字段</h4>
+              <span>保持当前后端契约，只调整视觉和信息层次</span>
+            </div>
+
+            <label class="defect-dialog__field">
+              <span class="is-required">工作空间</span>
+              <el-select
+                v-model="form.workspaceCode"
+                class="defect-dialog__select"
+                :disabled="mode === 'edit' || loadingDetail || workspaceOptionsLoading"
+                :loading="workspaceOptionsLoading"
+                filterable
+                placeholder="请选择工作空间"
               >
-                <div class="defect-dialog__option">
-                  <span>{{ item.title || '-' }}</span>
-                  <small>{{ item.caseNo || `#${item.id}` }}</small>
-                </div>
-              </el-option>
-            </el-select>
-            <small v-if="caseOptionsError" class="defect-dialog__field-error">{{ caseOptionsError }}</small>
-          </label>
+                <el-option
+                  v-for="workspace in getConcreteWorkspaces()"
+                  :key="workspace.workspaceCode"
+                  :label="getWorkspaceLabel(workspace)"
+                  :value="workspace.workspaceCode"
+                >
+                  <div class="defect-dialog__option">
+                    <span>{{ getWorkspaceLabel(workspace) }}</span>
+                    <small>{{ workspace.workspaceCode }}</small>
+                  </div>
+                </el-option>
+              </el-select>
+              <small v-if="workspaceOptionsError" class="defect-dialog__field-error">{{ workspaceOptionsError }}</small>
+            </label>
 
-          <label class="defect-dialog__field">
-            <span>标签</span>
-            <el-input
-              v-model="form.tagsText"
-              :disabled="loadingDetail"
-              placeholder="多个标签用逗号或换行分隔"
-            />
-          </label>
+            <label class="defect-dialog__field">
+              <span class="is-required">处理人</span>
+              <el-select
+                v-model="form.assigneeId"
+                class="defect-dialog__select"
+                :disabled="loadingDetail || userOptionsLoading"
+                :loading="userOptionsLoading"
+                filterable
+                placeholder="请选择处理人"
+              >
+                <el-option
+                  v-for="user in users"
+                  :key="user.id"
+                  :label="getUserLabel(user)"
+                  :value="String(user.id)"
+                >
+                  <div class="defect-dialog__option">
+                    <span>{{ getUserLabel(user) }}</span>
+                    <small>{{ user.username }}</small>
+                  </div>
+                </el-option>
+              </el-select>
+              <small v-if="userOptionsError" class="defect-dialog__field-error">{{ userOptionsError }}</small>
+            </label>
+
+            <div class="defect-dialog__field">
+              <span class="is-required">优先级</span>
+              <div class="defect-dialog__segment is-four">
+                <button
+                  v-for="item in defectPriorityOptions"
+                  :key="item.value"
+                  type="button"
+                  :class="{ 'is-active': form.priority === item.value }"
+                  :disabled="loadingDetail"
+                  @click="form.priority = item.value"
+                >
+                  {{ item.label }}
+                </button>
+              </div>
+            </div>
+
+            <label class="defect-dialog__field">
+              <span class="is-required">严重级别</span>
+              <el-select
+                v-model="form.severity"
+                class="defect-dialog__select"
+                :disabled="loadingDetail"
+              >
+                <el-option
+                  v-for="item in defectSeverityOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </label>
+
+            <label class="defect-dialog__field">
+              <span>关联用例</span>
+              <el-select
+                v-model="form.relatedCaseId"
+                class="defect-dialog__select"
+                :disabled="loadingDetail || caseOptionsLoading"
+                :loading="caseOptionsLoading"
+                clearable
+                filterable
+                placeholder="可选"
+              >
+                <el-option
+                  v-for="item in caseOptions"
+                  :key="item.id"
+                  :label="getCaseLabel(item)"
+                  :value="String(item.id)"
+                >
+                  <div class="defect-dialog__option">
+                    <span>{{ item.title || '-' }}</span>
+                    <small>{{ item.caseNo || `#${item.id}` }}</small>
+                  </div>
+                </el-option>
+              </el-select>
+              <small v-if="caseOptionsError" class="defect-dialog__field-error">{{ caseOptionsError }}</small>
+            </label>
+
+            <label class="defect-dialog__field">
+              <span>标签</span>
+              <el-input
+                v-model="form.tagsText"
+                :disabled="loadingDetail"
+                placeholder="多个标签用逗号或换行分隔"
+              />
+            </label>
+          </aside>
         </div>
       </div>
 
@@ -442,49 +443,53 @@ watch(
 <style scoped>
 .defect-dialog {
   display: flex;
+  min-height: 0;
+  height: 100%;
   flex-direction: column;
   gap: var(--app-space-4);
-  max-height: min(68vh, 680px);
-  overflow: auto;
-  padding-right: 2px;
 }
 
 :global(.defect-dialog-overlay .el-dialog) {
-  border-radius: var(--app-radius-lg);
+  display: flex;
+  height: min(760px, calc(100vh - 72px));
+  max-height: calc(100vh - 72px);
+  flex-direction: column;
+  border-radius: 14px;
+  overflow: hidden;
   box-shadow: var(--app-shadow-overlay);
 }
 
 :global(.defect-dialog-overlay .el-dialog__header) {
   min-height: 64px;
   margin: 0;
-  padding: var(--app-space-5) var(--app-space-6) var(--app-space-4);
+  padding: 18px 24px 14px;
   border-bottom: 1px solid var(--app-border-soft);
 }
 
 :global(.defect-dialog-overlay .el-dialog__title) {
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-lg);
+  font-size: 17px;
   font-weight: 600;
-  line-height: var(--app-line-height-lg);
+  line-height: 24px;
 }
 
 :global(.defect-dialog-overlay .el-dialog__body) {
-  padding: var(--app-space-5) var(--app-space-6);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 20px 24px 16px;
+  overflow: hidden;
 }
 
 :global(.defect-dialog-overlay .el-dialog__footer) {
-  padding: var(--app-space-4) var(--app-space-6);
+  padding: 14px 24px 18px;
   border-top: 1px solid var(--app-border-soft);
 }
 
 .defect-dialog__intro {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-1);
-  padding: var(--app-space-3) var(--app-space-4);
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
+  gap: 4px;
+  padding: 0 2px;
 }
 
 .defect-dialog__intro strong {
@@ -500,14 +505,42 @@ watch(
   line-height: var(--app-line-height-xs);
 }
 
-.defect-dialog__section {
+.defect-dialog__surface {
   display: flex;
-  flex-direction: column;
-  gap: var(--app-space-4);
-  padding: var(--app-space-5);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-lg);
+  border-radius: 12px;
   background: var(--app-bg-panel);
+}
+
+.defect-dialog__columns {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  min-height: 0;
+}
+
+.defect-dialog__main,
+.defect-dialog__side {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.defect-dialog__main {
+  padding: 18px 22px 20px;
+}
+
+.defect-dialog__side {
+  padding: 18px 18px 20px;
+  border-left: 1px solid var(--app-border-soft);
+  background: #fbfcff;
 }
 
 .defect-dialog__section-header {
@@ -515,6 +548,14 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-3);
+}
+
+.defect-dialog__section-header--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-border-soft);
 }
 
 .defect-dialog__section-header h4 {
@@ -531,17 +572,11 @@ watch(
   line-height: var(--app-line-height-xs);
 }
 
-.defect-dialog__grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--app-space-3) var(--app-space-4);
-}
-
 .defect-dialog__field {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--app-space-2);
+  gap: 8px;
 }
 
 .defect-dialog__field > span {
@@ -555,6 +590,19 @@ watch(
   margin-right: 3px;
   color: var(--app-danger);
   content: '*';
+}
+
+.defect-dialog__field :deep(.el-input__wrapper),
+.defect-dialog__field :deep(.el-textarea__inner),
+.defect-dialog__field :deep(.el-select__wrapper) {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--app-border-strong) inset;
+}
+
+.defect-dialog__field :deep(.el-textarea__inner) {
+  min-height: 248px;
+  padding: 12px 14px;
+  line-height: 1.75;
 }
 
 .defect-dialog__select {
@@ -598,7 +646,7 @@ watch(
 .defect-dialog__segment {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--app-space-2);
+  gap: 8px;
 }
 
 .defect-dialog__segment.is-four {
@@ -606,21 +654,20 @@ watch(
 }
 
 .defect-dialog__segment button {
-  min-height: 36px;
-  padding: 0 var(--app-space-2);
+  min-height: 34px;
+  padding: 0 10px;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg-subtle);
+  border-radius: 8px;
+  background: var(--app-bg-panel);
   color: var(--app-text-secondary);
   cursor: pointer;
   font-size: var(--app-font-size-sm);
   font-weight: 600;
-  white-space: nowrap;
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
 .defect-dialog__segment button:hover:not(:disabled) {
-  border-color: var(--app-primary);
+  border-color: #bfd7ff;
   background: var(--app-primary-soft);
   color: var(--app-primary);
 }
@@ -637,8 +684,9 @@ watch(
 }
 
 .defect-dialog__hint,
-.defect-dialog__error-panel {
-  padding: var(--app-space-2) var(--app-space-3);
+.defect-dialog__error-panel,
+.defect-dialog__error {
+  padding: 10px 12px;
   border-radius: var(--app-radius-md);
   font-size: var(--app-font-size-sm);
 }
@@ -649,14 +697,18 @@ watch(
   color: var(--app-text-muted);
 }
 
+.defect-dialog__error-panel,
+.defect-dialog__error {
+  border: 1px solid #fecaca;
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
 .defect-dialog__error-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-3);
-  border: 1px solid #fecaca;
-  background: var(--app-danger-soft);
-  color: var(--app-danger);
 }
 
 .defect-dialog__error-panel span {
@@ -668,27 +720,32 @@ watch(
 
 .defect-dialog__error {
   margin: 0;
-  padding: var(--app-space-2) var(--app-space-3);
-  border: 1px solid #fecaca;
-  border-radius: var(--app-radius-md);
-  background: var(--app-danger-soft);
-  color: var(--app-danger);
-  font-size: var(--app-font-size-sm);
 }
 
 .defect-dialog__footer {
   display: flex;
   justify-content: flex-end;
-  gap: var(--app-space-3);
+  gap: 12px;
 }
 
 .defect-dialog__footer :deep(.el-button + .el-button) {
   margin-left: 0;
 }
 
-@media (max-width: 720px) {
-  .defect-dialog__grid {
+.defect-dialog__footer :deep(.app-button) {
+  min-width: 88px;
+  height: 36px;
+}
+
+@media (max-width: 1200px) {
+  .defect-dialog__columns {
     grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .defect-dialog__side {
+    border-top: 1px solid var(--app-border-soft);
+    border-left: 0;
   }
 }
 </style>

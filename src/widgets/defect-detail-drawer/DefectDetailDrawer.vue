@@ -70,6 +70,8 @@ const activityCount = computed(() => {
   return detail.value.activities.length
 })
 
+const attachmentCount = computed(() => getAttachments(detail.value).length)
+
 function closeDrawer() {
   emit('update:modelValue', false)
 }
@@ -190,6 +192,18 @@ function getActivityTime(activity: DefectActivityRecord) {
   return formatDefectDateTime(readActivityString(activity, ['occurredAt', 'createdAt', 'updatedAt']))
 }
 
+function getDefectSummaryMeta(value: DefectDetail | null) {
+  if (!value) {
+    return '-'
+  }
+
+  return [
+    value.workspaceName || value.workspaceCode,
+    value.sourceType,
+    value.assigneeName,
+  ].filter(Boolean).join(' / ') || '-'
+}
+
 async function loadDetail() {
   if (!props.defectId) {
     return
@@ -247,7 +261,7 @@ async function submitComment() {
 
   const content = commentDraft.value.trim()
   if (!content) {
-    commentSubmitError.value = '请输入评论内容'
+    commentSubmitError.value = '请输入评论内容。'
     return
   }
 
@@ -308,7 +322,7 @@ async function uploadAttachments(event: Event) {
         attachments: [...getAttachments(detail.value), ...nextAttachments],
       }
     }
-    ElMessage.success('附件已上传')
+    ElMessage.success('附件已上传。')
     void loadDetail()
   } catch (error) {
     attachmentErrorMessage.value = getRequestErrorMessage(error)
@@ -326,7 +340,7 @@ async function removeAttachment(attachment: DefectAttachment) {
     return
   }
 
-  await ElMessageBox.confirm(`确认删除附件「${attachment.fileName}」？`, '删除附件', {
+  await ElMessageBox.confirm(`确认删除附件“${attachment.fileName}”吗？`, '删除附件', {
     confirmButtonText: '删除',
     cancelButtonText: '取消',
     type: 'warning',
@@ -341,7 +355,7 @@ async function removeAttachment(attachment: DefectAttachment) {
       ...detail.value,
       attachments: getAttachments(detail.value).filter(item => item.id !== attachment.id),
     }
-    ElMessage.success('附件已删除')
+    ElMessage.success('附件已删除。')
     void loadDetail()
   } catch (error) {
     attachmentErrorMessage.value = getRequestErrorMessage(error)
@@ -385,9 +399,7 @@ watch(
             <strong class="defect-detail-drawer__title">{{ displayText(detail?.title || '缺陷详情') }}</strong>
             <DefectStatusBadge v-if="detail" :status="detail.status" />
           </div>
-          <p class="defect-detail-drawer__subtitle">
-            {{ displayText(detail?.workspaceName || detail?.workspaceCode || detail?.sourceType || '缺陷详情') }}
-          </p>
+          <p class="defect-detail-drawer__subtitle">{{ getDefectSummaryMeta(detail) }}</p>
         </div>
 
         <button class="defect-detail-drawer__close" type="button" aria-label="关闭" @click="closeDrawer">×</button>
@@ -425,7 +437,7 @@ watch(
             <div class="defect-detail-drawer__section defect-detail-drawer__section--hero">
               <div class="defect-detail-drawer__section-header">
                 <h4>基础信息</h4>
-                <span>缺陷流转的核心字段</span>
+                <span>缺陷流转中的核心字段</span>
               </div>
               <dl class="defect-detail-drawer__meta">
                 <div class="defect-detail-drawer__meta-row">
@@ -458,7 +470,7 @@ watch(
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__section-header">
                 <h4>状态标签</h4>
-                <span>状态、优先级、严重级别</span>
+                <span>状态、优先级和严重级别</span>
               </div>
               <div class="defect-detail-drawer__badges">
                 <DefectStatusBadge :status="detail.status" />
@@ -474,7 +486,9 @@ watch(
                 <h4>标签</h4>
                 <span>用于快速归类和筛选</span>
               </div>
-              <p class="defect-detail-drawer__text is-compact">{{ formatDefectTags(detail.tags) }}</p>
+              <div class="defect-detail-drawer__content-card defect-detail-drawer__content-card--soft">
+                <p class="defect-detail-drawer__text is-compact">{{ formatDefectTags(detail.tags) }}</p>
+              </div>
             </div>
 
             <div class="defect-detail-drawer__section">
@@ -482,13 +496,15 @@ watch(
                 <h4>缺陷描述</h4>
                 <span>复现现象、影响范围和补充信息</span>
               </div>
-              <p class="defect-detail-drawer__text">{{ displayRichText(detail.description) }}</p>
+              <div class="defect-detail-drawer__content-card defect-detail-drawer__content-card--soft">
+                <p class="defect-detail-drawer__text">{{ displayRichText(detail.description) }}</p>
+              </div>
             </div>
 
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__section-header">
                 <h4>附件</h4>
-                <span>{{ getAttachments(detail).length }} 个附件</span>
+                <span>{{ attachmentCount }} 个附件</span>
               </div>
               <div class="defect-detail-drawer__attachment-toolbar">
                 <input
@@ -502,7 +518,7 @@ watch(
                   上传附件
                 </AppButton>
               </div>
-              <div v-if="getAttachments(detail).length" class="defect-detail-drawer__list">
+              <div v-if="getAttachments(detail).length" class="defect-detail-drawer__attachment-list">
                 <div
                   v-for="attachment in getAttachments(detail)"
                   :key="attachment.id"
@@ -518,8 +534,8 @@ watch(
                     <strong>{{ displayText(attachment.fileName) }}</strong>
                     <small>
                       {{ formatFileSize(attachment.fileSize) }}
-                      · {{ displayText(attachment.uploadedByName) }}
-                      · {{ formatDefectDateTime(attachment.createdAt) }}
+                      路 {{ displayText(attachment.uploadedByName) }}
+                      路 {{ formatDefectDateTime(attachment.createdAt) }}
                     </small>
                   </span>
                   <div class="defect-detail-drawer__attachment-actions">
@@ -545,7 +561,11 @@ watch(
                   </div>
                 </div>
               </div>
-              <p v-else class="defect-detail-drawer__muted">暂无附件</p>
+              <AppEmptyState
+                v-else
+                title="暂无附件"
+                description="当前缺陷还没有上传截图、日志或其他证据文件。"
+              />
               <p v-if="attachmentErrorMessage" class="defect-detail-drawer__form-error">
                 {{ attachmentErrorMessage }}
               </p>
@@ -565,8 +585,8 @@ watch(
                 <AppButton size="small" @click="loadComments">重试</AppButton>
               </div>
 
-              <div v-else-if="comments.length" class="defect-detail-drawer__list">
-                <div v-for="comment in comments" :key="comment.id" class="defect-detail-drawer__list-item">
+              <div v-else-if="comments.length" class="defect-detail-drawer__comment-list">
+                <div v-for="comment in comments" :key="comment.id" class="defect-detail-drawer__comment-item">
                   <div class="defect-detail-drawer__comment-top">
                     <strong>{{ displayText(comment.commenterName) }}</strong>
                     <span>{{ formatDefectDateTime(comment.createdAt) }}</span>
@@ -575,12 +595,16 @@ watch(
                 </div>
               </div>
 
-              <p v-else class="defect-detail-drawer__muted">暂无评论</p>
+              <AppEmptyState
+                v-else
+                title="暂无评论"
+                description="还没有人在这条缺陷下留言，可以补充处理说明、现象说明或验证结果。"
+              />
             </div>
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__section-header">
                 <h4>发表评论</h4>
-                <span>仅支持纯文本评论</span>
+                <span>当前仅支持纯文本评论</span>
               </div>
               <div class="defect-detail-drawer__comment-editor">
                 <el-input
@@ -629,7 +653,11 @@ watch(
                   <time>{{ getActivityTime(activity) }}</time>
                 </div>
               </div>
-              <p v-else class="defect-detail-drawer__muted">暂无变更历史</p>
+              <AppEmptyState
+                v-else
+                title="暂无历史"
+                description="当前缺陷还没有更多流转或操作记录。"
+              />
             </div>
           </section>
         </template>
@@ -650,6 +678,14 @@ watch(
 :global(.defect-detail-drawer-host .el-drawer__body) {
   min-height: 0;
   padding: 0;
+}
+
+:global(.defect-detail-drawer-host .el-overlay) {
+  backdrop-filter: blur(10px);
+}
+
+:global(.defect-detail-drawer-host .el-drawer) {
+  box-shadow: -24px 0 48px rgba(15, 23, 42, 0.18);
 }
 
 .defect-detail-drawer__topbar {
@@ -789,11 +825,21 @@ watch(
   gap: var(--app-space-5);
 }
 
+.defect-detail-drawer__content-card {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.defect-detail-drawer__content-card--soft {
+  background: var(--app-bg-subtle);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
 .defect-detail-drawer__badges {
   display: flex;
   flex: 0 0 auto;
   flex-wrap: wrap;
-  justify-content: flex-end;
   gap: var(--app-space-2);
 }
 
@@ -801,14 +847,13 @@ watch(
   display: flex;
   flex-direction: column;
   gap: var(--app-space-3);
-  padding: var(--app-space-5);
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-lg);
-  background: var(--app-bg-panel);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .defect-detail-drawer__section--hero {
-  background: var(--app-bg-panel);
+  gap: var(--app-space-4);
 }
 
 .defect-detail-drawer__section-header {
@@ -816,6 +861,8 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-3);
+  padding-bottom: var(--app-space-1);
+  border-bottom: 1px solid var(--app-border-soft);
 }
 
 .defect-detail-drawer__section-header h4 {
@@ -836,7 +883,7 @@ watch(
   grid-template-columns: 1fr;
   overflow: hidden;
   margin: 0;
-  border: 1px solid var(--app-border-soft);
+  border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
@@ -876,12 +923,7 @@ watch(
 
 .defect-detail-drawer__text {
   margin: 0;
-  max-height: 340px;
-  overflow: auto;
   padding: var(--app-space-4);
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
   color: var(--app-text-main);
   font-size: var(--app-font-size-sm);
   line-height: 24px;
@@ -890,28 +932,34 @@ watch(
 }
 
 .defect-detail-drawer__text.is-compact {
-  max-height: 120px;
+  padding-top: var(--app-space-3);
+  padding-bottom: var(--app-space-3);
 }
 
-.defect-detail-drawer__list {
+.defect-detail-drawer__attachment-list,
+.defect-detail-drawer__comment-list {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--app-space-2);
 }
 
-.defect-detail-drawer__list-item {
+.defect-detail-drawer__comment-item {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--app-space-2);
-  padding: var(--app-space-4);
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
+  padding: 14px 0;
+  border-top: 1px solid var(--app-border-soft);
+  background: transparent;
 }
 
-.defect-detail-drawer__list-item strong {
+.defect-detail-drawer__comment-item:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.defect-detail-drawer__comment-item strong {
   min-width: 0;
   color: var(--app-text-primary);
   font-size: var(--app-font-size-sm);
@@ -932,7 +980,7 @@ watch(
   line-height: var(--app-line-height-xs);
 }
 
-.defect-detail-drawer__list-item p {
+.defect-detail-drawer__comment-item p {
   margin: 0;
   color: var(--app-text-main);
   font-size: var(--app-font-size-sm);
@@ -974,7 +1022,7 @@ watch(
   align-items: center;
   gap: var(--app-space-3);
   padding: var(--app-space-3);
-  border: 1px solid var(--app-border-soft);
+  border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
@@ -982,6 +1030,7 @@ watch(
 .defect-detail-drawer__attachment-toolbar {
   display: flex;
   justify-content: flex-end;
+  margin-top: -2px;
 }
 
 .defect-detail-drawer__file-input {
@@ -1064,11 +1113,13 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
+  gap: var(--app-space-2);
 }
 
 .defect-detail-drawer__timeline {
   display: flex;
   flex-direction: column;
+  gap: var(--app-space-2);
 }
 
 .defect-detail-drawer__timeline-item {
@@ -1076,15 +1127,18 @@ watch(
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) auto;
   gap: var(--app-space-3);
-  padding: 0 0 var(--app-space-4);
+  padding: var(--app-space-3) var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
 }
 
 .defect-detail-drawer__timeline-item:not(:last-child)::before {
   position: absolute;
-  top: 16px;
-  bottom: 0;
-  left: 5px;
+  top: 100%;
+  left: 9px;
   width: 1px;
+  height: var(--app-space-2);
   background: var(--app-border);
   content: '';
 }
@@ -1127,10 +1181,7 @@ watch(
 
 .defect-detail-drawer__muted {
   margin: 0;
-  padding: var(--app-space-4);
-  border: 1px dashed var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
+  padding: var(--app-space-4) 0;
   text-align: center;
 }
 
@@ -1178,3 +1229,4 @@ watch(
   }
 }
 </style>
+
