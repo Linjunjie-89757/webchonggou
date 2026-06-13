@@ -17,7 +17,6 @@ import {
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDrawer from '@/shared/ui/app-drawer/AppDrawer.vue'
-import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 type DefectActivityRecord = Record<string, unknown>
@@ -73,6 +72,7 @@ const attachmentErrorMessage = ref('')
 const attachmentInputRef = ref<HTMLInputElement | null>(null)
 const attachmentImageUrls = ref<Record<number, string>>({})
 const activeTab = ref<DetailTab>('detail')
+const caseKeyword = ref('')
 let detailRequestSeq = 0
 let commentsRequestSeq = 0
 let attachmentImageRequestSeq = 0
@@ -103,7 +103,21 @@ const fileAttachments = computed(() => getAttachments(detail.value).filter(attac
 const previewImageUrls = computed(() => imageAttachments.value
   .map(attachment => attachmentImageUrls.value[attachment.id])
   .filter(Boolean))
-const caseRows = computed(() => getCaseRows(detail.value))
+const caseRows = computed(() => {
+  const keyword = caseKeyword.value.trim().toLowerCase()
+  const rows = getCaseRows(detail.value)
+  if (!keyword) {
+    return rows
+  }
+
+  return rows.filter((caseItem) => {
+    const haystack = [
+      caseItem.caseNo,
+      caseItem.title,
+    ].filter(Boolean).join(' ').toLowerCase()
+    return haystack.includes(keyword)
+  })
+})
 
 function closeDrawer() {
   emit('update:modelValue', false)
@@ -127,6 +141,19 @@ function emitIfDetail(event: 'edit' | 'transition' | 'delete') {
 
 function getCaseRowKey(caseItem: DefectCaseSummary, index: number) {
   return String(caseItem.id ?? caseItem.caseNo ?? `case-${index}`)
+}
+
+function openCase(caseItem: DefectCaseSummary) {
+  if (!caseItem.id) {
+    ElMessage.info('当前关联用例缺少详情 ID，暂不能打开。')
+    return
+  }
+
+  ElMessage.info('用例详情页尚未接入，后续会按用例中心路由统一处理。')
+}
+
+function explainCaseAssociationGap() {
+  ElMessage.info('当前缺陷仅支持展示已关联用例，关联/取消关联需要后端提供多用例契约后再接入。')
 }
 
 function navigatePrev() {
@@ -879,33 +906,56 @@ onBeforeUnmount(() => {
 
           <section v-show="activeTab === 'case'" class="defect-detail-drawer__pane">
             <div class="defect-detail-drawer__section">
-              <div class="defect-detail-drawer__section-header">
-                <h4>关联用例</h4>
-                <span>{{ caseRows.length }} 条用例</span>
+              <div class="defect-detail-drawer__case-toolbar">
+                <AppButton size="small" type="primary" plain @click="explainCaseAssociationGap">
+                  关联用例
+                </AppButton>
+                <el-input
+                  v-model="caseKeyword"
+                  clearable
+                  class="defect-detail-drawer__case-search"
+                  placeholder="按用例编号或名称搜索"
+                />
               </div>
-              <div v-if="caseRows.length" class="defect-detail-drawer__case-table">
-                <div class="defect-detail-drawer__case-row defect-detail-drawer__case-row--header">
-                  <span>用例编号</span>
-                  <span>用例标题</span>
-                  <span>所属空间</span>
-                  <span>类型</span>
-                </div>
-                <div
-                  v-for="(caseItem, index) in caseRows"
-                  :key="getCaseRowKey(caseItem, index)"
-                  class="defect-detail-drawer__case-row"
-                >
-                  <span class="defect-detail-drawer__case-no">{{ displayText(caseItem.caseNo || caseItem.id) }}</span>
-                  <span class="defect-detail-drawer__case-title">{{ displayText(caseItem.title) }}</span>
-                  <span>{{ displayText(caseItem.workspaceName) }}</span>
-                  <span>{{ displayText(caseItem.caseType || '功能用例') }}</span>
-                </div>
-              </div>
-              <AppEmptyState
-                v-else
-                title="暂无关联用例"
-                description="当前缺陷还没有关联具体用例。"
-              />
+
+              <el-table
+                v-if="caseRows.length"
+                :data="caseRows"
+                :row-key="(row: DefectCaseSummary, index: number) => getCaseRowKey(row, index)"
+                class="defect-detail-drawer__case-table"
+              >
+                <el-table-column prop="caseNo" label="用例编号" min-width="150">
+                  <template #default="{ row }">
+                    <el-button text type="primary" class="defect-detail-drawer__case-link" @click="openCase(row)">
+                      {{ displayText(row.caseNo || row.id) }}
+                    </el-button>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="title" label="用例名称" min-width="260" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <span class="defect-detail-drawer__case-title">{{ displayText(row.title) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="workspaceName" label="所属项目" min-width="160" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    {{ displayText(row.workspaceName) }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="caseType" label="用例类型" width="120">
+                  <template #default="{ row }">
+                    {{ displayText(row.caseType || '功能用例') }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="120" fixed="right">
+                  <template #default>
+                    <el-button text type="danger" class="defect-detail-drawer__case-action" @click="explainCaseAssociationGap">
+                      取消关联
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <el-empty v-else description="暂无关联用例" :image-size="72" />
             </div>
           </section>
 
@@ -1613,6 +1663,28 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 
+.defect-detail-drawer__case-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
+.defect-detail-drawer__case-toolbar :deep(.el-button) {
+  height: 32px;
+  border-radius: var(--app-radius-sm);
+  font-size: 13px;
+}
+
+.defect-detail-drawer__case-search {
+  width: min(280px, 100%);
+}
+
+.defect-detail-drawer__case-search :deep(.el-input__wrapper) {
+  min-height: 32px;
+  border-radius: var(--app-radius-sm);
+}
+
 .defect-detail-drawer__case-table {
   overflow: hidden;
   border: 1px solid var(--app-border);
@@ -1620,49 +1692,49 @@ onBeforeUnmount(() => {
   background: var(--app-bg-panel);
 }
 
-.defect-detail-drawer__case-row {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr) 132px 96px;
-  min-height: 44px;
-  align-items: center;
-  border-bottom: 1px solid var(--app-border-soft);
-}
-
-.defect-detail-drawer__case-row:last-child {
-  border-bottom: 0;
-}
-
-.defect-detail-drawer__case-row--header {
-  min-height: 40px;
+.defect-detail-drawer__case-table :deep(.el-table__header th.el-table__cell) {
+  height: 40px;
   background: var(--app-bg-subtle);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
   font-weight: 600;
 }
 
-.defect-detail-drawer__case-row span {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 var(--app-space-4);
-  color: var(--app-text-main);
-  font-size: var(--app-font-size-sm);
+.defect-detail-drawer__case-table :deep(.el-table__row) {
+  height: 48px;
+}
+
+.defect-detail-drawer__case-table :deep(.el-table__cell) {
+  padding: 8px 0;
+}
+
+.defect-detail-drawer__case-table :deep(.cell) {
+  font-size: 13px;
   line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.defect-detail-drawer__case-row--header span {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+.defect-detail-drawer__case-table :deep(.el-table__fixed-right::before) {
+  box-shadow: -1px 0 0 var(--app-border-soft);
 }
 
-.defect-detail-drawer__case-no {
-  color: var(--app-primary) !important;
+.defect-detail-drawer__case-link {
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .defect-detail-drawer__case-title {
-  color: var(--app-text-primary) !important;
+  color: var(--app-text-primary);
+}
+
+.defect-detail-drawer__case-action {
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .defect-detail-drawer__timeline {
@@ -1769,6 +1841,15 @@ onBeforeUnmount(() => {
   .defect-detail-drawer__tabs {
     gap: var(--app-space-4);
     overflow-x: auto;
+  }
+
+  .defect-detail-drawer__case-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .defect-detail-drawer__case-search {
+    width: 100%;
   }
 
   .defect-detail-drawer__badges {
