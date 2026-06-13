@@ -42,6 +42,9 @@ const loading = ref(false)
 const errorMessage = ref('')
 const commentsLoading = ref(false)
 const commentsErrorMessage = ref('')
+const commentDraft = ref('')
+const commentSubmitting = ref(false)
+const commentSubmitError = ref('')
 const activeTab = ref<'basic' | 'detail' | 'comment' | 'history'>('basic')
 let detailRequestSeq = 0
 let commentsRequestSeq = 0
@@ -220,11 +223,38 @@ async function loadComments() {
   }
 }
 
+async function submitComment() {
+  if (!props.defectId || commentSubmitting.value) {
+    return
+  }
+
+  const content = commentDraft.value.trim()
+  if (!content) {
+    commentSubmitError.value = '请输入评论内容'
+    return
+  }
+
+  commentSubmitting.value = true
+  commentSubmitError.value = ''
+  try {
+    const nextComment = await defectApi.addDefectComment(props.workspaceCode, props.defectId, { content })
+    comments.value = [...comments.value, nextComment]
+    commentDraft.value = ''
+    void loadDetail()
+  } catch (error) {
+    commentSubmitError.value = getRequestErrorMessage(error)
+  } finally {
+    commentSubmitting.value = false
+  }
+}
+
 watch(
   () => [props.modelValue, props.defectId, props.workspaceCode] as const,
   ([visible]) => {
     if (visible) {
       activeTab.value = 'basic'
+      commentDraft.value = ''
+      commentSubmitError.value = ''
       void loadDetail()
       void loadComments()
     }
@@ -405,6 +435,36 @@ watch(
               </div>
 
               <p v-else class="defect-detail-drawer__muted">暂无评论</p>
+            </div>
+            <div class="defect-detail-drawer__section">
+              <div class="defect-detail-drawer__section-header">
+                <h4>发表评论</h4>
+                <span>仅支持纯文本评论</span>
+              </div>
+              <div class="defect-detail-drawer__comment-editor">
+                <el-input
+                  v-model="commentDraft"
+                  type="textarea"
+                  :rows="4"
+                  maxlength="500"
+                  show-word-limit
+                  placeholder="输入评论内容"
+                  :disabled="commentSubmitting"
+                />
+                <p v-if="commentSubmitError" class="defect-detail-drawer__form-error">
+                  {{ commentSubmitError }}
+                </p>
+                <div class="defect-detail-drawer__comment-actions">
+                  <AppButton
+                    type="primary"
+                    :loading="commentSubmitting"
+                    :disabled="!commentDraft.trim() || commentSubmitting"
+                    @click="submitComment"
+                  >
+                    提交评论
+                  </AppButton>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -738,6 +798,25 @@ watch(
   line-height: 22px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.defect-detail-drawer__comment-editor {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.defect-detail-drawer__comment-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.defect-detail-drawer__form-error {
+  margin: 0;
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-sm);
 }
 
 .defect-detail-drawer__list-item span,

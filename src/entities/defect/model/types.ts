@@ -52,6 +52,10 @@ export interface DefectComment {
   createdAt: string | null
 }
 
+export interface AddDefectCommentPayload {
+  content: string
+}
+
 export interface DefectAttachment {
   id: number
   fileName: string

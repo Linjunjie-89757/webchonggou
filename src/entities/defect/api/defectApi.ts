@@ -1,6 +1,7 @@
 import { httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
 import type {
+  AddDefectCommentPayload,
   AssignDefectPayload,
   AssignDefectResult,
   DefectAttachment,
@@ -141,6 +142,14 @@ export const defectApi = {
 
     const comments = unwrapApiResponse(payload)
     return Array.isArray(comments) ? comments.map(normalizeDefectComment) : []
+  },
+
+  async addDefectComment(workspaceCode = 'ALL', id: number, data: AddDefectCommentPayload) {
+    const payload = await httpPost<ApiResponse<DefectComment>, AddDefectCommentPayload>(`/bugs/${id}/comments`, data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectComment(unwrapApiResponse(payload))
   },
 
   async createDefect(workspaceCode = 'ALL', data: SaveDefectPayload) {
