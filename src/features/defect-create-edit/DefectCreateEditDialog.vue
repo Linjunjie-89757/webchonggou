@@ -9,6 +9,7 @@ import {
   type DefectSummaryItem,
 } from '@/entities/defect'
 import { userApi, type UserItem } from '@/entities/user'
+import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
@@ -55,10 +56,14 @@ const formError = reactive({
 const users = ref<UserItem[]>([])
 const userOptionsLoading = ref(false)
 const userOptionsError = ref('')
+const workspaceOptions = ref<WorkspaceItem[]>([])
+const workspaceOptionsLoading = ref(false)
+const workspaceOptionsError = ref('')
 const caseOptions = ref<CaseSummaryItem[]>([])
 const caseOptionsLoading = ref(false)
 const caseOptionsError = ref('')
 let userOptionsLoaded = false
+let workspaceOptionsLoaded = false
 let caseOptionsRequestSeq = 0
 let loadedCaseOptionsWorkspaceCode = ''
 let loadingCaseOptionsWorkspaceCode = ''
@@ -72,6 +77,35 @@ function getUserLabel(user: UserItem) {
 function getCaseLabel(item: CaseSummaryItem) {
   const caseNo = item.caseNo || `#${item.id}`
   return item.title ? `${caseNo} · ${item.title}` : caseNo
+}
+
+function getConcreteWorkspaces() {
+  return workspaceOptions.value.filter((item) => item.workspaceCode && item.workspaceCode !== 'ALL' && !item.allScope)
+}
+
+function getWorkspaceLabel(item: WorkspaceItem) {
+  return item.workspaceName || item.workspaceCode
+}
+
+function ensureConcreteWorkspace() {
+  if (props.mode === 'edit' && form.workspaceCode && form.workspaceCode !== 'ALL') {
+    return
+  }
+
+  const concreteWorkspaces = getConcreteWorkspaces()
+  if (!concreteWorkspaces.length) {
+    return
+  }
+
+  const matchedWorkspace = concreteWorkspaces.find((item) => item.workspaceCode === form.workspaceCode)
+  if (matchedWorkspace) {
+    return
+  }
+
+  const preferredWorkspace =
+    concreteWorkspaces.find((item) => item.current || item.default || item.isCurrent || item.isDefault) ||
+    concreteWorkspaces[0]
+  form.workspaceCode = preferredWorkspace.workspaceCode
 }
 
 async function loadUserOptions() {
@@ -91,7 +125,32 @@ async function loadUserOptions() {
   }
 }
 
+async function loadWorkspaceOptions() {
+  if (workspaceOptionsLoaded || workspaceOptionsLoading.value) {
+    ensureConcreteWorkspace()
+    return
+  }
+
+  workspaceOptionsLoading.value = true
+  workspaceOptionsError.value = ''
+  try {
+    workspaceOptions.value = await workspaceApi.getSwitchableWorkspaces()
+    workspaceOptionsLoaded = true
+    ensureConcreteWorkspace()
+  } catch (error) {
+    workspaceOptionsError.value = getRequestErrorMessage(error)
+  } finally {
+    workspaceOptionsLoading.value = false
+  }
+}
+
 async function loadCaseOptions(workspaceCode: string) {
+  if (!workspaceCode || workspaceCode === 'ALL') {
+    caseOptions.value = []
+    loadedCaseOptionsWorkspaceCode = ''
+    return
+  }
+
   if (
     loadedCaseOptionsWorkspaceCode === workspaceCode ||
     (caseOptionsLoading.value && loadingCaseOptionsWorkspaceCode === workspaceCode)
@@ -154,7 +213,10 @@ watch(
     if (visible) {
       resetForm()
       void loadUserOptions()
-      void loadCaseOptions(activeWorkspaceCode.value)
+      void loadWorkspaceOptions()
+      if (activeWorkspaceCode.value !== 'ALL') {
+        void loadCaseOptions(activeWorkspaceCode.value)
+      }
     }
   },
 )
@@ -164,8 +226,23 @@ watch(
   () => {
     if (props.modelValue) {
       resetForm()
-      void loadCaseOptions(activeWorkspaceCode.value)
+      void loadWorkspaceOptions()
+      if (activeWorkspaceCode.value !== 'ALL') {
+        void loadCaseOptions(activeWorkspaceCode.value)
+      }
     }
+  },
+)
+
+watch(
+  () => form.workspaceCode,
+  (workspaceCode, oldWorkspaceCode) => {
+    if (!props.modelValue || workspaceCode === oldWorkspaceCode) {
+      return
+    }
+
+    form.relatedCaseId = ''
+    void loadCaseOptions(workspaceCode)
   },
 )
 </script>
@@ -221,8 +298,28 @@ watch(
 
         <div class="defect-dialog__grid">
           <label class="defect-dialog__field">
-            <span>工作空间</span>
-            <el-input v-model="form.workspaceCode" disabled placeholder="ALL" />
+            <span class="is-required">工作空间</span>
+            <el-select
+              v-model="form.workspaceCode"
+              class="defect-dialog__select"
+              :disabled="mode === 'edit' || loadingDetail || workspaceOptionsLoading"
+              :loading="workspaceOptionsLoading"
+              filterable
+              placeholder="请选择工作空间"
+            >
+              <el-option
+                v-for="workspace in getConcreteWorkspaces()"
+                :key="workspace.workspaceCode"
+                :label="getWorkspaceLabel(workspace)"
+                :value="workspace.workspaceCode"
+              >
+                <div class="defect-dialog__option">
+                  <span>{{ getWorkspaceLabel(workspace) }}</span>
+                  <small>{{ workspace.workspaceCode }}</small>
+                </div>
+              </el-option>
+            </el-select>
+            <small v-if="workspaceOptionsError" class="defect-dialog__field-error">{{ workspaceOptionsError }}</small>
           </label>
 
           <label class="defect-dialog__field">

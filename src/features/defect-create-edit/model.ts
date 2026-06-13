@@ -89,6 +89,9 @@ export function validateDefectForm(form: DefectForm) {
   if (!form.description.trim()) {
     return '请输入缺陷描述'
   }
+  if (!form.workspaceCode || form.workspaceCode === 'ALL') {
+    return '请选择具体工作空间'
+  }
   if (!form.priority) {
     return '请选择优先级'
   }
