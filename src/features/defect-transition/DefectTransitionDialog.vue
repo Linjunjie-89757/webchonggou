@@ -99,6 +99,9 @@ watch(
             {{ item.label }}
           </button>
         </div>
+        <p class="defect-transition-dialog__hint">
+          若当前缺陷不支持所选目标状态，保存时会显示服务端返回的失败原因。
+        </p>
       </div>
 
       <label class="defect-transition-dialog__field">
@@ -213,6 +216,13 @@ watch(
   margin: 0;
   color: var(--app-danger);
   font-size: var(--app-font-size-sm);
+}
+
+.defect-transition-dialog__hint {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-sm);
 }
 
 .defect-transition-dialog__footer {
