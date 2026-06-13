@@ -174,8 +174,8 @@ async function copyShareLink() {
   }
 
   const url = new URL(window.location.href)
-  url.pathname = '/bugs'
-  url.searchParams.set('defectId', String(detail.value.id))
+  url.pathname = `/bugs/${detail.value.id}`
+  url.search = ''
   if (detail.value.workspaceCode) {
     url.searchParams.set('workspace', detail.value.workspaceCode)
   }
