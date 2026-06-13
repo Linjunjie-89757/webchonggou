@@ -199,6 +199,14 @@ export const defectApi = {
     return normalizeDefectDetail(unwrapApiResponse(payload))
   },
 
+  async deleteDefect(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/bugs/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
+  },
+
   async assignDefect(workspaceCode = 'ALL', id: number, data: AssignDefectPayload) {
     const payload = await httpPost<ApiResponse<AssignDefectResult>, AssignDefectPayload>(`/bugs/${id}/assign`, data, {
       headers: workspaceHeaders(workspaceCode),

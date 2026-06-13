@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import { defectStatusOptions, type DefectSummaryItem, type TransitionDefectPayload } from '@/entities/defect'
+import { userApi, type UserItem } from '@/entities/user'
+import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 
@@ -34,9 +36,40 @@ const form = reactive<DefectTransitionForm>(createDefaultTransitionForm())
 const formError = reactive({
   message: '',
 })
+const users = ref<UserItem[]>([])
+const usersLoading = ref(false)
+const usersError = ref('')
+let usersLoaded = false
 const targetStatusOptions = computed(() =>
   defectStatusOptions.filter((item) => item.value !== props.defectItem?.status),
 )
+const selectedUser = computed(() => users.value.find((user) => String(user.id) === form.assigneeId) ?? null)
+
+function getUserLabel(user: UserItem) {
+  return user.displayName || user.username || `用户 ${user.id}`
+}
+
+function getUserInitial(user: UserItem) {
+  const label = getUserLabel(user).trim()
+  return label ? label.slice(0, 1).toUpperCase() : 'U'
+}
+
+async function loadUsers() {
+  if (usersLoaded || usersLoading.value) {
+    return
+  }
+
+  usersLoading.value = true
+  usersError.value = ''
+  try {
+    users.value = await userApi.getUsers()
+    usersLoaded = true
+  } catch (error) {
+    usersError.value = getRequestErrorMessage(error)
+  } finally {
+    usersLoading.value = false
+  }
+}
 
 function resetForm() {
   Object.assign(form, createDefaultTransitionForm(props.defectItem))
@@ -59,6 +92,7 @@ watch(
   (visible) => {
     if (visible) {
       resetForm()
+      void loadUsers()
     }
   },
 )
@@ -76,7 +110,7 @@ watch(
 <template>
   <AppDialog
     :model-value="modelValue"
-    title="流转缺陷"
+    title="处理缺陷"
     width="560px"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -84,6 +118,40 @@ watch(
       <div class="defect-transition-dialog__summary">
         <span>{{ defectItem?.bugNo || '-' }}</span>
         <strong>{{ defectItem?.title || '-' }}</strong>
+      </div>
+
+      <div class="defect-transition-dialog__field">
+        <span>处理人</span>
+        <el-select
+          v-model="form.assigneeId"
+          class="defect-transition-dialog__select"
+          :disabled="usersLoading"
+          :loading="usersLoading"
+          clearable
+          filterable
+          placeholder="可选，变更处理人"
+        >
+          <template v-if="selectedUser" #label>
+            <div class="defect-transition-dialog__selected">
+              <span class="defect-transition-dialog__avatar">{{ getUserInitial(selectedUser) }}</span>
+              <span class="defect-transition-dialog__selected-name">{{ getUserLabel(selectedUser) }}</span>
+            </div>
+          </template>
+          <el-option
+            v-for="user in users"
+            :key="user.id"
+            :label="getUserLabel(user)"
+            :value="String(user.id)"
+          >
+            <div class="defect-transition-dialog__option">
+              <span class="defect-transition-dialog__avatar defect-transition-dialog__avatar--option">
+                {{ getUserInitial(user) }}
+              </span>
+              <span class="defect-transition-dialog__option-name">{{ getUserLabel(user) }}</span>
+            </div>
+          </el-option>
+        </el-select>
+        <small v-if="usersError" class="defect-transition-dialog__field-error">{{ usersError }}</small>
       </div>
 
       <div class="defect-transition-dialog__field">
@@ -181,6 +249,67 @@ watch(
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 600;
+}
+
+.defect-transition-dialog__select {
+  width: 100%;
+}
+
+.defect-transition-dialog__selected,
+.defect-transition-dialog__option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.defect-transition-dialog__selected {
+  width: 100%;
+}
+
+.defect-transition-dialog__avatar {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.defect-transition-dialog__avatar--option {
+  width: 30px;
+  height: 30px;
+}
+
+.defect-transition-dialog__selected-name,
+.defect-transition-dialog__option-name {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 400;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defect-transition-dialog__field-error {
+  color: var(--app-danger);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+}
+
+.defect-transition-dialog :deep(.el-select__wrapper) {
+  min-height: 40px;
+}
+
+.defect-transition-dialog :deep(.el-select__selection) {
+  min-width: 0;
 }
 
 .defect-transition-dialog__segment {

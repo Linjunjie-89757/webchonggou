@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, ref, watch } from 'vue'
+import { ArrowLeftBold, ArrowRightBold, Close, Delete, DocumentCopy, Edit, Link, MoreFilled, Promotion } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   DefectPriorityBadge,
@@ -20,21 +21,40 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 type DefectActivityRecord = Record<string, unknown>
+type DetailTab = 'basic' | 'detail' | 'case' | 'comment' | 'history'
+type DefectCaseSummary = {
+  id?: number | null
+  caseNo?: string | null
+  title?: string | null
+  workspaceName?: string | null
+  caseType?: string | null
+}
 
 const props = withDefaults(
   defineProps<{
     modelValue: boolean
     defectId?: number | null
     workspaceCode?: string
+    currentIndex?: number | null
+    totalCount?: number
+    refreshKey?: number
   }>(),
   {
     defectId: null,
     workspaceCode: 'ALL',
+    currentIndex: null,
+    totalCount: 0,
+    refreshKey: 0,
   },
 )
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  edit: []
+  transition: []
+  delete: []
+  'navigate-prev': []
+  'navigate-next': []
 }>()
 
 const detail = ref<DefectDetail | null>(null)
@@ -51,16 +71,23 @@ const attachmentRemovingId = ref<number | null>(null)
 const attachmentUploading = ref(false)
 const attachmentErrorMessage = ref('')
 const attachmentInputRef = ref<HTMLInputElement | null>(null)
-const activeTab = ref<'basic' | 'detail' | 'comment' | 'history'>('basic')
+const attachmentImageUrls = ref<Record<number, string>>({})
+const activeTab = ref<DetailTab>('detail')
 let detailRequestSeq = 0
 let commentsRequestSeq = 0
+let attachmentImageRequestSeq = 0
 
 const detailTabs = [
   { key: 'basic', label: '基础信息' },
   { key: 'detail', label: '详情' },
+  { key: 'case', label: '用例' },
   { key: 'comment', label: '评论' },
   { key: 'history', label: '历史' },
 ] as const
+
+const hasRecordNavigation = computed(() => props.totalCount > 1 && props.currentIndex !== null)
+const canNavigatePrev = computed(() => hasRecordNavigation.value && (props.currentIndex ?? 0) > 0)
+const canNavigateNext = computed(() => hasRecordNavigation.value && (props.currentIndex ?? 0) < props.totalCount - 1)
 
 const activityCount = computed(() => {
   if (!Array.isArray(detail.value?.activities)) {
@@ -71,9 +98,80 @@ const activityCount = computed(() => {
 })
 
 const attachmentCount = computed(() => getAttachments(detail.value).length)
+const imageAttachments = computed(() => getAttachments(detail.value).filter(isImageAttachment))
+const fileAttachments = computed(() => getAttachments(detail.value).filter(attachment => !isImageAttachment(attachment)))
+const previewImageUrls = computed(() => imageAttachments.value
+  .map(attachment => attachmentImageUrls.value[attachment.id])
+  .filter(Boolean))
+const caseRows = computed(() => getCaseRows(detail.value))
 
 function closeDrawer() {
   emit('update:modelValue', false)
+}
+
+function emitIfDetail(event: 'edit' | 'transition' | 'delete') {
+  if (!detail.value) {
+    return
+  }
+
+  if (event === 'edit') {
+    emit('edit')
+    return
+  }
+  if (event === 'transition') {
+    emit('transition')
+    return
+  }
+  emit('delete')
+}
+
+function getCaseRowKey(caseItem: DefectCaseSummary, index: number) {
+  return String(caseItem.id ?? caseItem.caseNo ?? `case-${index}`)
+}
+
+function navigatePrev() {
+  if (canNavigatePrev.value) {
+    emit('navigate-prev')
+  }
+}
+
+function navigateNext() {
+  if (canNavigateNext.value) {
+    emit('navigate-next')
+  }
+}
+
+async function copyShareLink() {
+  if (!detail.value || typeof window === 'undefined') {
+    return
+  }
+
+  const url = new URL(window.location.href)
+  url.pathname = '/bugs'
+  url.searchParams.set('defectId', String(detail.value.id))
+  if (detail.value.workspaceCode) {
+    url.searchParams.set('workspace', detail.value.workspaceCode)
+  }
+
+  try {
+    await navigator.clipboard.writeText(url.toString())
+    ElMessage.success('链接已复制')
+  } catch {
+    ElMessage.error('链接复制失败')
+  }
+}
+
+async function copyDefectNo() {
+  if (!detail.value) {
+    return
+  }
+
+  try {
+    await navigator.clipboard.writeText(detail.value.bugNo)
+    ElMessage.success('缺陷编号已复制')
+  } catch {
+    ElMessage.error('复制失败')
+  }
 }
 
 function displayText(value: string | number | null | undefined) {
@@ -125,6 +223,40 @@ function getActivities(value: DefectDetail | null): DefectActivityRecord[] {
   return Array.isArray(value?.activities) ? (value.activities as DefectActivityRecord[]) : []
 }
 
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function getCaseRows(value: DefectDetail | null): DefectCaseSummary[] {
+  if (!value) {
+    return []
+  }
+
+  const context = readRecord(value.sourceContext)
+  const caseSummary = readRecord(context?.caseSummary)
+  if (caseSummary) {
+    return [{
+      id: typeof caseSummary.id === 'number' ? caseSummary.id : value.relatedCaseId,
+      caseNo: typeof caseSummary.caseNo === 'string' ? caseSummary.caseNo : null,
+      title: typeof caseSummary.title === 'string' ? caseSummary.title : null,
+      workspaceName: typeof caseSummary.workspaceName === 'string' ? caseSummary.workspaceName : value.workspaceName,
+      caseType: typeof caseSummary.caseType === 'string' ? caseSummary.caseType : null,
+    }]
+  }
+
+  if (value.relatedCaseId) {
+    return [{
+      id: value.relatedCaseId,
+      caseNo: `#${value.relatedCaseId}`,
+      title: null,
+      workspaceName: value.workspaceName,
+      caseType: null,
+    }]
+  }
+
+  return []
+}
+
 function getAttachmentTypeLabel(attachment: DefectAttachment) {
   const fileName = attachment.fileName || ''
   const ext = fileName.includes('.') ? fileName.split('.').pop()?.toUpperCase() : ''
@@ -149,6 +281,57 @@ function getAttachmentTypeTone(attachment: DefectAttachment) {
     return 'zip'
   }
   return 'neutral'
+}
+
+function isImageAttachment(attachment: DefectAttachment) {
+  if (attachment.contentType?.startsWith('image/')) {
+    return true
+  }
+
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(attachment.fileName || '')
+}
+
+function revokeAttachmentImageUrls() {
+  Object.values(attachmentImageUrls.value).forEach((url) => {
+    window.URL.revokeObjectURL(url)
+  })
+  attachmentImageUrls.value = {}
+}
+
+async function loadAttachmentImageUrls(value: DefectDetail | null) {
+  const requestSeq = ++attachmentImageRequestSeq
+  revokeAttachmentImageUrls()
+  if (!value || !props.defectId) {
+    return
+  }
+
+  const nextUrls: Record<number, string> = {}
+  for (const attachment of getAttachments(value).filter(isImageAttachment)) {
+    try {
+      const blob = await defectApi.downloadDefectAttachment(props.workspaceCode, props.defectId, attachment.id)
+      if (requestSeq !== attachmentImageRequestSeq) {
+        return
+      }
+      nextUrls[attachment.id] = window.URL.createObjectURL(blob)
+    } catch {
+      // Keep broken thumbnails local to the image card; download still remains available.
+    }
+  }
+
+  if (requestSeq === attachmentImageRequestSeq) {
+    attachmentImageUrls.value = nextUrls
+  } else {
+    Object.values(nextUrls).forEach(url => window.URL.revokeObjectURL(url))
+  }
+}
+
+function getAttachmentImageUrl(attachment: DefectAttachment) {
+  return attachmentImageUrls.value[attachment.id] || ''
+}
+
+function getAttachmentImagePreviewIndex(attachment: DefectAttachment) {
+  const url = getAttachmentImageUrl(attachment)
+  return Math.max(0, previewImageUrls.value.findIndex(item => item === url))
 }
 
 function triggerBlobDownload(blob: Blob, fileName: string) {
@@ -181,27 +364,36 @@ function getActivityKey(activity: DefectActivityRecord, index: number) {
 }
 
 function getActivityTitle(activity: DefectActivityRecord) {
-  return readActivityString(activity, ['title', 'type', 'action']) || '缺陷记录'
+  const title = readActivityString(activity, ['title', 'type', 'action']) || '缺陷记录'
+  const actor = getActivityActor(activity)
+  if (!actor || title.includes(actor)) {
+    return title
+  }
+
+  return `${actor} ${title}`
 }
 
 function getActivityDetail(activity: DefectActivityRecord) {
-  return readActivityString(activity, ['detail', 'content', 'comment', 'description', 'message']) || '-'
+  const detailText = readActivityString(activity, ['detail', 'content', 'comment', 'description', 'message'])
+  const attachmentName = readActivityString(activity, ['attachmentName', 'fileName'])
+  const fromStatus = readActivityString(activity, ['fromStatus', 'from'])
+  const toStatus = readActivityString(activity, ['toStatus', 'to'])
+  const statusText = fromStatus && toStatus ? `${fromStatus} -> ${toStatus}` : ''
+
+  return [detailText, attachmentName, statusText].filter(Boolean).join(' / ') || '-'
 }
 
 function getActivityTime(activity: DefectActivityRecord) {
   return formatDefectDateTime(readActivityString(activity, ['occurredAt', 'createdAt', 'updatedAt']))
 }
 
-function getDefectSummaryMeta(value: DefectDetail | null) {
-  if (!value) {
-    return '-'
-  }
+function getActivityActor(activity: DefectActivityRecord) {
+  return readActivityString(activity, ['operatorName', 'actorName', 'createdByName', 'userName']) || '系统记录'
+}
 
-  return [
-    value.workspaceName || value.workspaceCode,
-    value.sourceType,
-    value.assigneeName,
-  ].filter(Boolean).join(' / ') || '-'
+function getAvatarText(value: string | null | undefined) {
+  const text = displayText(value)
+  return text === '-' ? '?' : text.trim().slice(0, 1).toUpperCase()
 }
 
 async function loadDetail() {
@@ -218,6 +410,7 @@ async function loadDetail() {
     if (requestSeq === detailRequestSeq) {
       detail.value = nextDetail
       comments.value = Array.isArray(nextDetail.comments) ? nextDetail.comments : comments.value
+      void loadAttachmentImageUrls(nextDetail)
     }
   } catch (error) {
     if (requestSeq === detailRequestSeq) {
@@ -331,10 +524,6 @@ async function uploadAttachments(event: Event) {
   }
 }
 
-function isDisposableAttachment(attachment: DefectAttachment) {
-  return attachment.fileName.startsWith('DISPOSABLE-148-')
-}
-
 async function removeAttachment(attachment: DefectAttachment) {
   if (!props.defectId || attachmentRemovingId.value || !detail.value) {
     return
@@ -368,7 +557,7 @@ watch(
   () => [props.modelValue, props.defectId, props.workspaceCode] as const,
   ([visible]) => {
     if (visible) {
-      activeTab.value = 'basic'
+      activeTab.value = 'detail'
       commentDraft.value = ''
       commentSubmitError.value = ''
       attachmentErrorMessage.value = ''
@@ -376,10 +565,30 @@ watch(
       attachmentRemovingId.value = null
       void loadDetail()
       void loadComments()
+    } else {
+      attachmentImageRequestSeq += 1
+      revokeAttachmentImageUrls()
     }
   },
   { immediate: true },
 )
+
+watch(
+  () => props.refreshKey,
+  () => {
+    if (!props.modelValue || !props.defectId) {
+      return
+    }
+
+    void loadDetail()
+    void loadComments()
+  },
+)
+
+onBeforeUnmount(() => {
+  attachmentImageRequestSeq += 1
+  revokeAttachmentImageUrls()
+})
 </script>
 
 <template>
@@ -399,10 +608,48 @@ watch(
             <strong class="defect-detail-drawer__title">{{ displayText(detail?.title || '缺陷详情') }}</strong>
             <DefectStatusBadge v-if="detail" :status="detail.status" />
           </div>
-          <p class="defect-detail-drawer__subtitle">{{ getDefectSummaryMeta(detail) }}</p>
         </div>
 
-        <button class="defect-detail-drawer__close" type="button" aria-label="关闭" @click="closeDrawer">×</button>
+        <div class="defect-detail-drawer__actions">
+          <div v-if="hasRecordNavigation" class="defect-detail-drawer__record-nav">
+            <AppButton
+              class="defect-detail-drawer__nav-button"
+              size="small"
+              :icon="ArrowLeftBold"
+              :disabled="!canNavigatePrev"
+              @click="navigatePrev"
+            />
+            <AppButton
+              class="defect-detail-drawer__nav-button"
+              size="small"
+              :icon="ArrowRightBold"
+              :disabled="!canNavigateNext"
+              @click="navigateNext"
+            />
+          </div>
+
+          <AppButton v-if="detail" size="small" :icon="Promotion" @click="emitIfDetail('transition')">流转</AppButton>
+          <AppButton v-if="detail" size="small" :icon="Link" @click="copyShareLink">分享</AppButton>
+
+          <el-dropdown v-if="detail" trigger="click" popper-class="defect-detail-drawer__more-menu">
+            <AppButton class="defect-detail-drawer__more-button" size="small" :icon="MoreFilled" aria-label="更多操作" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item :icon="Edit" @click="emitIfDetail('edit')">编辑</el-dropdown-item>
+                <el-dropdown-item :icon="DocumentCopy" @click="copyDefectNo">复制</el-dropdown-item>
+                <el-dropdown-item class="is-danger" :icon="Delete" @click="emitIfDetail('delete')">删除</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <AppButton
+            class="defect-detail-drawer__close-button"
+            size="small"
+            :icon="Close"
+            aria-label="关闭"
+            @click="closeDrawer"
+          />
+        </div>
       </header>
 
       <nav v-if="detail" class="defect-detail-drawer__tabs" aria-label="缺陷详情分区">
@@ -469,8 +716,8 @@ watch(
 
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__section-header">
-                <h4>状态标签</h4>
-                <span>状态、优先级和严重级别</span>
+                <h4>状态</h4>
+                <span>当前处理状态、优先级和严重级别</span>
               </div>
               <div class="defect-detail-drawer__badges">
                 <DefectStatusBadge :status="detail.status" />
@@ -478,9 +725,7 @@ watch(
                 <DefectSeverityBadge :severity="detail.severity" />
               </div>
             </div>
-          </section>
 
-          <section v-show="activeTab === 'detail'" class="defect-detail-drawer__pane">
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__section-header">
                 <h4>标签</h4>
@@ -488,6 +733,18 @@ watch(
               </div>
               <div class="defect-detail-drawer__content-card defect-detail-drawer__content-card--soft">
                 <p class="defect-detail-drawer__text is-compact">{{ formatDefectTags(detail.tags) }}</p>
+              </div>
+            </div>
+          </section>
+
+          <section v-show="activeTab === 'detail'" class="defect-detail-drawer__pane">
+            <div class="defect-detail-drawer__section">
+              <div class="defect-detail-drawer__section-header">
+                <h4>缺陷标题</h4>
+                <span>当前缺陷的标题信息</span>
+              </div>
+              <div class="defect-detail-drawer__content-card defect-detail-drawer__content-card--soft">
+                <p class="defect-detail-drawer__text is-compact">{{ displayText(detail.title) }}</p>
               </div>
             </div>
 
@@ -518,46 +775,94 @@ watch(
                   上传附件
                 </AppButton>
               </div>
-              <div v-if="getAttachments(detail).length" class="defect-detail-drawer__attachment-list">
-                <div
-                  v-for="attachment in getAttachments(detail)"
-                  :key="attachment.id"
-                  class="defect-detail-drawer__attachment-row"
-                >
-                  <span
-                    class="defect-detail-drawer__attachment-icon"
-                    :data-tone="getAttachmentTypeTone(attachment)"
+              <div v-if="getAttachments(detail).length" class="defect-detail-drawer__attachment-surface">
+                <div v-if="imageAttachments.length" class="defect-detail-drawer__attachment-group">
+                  <div class="defect-detail-drawer__attachment-group-title">图片证据</div>
+                  <div class="defect-detail-drawer__image-grid">
+                    <div
+                      v-for="attachment in imageAttachments"
+                      :key="attachment.id"
+                      class="defect-detail-drawer__image-card"
+                    >
+                      <el-image
+                        v-if="getAttachmentImageUrl(attachment)"
+                        :src="getAttachmentImageUrl(attachment)"
+                        :preview-src-list="previewImageUrls"
+                        :initial-index="getAttachmentImagePreviewIndex(attachment)"
+                        fit="cover"
+                        class="defect-detail-drawer__image-preview"
+                      />
+                      <div v-else class="defect-detail-drawer__image-placeholder">
+                        {{ getAttachmentTypeLabel(attachment) }}
+                      </div>
+                      <div class="defect-detail-drawer__image-caption">
+                        <strong>{{ displayText(attachment.fileName) }}</strong>
+                        <small>{{ formatDefectDateTime(attachment.createdAt) }}</small>
+                      </div>
+                      <div class="defect-detail-drawer__image-actions">
+                        <el-button
+                          text
+                          type="primary"
+                          :loading="attachmentDownloadingId === attachment.id"
+                          :disabled="attachmentDownloadingId !== null && attachmentDownloadingId !== attachment.id"
+                          @click="downloadAttachment(attachment)"
+                        >
+                          下载
+                        </el-button>
+                        <el-button
+                          text
+                          type="danger"
+                          :loading="attachmentRemovingId === attachment.id"
+                          :disabled="attachmentRemovingId !== null && attachmentRemovingId !== attachment.id"
+                          @click="removeAttachment(attachment)"
+                        >
+                          删除
+                        </el-button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="fileAttachments.length" class="defect-detail-drawer__attachment-list">
+                  <div
+                    v-for="attachment in fileAttachments"
+                    :key="attachment.id"
+                    class="defect-detail-drawer__attachment-row"
                   >
-                    {{ getAttachmentTypeLabel(attachment) }}
-                  </span>
-                  <span class="defect-detail-drawer__attachment-main">
-                    <strong>{{ displayText(attachment.fileName) }}</strong>
-                    <small>
-                      {{ formatFileSize(attachment.fileSize) }}
-                      路 {{ displayText(attachment.uploadedByName) }}
-                      路 {{ formatDefectDateTime(attachment.createdAt) }}
-                    </small>
-                  </span>
-                  <div class="defect-detail-drawer__attachment-actions">
-                    <AppButton
-                      size="small"
-                      :loading="attachmentDownloadingId === attachment.id"
-                      :disabled="attachmentDownloadingId !== null && attachmentDownloadingId !== attachment.id"
-                      @click="downloadAttachment(attachment)"
+                    <span
+                      class="defect-detail-drawer__attachment-icon"
+                      :data-tone="getAttachmentTypeTone(attachment)"
                     >
-                      下载
-                    </AppButton>
-                    <AppButton
-                      v-if="isDisposableAttachment(attachment)"
-                      size="small"
-                      type="danger"
-                      plain
-                      :loading="attachmentRemovingId === attachment.id"
-                      :disabled="attachmentRemovingId !== null && attachmentRemovingId !== attachment.id"
-                      @click="removeAttachment(attachment)"
-                    >
-                      删除
-                    </AppButton>
+                      {{ getAttachmentTypeLabel(attachment) }}
+                    </span>
+                    <span class="defect-detail-drawer__attachment-main">
+                      <strong>{{ displayText(attachment.fileName) }}</strong>
+                      <small>
+                        {{ formatFileSize(attachment.fileSize) }}
+                        路 {{ displayText(attachment.uploadedByName) }}
+                        路 {{ formatDefectDateTime(attachment.createdAt) }}
+                      </small>
+                    </span>
+                    <div class="defect-detail-drawer__attachment-actions">
+                      <el-button
+                        text
+                        type="primary"
+                        :loading="attachmentDownloadingId === attachment.id"
+                        :disabled="attachmentDownloadingId !== null && attachmentDownloadingId !== attachment.id"
+                        @click="downloadAttachment(attachment)"
+                      >
+                        下载
+                      </el-button>
+                      <el-button
+                        text
+                        type="danger"
+                        :loading="attachmentRemovingId === attachment.id"
+                        :disabled="attachmentRemovingId !== null && attachmentRemovingId !== attachment.id"
+                        @click="removeAttachment(attachment)"
+                      >
+                        删除
+                      </el-button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -569,6 +874,38 @@ watch(
               <p v-if="attachmentErrorMessage" class="defect-detail-drawer__form-error">
                 {{ attachmentErrorMessage }}
               </p>
+            </div>
+          </section>
+
+          <section v-show="activeTab === 'case'" class="defect-detail-drawer__pane">
+            <div class="defect-detail-drawer__section">
+              <div class="defect-detail-drawer__section-header">
+                <h4>关联用例</h4>
+                <span>{{ caseRows.length }} 条用例</span>
+              </div>
+              <div v-if="caseRows.length" class="defect-detail-drawer__case-table">
+                <div class="defect-detail-drawer__case-row defect-detail-drawer__case-row--header">
+                  <span>用例编号</span>
+                  <span>用例标题</span>
+                  <span>所属空间</span>
+                  <span>类型</span>
+                </div>
+                <div
+                  v-for="(caseItem, index) in caseRows"
+                  :key="getCaseRowKey(caseItem, index)"
+                  class="defect-detail-drawer__case-row"
+                >
+                  <span class="defect-detail-drawer__case-no">{{ displayText(caseItem.caseNo || caseItem.id) }}</span>
+                  <span class="defect-detail-drawer__case-title">{{ displayText(caseItem.title) }}</span>
+                  <span>{{ displayText(caseItem.workspaceName) }}</span>
+                  <span>{{ displayText(caseItem.caseType || '功能用例') }}</span>
+                </div>
+              </div>
+              <AppEmptyState
+                v-else
+                title="暂无关联用例"
+                description="当前缺陷还没有关联具体用例。"
+              />
             </div>
           </section>
 
@@ -587,11 +924,16 @@ watch(
 
               <div v-else-if="comments.length" class="defect-detail-drawer__comment-list">
                 <div v-for="comment in comments" :key="comment.id" class="defect-detail-drawer__comment-item">
-                  <div class="defect-detail-drawer__comment-top">
-                    <strong>{{ displayText(comment.commenterName) }}</strong>
-                    <span>{{ formatDefectDateTime(comment.createdAt) }}</span>
+                  <div class="defect-detail-drawer__comment-avatar">
+                    {{ getAvatarText(comment.commenterName) }}
                   </div>
-                  <p>{{ displayText(comment.content) }}</p>
+                  <div class="defect-detail-drawer__comment-bubble">
+                    <div class="defect-detail-drawer__comment-top">
+                      <strong>{{ displayText(comment.commenterName) }}</strong>
+                      <span>{{ formatDefectDateTime(comment.createdAt) }}</span>
+                    </div>
+                    <p>{{ displayText(comment.content) }}</p>
+                  </div>
                 </div>
               </div>
 
@@ -648,7 +990,10 @@ watch(
                   <span class="defect-detail-drawer__timeline-dot" />
                   <span class="defect-detail-drawer__timeline-main">
                     <strong>{{ getActivityTitle(activity) }}</strong>
-                    <small>{{ getActivityDetail(activity) }}</small>
+                    <small>
+                      <span>{{ getActivityActor(activity) }}</span>
+                      <span>{{ getActivityDetail(activity) }}</span>
+                    </small>
                   </span>
                   <time>{{ getActivityTime(activity) }}</time>
                 </div>
@@ -740,28 +1085,57 @@ watch(
   line-height: var(--app-line-height-xs);
 }
 
-.defect-detail-drawer__close {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
+.defect-detail-drawer__actions {
+  display: flex;
   flex: 0 0 auto;
   align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text-muted);
-  cursor: pointer;
-  font-size: 22px;
-  line-height: 1;
-  transition: background-color 160ms ease, color 160ms ease;
+  gap: var(--app-space-1);
+  min-width: 0;
 }
 
-.defect-detail-drawer__close:hover,
-.defect-detail-drawer__close:focus-visible {
+.defect-detail-drawer__record-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-1);
+  margin-right: var(--app-space-2);
+  padding-right: var(--app-space-3);
+  border-right: 1px solid var(--app-border);
+}
+
+.defect-detail-drawer__actions :deep(.el-button) {
+  min-height: 30px;
+  padding: 0 10px;
+  border-color: transparent;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-main);
+  font-size: 13px;
+  font-weight: 400;
+  box-shadow: none;
+}
+
+.defect-detail-drawer__actions :deep(.el-button:hover),
+.defect-detail-drawer__actions :deep(.el-button:focus-visible) {
   background: var(--app-primary-soft);
   color: var(--app-primary);
   outline: none;
+}
+
+:deep(.defect-detail-drawer__nav-button.el-button),
+:deep(.defect-detail-drawer__more-button.el-button),
+:deep(.defect-detail-drawer__close-button.el-button) {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+:global(.defect-detail-drawer__more-menu .el-dropdown-menu__item.is-danger) {
+  color: var(--app-danger);
+}
+
+:global(.defect-detail-drawer__more-menu .el-dropdown-menu__item.is-danger:hover) {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
 }
 
 .defect-detail-drawer__tabs {
@@ -941,22 +1315,15 @@ watch(
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: var(--app-space-2);
+  gap: var(--app-space-3);
 }
 
 .defect-detail-drawer__comment-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
   min-width: 0;
-  flex-direction: column;
-  gap: var(--app-space-2);
-  padding: 14px 0;
-  border-top: 1px solid var(--app-border-soft);
-  background: transparent;
-}
-
-.defect-detail-drawer__comment-item:first-child {
-  padding-top: 0;
-  border-top: 0;
+  gap: var(--app-space-3);
+  align-items: flex-start;
 }
 
 .defect-detail-drawer__comment-item strong {
@@ -964,6 +1331,28 @@ watch(
   color: var(--app-text-primary);
   font-size: var(--app-font-size-sm);
   overflow-wrap: anywhere;
+}
+
+.defect-detail-drawer__comment-avatar {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.defect-detail-drawer__comment-bubble {
+  min-width: 0;
+  padding: var(--app-space-3) var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-subtle);
 }
 
 .defect-detail-drawer__comment-top {
@@ -980,8 +1369,9 @@ watch(
   line-height: var(--app-line-height-xs);
 }
 
-.defect-detail-drawer__comment-item p {
+.defect-detail-drawer__comment-bubble p {
   margin: 0;
+  padding-top: var(--app-space-2);
   color: var(--app-text-main);
   font-size: var(--app-font-size-sm);
   line-height: 22px;
@@ -1025,6 +1415,105 @@ watch(
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
+}
+
+.defect-detail-drawer__attachment-surface {
+  display: grid;
+  gap: var(--app-space-3);
+  padding: var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-subtle);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+.defect-detail-drawer__attachment-group {
+  display: grid;
+  gap: var(--app-space-3);
+}
+
+.defect-detail-drawer__attachment-group-title {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+  line-height: var(--app-line-height-xs);
+}
+
+.defect-detail-drawer__image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 170px);
+  gap: var(--app-space-3);
+}
+
+.defect-detail-drawer__image-card {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: var(--app-space-2);
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.defect-detail-drawer__image-preview,
+.defect-detail-drawer__image-placeholder {
+  width: 100%;
+  height: 132px;
+  overflow: hidden;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-muted);
+}
+
+.defect-detail-drawer__image-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--app-border-strong);
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.defect-detail-drawer__image-caption {
+  display: grid;
+  gap: var(--app-space-1);
+  min-width: 0;
+}
+
+.defect-detail-drawer__image-caption strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.65;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defect-detail-drawer__image-caption small {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.defect-detail-drawer__image-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0;
+  flex-wrap: wrap;
+  min-height: 30px;
+  padding-top: 2px;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.defect-detail-drawer__image-actions :deep(.el-button) {
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .defect-detail-drawer__attachment-toolbar {
@@ -1113,7 +1602,67 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--app-space-2);
+  gap: var(--app-space-3);
+}
+
+.defect-detail-drawer__attachment-actions :deep(.el-button) {
+  height: 28px;
+  margin-left: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.defect-detail-drawer__case-table {
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.defect-detail-drawer__case-row {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr) 132px 96px;
+  min-height: 44px;
+  align-items: center;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.defect-detail-drawer__case-row:last-child {
+  border-bottom: 0;
+}
+
+.defect-detail-drawer__case-row--header {
+  min-height: 40px;
+  background: var(--app-bg-subtle);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+}
+
+.defect-detail-drawer__case-row span {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 var(--app-space-4);
+  color: var(--app-text-main);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defect-detail-drawer__case-row--header span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.defect-detail-drawer__case-no {
+  color: var(--app-primary) !important;
+  font-weight: 600;
+}
+
+.defect-detail-drawer__case-title {
+  color: var(--app-text-primary) !important;
 }
 
 .defect-detail-drawer__timeline {
@@ -1173,6 +1722,13 @@ watch(
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
   line-height: var(--app-line-height-xs);
+}
+
+.defect-detail-drawer__timeline-main small {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
 }
 
 .defect-detail-drawer__timeline-item time {

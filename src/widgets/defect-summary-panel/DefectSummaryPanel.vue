@@ -118,9 +118,21 @@ function handleSelect(status: string) {
 }
 
 .defect-summary-panel__card--active {
-  border-color: #bfdbfe;
-  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-  box-shadow: 0 10px 24px rgba(59, 130, 246, 0.08);
+  border-color: #60a5fa;
+  background: linear-gradient(180deg, #fdfefe 0%, #f3f8ff 100%);
+  box-shadow:
+    0 12px 28px rgba(59, 130, 246, 0.14),
+    0 0 0 1px rgba(96, 165, 250, 0.16);
+}
+
+.defect-summary-panel__card--active .defect-summary-panel__card-head span,
+.defect-summary-panel__card--active .defect-summary-panel__card strong {
+  color: #1d4ed8;
+}
+
+.defect-summary-panel__card--active .defect-summary-panel__dot {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 7px rgba(59, 130, 246, 0.18);
 }
 
 .defect-summary-panel__card-head {
@@ -158,6 +170,7 @@ function handleSelect(status: string) {
   border-radius: 999px;
   background: #3b82f6;
   box-shadow: 0 0 0 6px rgba(59, 130, 246, 0.12);
+  transition: transform 160ms ease, box-shadow 160ms ease;
 }
 
 .defect-summary-panel__card--primary {

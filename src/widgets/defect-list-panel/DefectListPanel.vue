@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { MoreFilled, RefreshRight } from '@element-plus/icons-vue'
+import { RefreshRight } from '@element-plus/icons-vue'
 import { Settings2 } from '@lucide/vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   type AssignDefectPayload,
@@ -18,7 +18,7 @@ import {
   type SaveDefectPayload,
   type TransitionDefectPayload,
 } from '@/entities/defect'
-import { DefectAssignDialog, assignDefect } from '@/features/defect-assign'
+import { assignDefect } from '@/features/defect-assign'
 import { DefectCreateEditDialog, type DefectDialogMode } from '@/features/defect-create-edit'
 import { DefectTransitionDialog, transitionDefect } from '@/features/defect-transition'
 import { getRequestErrorMessage } from '@/shared/api/error'
@@ -69,12 +69,12 @@ const detailDrawerVisible = ref(false)
 const detailDefectId = ref<number | null>(null)
 const activeDetailRowId = ref<number | null>(null)
 const hoveredRowId = ref<number | null>(null)
-const assignDialogVisible = ref(false)
-const assigningDefect = ref<DefectSummaryItem | null>(null)
 const assigningDefectId = ref<number | null>(null)
 const transitionDialogVisible = ref(false)
 const transitioningDefect = ref<DefectSummaryItem | null>(null)
 const transitioningDefectId = ref<number | null>(null)
+const deletingDefectId = ref<number | null>(null)
+const detailRefreshKey = ref(0)
 let loadRequestSeq = 0
 let detailRequestSeq = 0
 let pendingLoadSignature = ''
@@ -95,6 +95,14 @@ const filteredDefects = computed(() => defects.value.filter((item) => {
   return true
 }))
 const pagedDefects = computed(() => filteredDefects.value)
+const activeDetailIndex = computed(() => {
+  if (!detailDefectId.value) {
+    return null
+  }
+
+  const index = pagedDefects.value.findIndex(item => item.id === detailDefectId.value)
+  return index >= 0 ? index : null
+})
 const tableColumnDefinitions = computed<DefectTableColumnDefinition[]>(() => [
   { key: 'bugNo', label: '缺陷编号', width: 170, required: true, defaultVisible: true },
   { key: 'title', label: '缺陷标题', minWidth: 260, required: true, defaultVisible: true, showOverflowTooltip: true },
@@ -294,14 +302,73 @@ function openDetailDrawer(item: DefectSummaryItem) {
   detailDrawerVisible.value = true
 }
 
-function openAssignDialog(item: DefectSummaryItem) {
-  assigningDefect.value = item
-  assignDialogVisible.value = true
-}
-
 function openTransitionDialog(item: DefectSummaryItem) {
   transitioningDefect.value = item
   transitionDialogVisible.value = true
+}
+
+function getActiveDetailDefect() {
+  if (!detailDefectId.value) {
+    return null
+  }
+
+  return pagedDefects.value.find(item => item.id === detailDefectId.value) ?? null
+}
+
+function openActiveDetailEditDialog() {
+  const item = getActiveDetailDefect()
+  if (item) {
+    openEditDialog(item)
+  }
+}
+
+function openActiveDetailTransitionDialog() {
+  const item = getActiveDetailDefect()
+  if (item) {
+    openTransitionDialog(item)
+  }
+}
+
+function navigateDetail(delta: -1 | 1) {
+  if (activeDetailIndex.value === null) {
+    return
+  }
+
+  const nextItem = pagedDefects.value[activeDetailIndex.value + delta]
+  if (!nextItem) {
+    return
+  }
+
+  openDetailDrawer(nextItem)
+}
+
+async function deleteActiveDetailDefect() {
+  const item = getActiveDetailDefect()
+  if (!item || deletingDefectId.value !== null) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`确认删除缺陷“${item.bugNo || item.title}”吗？删除后不可恢复。`, '删除缺陷', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger',
+    })
+
+    deletingDefectId.value = item.id
+    await defectApi.deleteDefect(props.workspaceCode, item.id)
+    ElMessage.success('缺陷已删除')
+    detailDrawerVisible.value = false
+    await loadDefects()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return
+    }
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    deletingDefectId.value = null
+  }
 }
 
 async function submitDefect(payload: SaveDefectPayload) {
@@ -316,28 +383,11 @@ async function submitDefect(payload: SaveDefectPayload) {
     }
     dialogVisible.value = false
     await loadDefects()
+    detailRefreshKey.value += 1
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     saving.value = false
-  }
-}
-
-async function submitAssignDefect(payload: AssignDefectPayload) {
-  if (!assigningDefect.value || assigningDefectId.value !== null || transitioningDefectId.value !== null) {
-    return
-  }
-
-  assigningDefectId.value = assigningDefect.value.id
-  try {
-    await assignDefect(assigningDefect.value, props.workspaceCode, payload)
-    ElMessage.success('缺陷指派成功')
-    assignDialogVisible.value = false
-    await loadDefects()
-  } catch (error) {
-    ElMessage.error(getRequestErrorMessage(error))
-  } finally {
-    assigningDefectId.value = null
   }
 }
 
@@ -348,13 +398,25 @@ async function submitTransitionDefect(payload: TransitionDefectPayload) {
 
   transitioningDefectId.value = transitioningDefect.value.id
   try {
+    const assigneeId = (payload as TransitionDefectPayload & { assigneeId?: number | null }).assigneeId
+    if (typeof assigneeId === 'number' && Number.isFinite(assigneeId)) {
+      const assignPayload: AssignDefectPayload = {
+        workspaceCode: payload.workspaceCode,
+        assigneeId,
+      }
+      assigningDefectId.value = transitioningDefect.value.id
+      await assignDefect(transitioningDefect.value, props.workspaceCode, assignPayload)
+    }
+
     await transitionDefect(transitioningDefect.value, props.workspaceCode, payload)
-    ElMessage.success('缺陷流转成功')
+    ElMessage.success(assigneeId ? '缺陷处理成功' : '缺陷流转成功')
     transitionDialogVisible.value = false
     await loadDefects()
+    detailRefreshKey.value += 1
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
+    assigningDefectId.value = null
     transitioningDefectId.value = null
   }
 }
@@ -365,7 +427,6 @@ watch(
     dialogVisible.value = false
     detailDrawerVisible.value = false
     activeDetailRowId.value = null
-    assignDialogVisible.value = false
     transitionDialogVisible.value = false
     reloadFromFirstPage()
   },
@@ -540,7 +601,7 @@ defineExpose({
               @mouseleave="setHoveredRow(null)"
             >
               <div class="defect-list-panel__actions">
-                <AppButton size="small" @click="openDetailDrawer(row)">详情</AppButton>
+                <AppButton size="small" @click="openDetailDrawer(row)">查看</AppButton>
                 <AppButton
                   size="small"
                   :loading="editingRowId === row.id"
@@ -549,25 +610,13 @@ defineExpose({
                 >
                   编辑
                 </AppButton>
-                <el-dropdown trigger="click">
-                  <AppButton size="small" :icon="MoreFilled">更多</AppButton>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item
-                        :disabled="assigningDefectId === row.id || transitioningDefectId === row.id"
-                        @click="openAssignDialog(row)"
-                      >
-                        {{ assigningDefectId === row.id ? '指派中' : '指派' }}
-                      </el-dropdown-item>
-                      <el-dropdown-item
-                        :disabled="transitioningDefectId === row.id || assigningDefectId === row.id"
-                        @click="openTransitionDialog(row)"
-                      >
-                        {{ transitioningDefectId === row.id ? '流转中' : '流转' }}
-                      </el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+                <AppButton
+                  size="small"
+                  :loading="transitioningDefectId === row.id || assigningDefectId === row.id"
+                  @click="openTransitionDialog(row)"
+                >
+                  {{ transitioningDefectId === row.id || assigningDefectId === row.id ? '处理中' : '流转' }}
+                </AppButton>
               </div>
             </div>
           </template>
@@ -612,14 +661,14 @@ defineExpose({
       v-model="detailDrawerVisible"
       :defect-id="detailDefectId"
       :workspace-code="workspaceCode"
-    />
-
-    <DefectAssignDialog
-      v-model="assignDialogVisible"
-      :defect-item="assigningDefect"
-      :workspace-code="workspaceCode"
-      :saving="assigningDefectId !== null"
-      @submit="submitAssignDefect"
+      :current-index="activeDetailIndex"
+      :total-count="pagedDefects.length"
+      :refresh-key="detailRefreshKey"
+      @edit="openActiveDetailEditDialog"
+      @transition="openActiveDetailTransitionDialog"
+      @delete="deleteActiveDetailDefect"
+      @navigate-prev="navigateDetail(-1)"
+      @navigate-next="navigateDetail(1)"
     />
 
     <DefectTransitionDialog
@@ -877,7 +926,7 @@ defineExpose({
   flex-wrap: nowrap;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 10px;
   white-space: nowrap;
 }
 
