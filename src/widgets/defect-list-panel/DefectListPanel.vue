@@ -322,27 +322,27 @@ defineExpose({
           size="small"
           row-key="id"
         >
-          <el-table-column prop="bugNo" label="缺陷编号" min-width="130" fixed="left">
+          <el-table-column class-name="defect-list-panel__code-cell" prop="bugNo" label="缺陷编号" min-width="144" fixed="left">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <span class="defect-list-panel__code">{{ row.bugNo || '-' }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="title" label="缺陷名称" min-width="220" show-overflow-tooltip>
+          <el-table-column class-name="defect-list-panel__title-cell" prop="title" label="缺陷名称" min-width="260" show-overflow-tooltip>
             <template #default="{ row }: { row: DefectSummaryItem }">
               <span class="defect-list-panel__title">{{ row.title || '-' }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="status" label="状态" width="104">
+          <el-table-column class-name="defect-list-panel__badge-cell" prop="status" label="状态" width="112">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <DefectStatusBadge :status="row.status" />
             </template>
           </el-table-column>
-          <el-table-column prop="priority" label="优先级" width="88">
+          <el-table-column class-name="defect-list-panel__badge-cell" prop="priority" label="优先级" width="88">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <DefectPriorityBadge :priority="row.priority" />
             </template>
           </el-table-column>
-          <el-table-column prop="severity" label="严重级别" width="104">
+          <el-table-column class-name="defect-list-panel__badge-cell" prop="severity" label="严重级别" width="112">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <DefectSeverityBadge :severity="row.severity" />
             </template>
@@ -377,7 +377,7 @@ defineExpose({
               {{ formatDefectTags(row.tags) }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="176" fixed="right">
+          <el-table-column class-name="defect-list-panel__operation-cell" label="操作" width="164" fixed="right">
             <template #default="{ row }: { row: DefectSummaryItem }">
               <div class="defect-list-panel__actions">
                 <AppButton size="small" @click="openDetailDrawer(row)">详情</AppButton>
@@ -557,10 +557,18 @@ defineExpose({
   color: var(--app-text-muted);
   font-size: 12px;
   font-weight: 600;
+  line-height: 18px;
 }
 
 .defect-list-panel__table :deep(.el-table__row) {
   height: 54px;
+  color: var(--app-text-main);
+  font-size: var(--app-font-size-sm);
+  transition: background-color 160ms ease;
+}
+
+.defect-list-panel__table :deep(.el-table__row:hover > td.el-table__cell) {
+  background: #f8fafc;
 }
 
 .defect-list-panel__table :deep(.el-table__row td) {
@@ -568,20 +576,67 @@ defineExpose({
   padding-bottom: 0;
 }
 
+.defect-list-panel__table :deep(.el-table__cell) {
+  border-color: var(--app-border-soft);
+}
+
+.defect-list-panel__table :deep(.cell) {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  padding-right: var(--app-space-5);
+  padding-left: var(--app-space-5);
+  line-height: 20px;
+}
+
+.defect-list-panel__table :deep(th .cell) {
+  min-height: 48px;
+}
+
+.defect-list-panel__table :deep(.el-table__fixed-right),
+.defect-list-panel__table :deep(.el-table__fixed-right-patch) {
+  box-shadow: -1px 0 0 var(--app-border);
+}
+
+.defect-list-panel__table :deep(.defect-list-panel__operation-cell),
+.defect-list-panel__table :deep(th.el-table__cell:last-child) {
+  background: var(--app-bg-panel);
+}
+
+.defect-list-panel__table :deep(.defect-list-panel__operation-cell .cell) {
+  justify-content: center;
+  padding-right: var(--app-space-2);
+  padding-left: var(--app-space-2);
+}
+
 .defect-list-panel__code {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
   color: var(--app-primary);
-  font-weight: 600;
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .defect-list-panel__title {
+  display: block;
+  max-width: 320px;
+  overflow: hidden;
   color: var(--app-text-primary);
-  font-weight: 600;
+  font-size: var(--app-font-size-sm);
+  font-weight: 400;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .defect-list-panel__actions {
   display: flex;
   align-items: center;
-  gap: var(--app-space-1);
+  gap: var(--app-space-2);
   white-space: nowrap;
 }
 
@@ -590,12 +645,38 @@ defineExpose({
 }
 
 .defect-list-panel__actions :deep(.el-button) {
-  padding-right: var(--app-space-2);
-  padding-left: var(--app-space-2);
+  min-height: 28px;
+  padding-right: 0;
+  padding-left: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--app-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+  box-shadow: none;
 }
 
 .defect-list-panel__actions :deep(.el-button + .el-button) {
   margin-left: 0;
+}
+
+.defect-list-panel__actions :deep(.el-button:hover),
+.defect-list-panel__actions :deep(.el-button:focus-visible) {
+  background: transparent;
+  color: var(--app-primary-hover);
+}
+
+.defect-list-panel__table :deep(.defect-badge) {
+  min-height: 22px;
+  padding: 2px var(--app-space-2);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.defect-list-panel__table :deep(.defect-list-panel__badge-cell .cell) {
+  justify-content: flex-start;
 }
 
 .defect-list-panel__empty {
@@ -605,14 +686,43 @@ defineExpose({
 
 .defect-list-panel__pagination {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--app-space-3);
+  gap: var(--app-space-4);
   min-height: 58px;
   padding: 12px var(--app-space-5);
   border-top: 1px solid var(--app-border-soft);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
+}
+
+.defect-list-panel__pagination > span {
+  white-space: nowrap;
+}
+
+.defect-list-panel__pagination :deep(.el-pagination) {
+  flex-wrap: nowrap;
+  color: var(--app-text-main);
+  font-size: var(--app-font-size-sm);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.defect-list-panel__pagination :deep(.el-pagination button),
+.defect-list-panel__pagination :deep(.el-pager li) {
+  border-radius: var(--app-radius-sm);
+}
+
+.defect-list-panel__pagination :deep(.el-pager li.is-active) {
+  color: var(--app-primary);
+  font-weight: 600;
+}
+
+.defect-list-panel__pagination :deep(.el-select__wrapper),
+.defect-list-panel__pagination :deep(.el-input__wrapper) {
+  min-height: 28px;
+  border-radius: var(--app-radius-sm);
+  box-shadow: 0 0 0 1px var(--app-border-strong) inset;
 }
 </style>
