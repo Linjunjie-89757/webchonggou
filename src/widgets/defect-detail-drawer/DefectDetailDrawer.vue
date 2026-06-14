@@ -869,9 +869,9 @@ onBeforeUnmount(() => {
           <section v-show="activeTab === 'case'" class="defect-detail-drawer__pane">
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__case-toolbar">
-                <AppButton size="small" type="primary" plain :loading="caseAssociating" @click="openCaseAssociateDialog">
+                <el-button type="primary" plain :loading="caseAssociating" @click="openCaseAssociateDialog">
                   关联用例
-                </AppButton>
+                </el-button>
                 <el-input
                   v-model="caseKeyword"
                   clearable
@@ -1029,6 +1029,7 @@ onBeforeUnmount(() => {
       :current-case-id="detail?.relatedCaseId ?? null"
       :current-case-ids="getCaseRows(detail).map(item => item.id).filter((id): id is number => typeof id === 'number')"
       :associating="caseAssociating"
+      :error-message="caseErrorMessage"
       @associate="associateCase"
     />
   </AppDrawer>
@@ -1454,13 +1455,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--app-space-3);
+  gap: 12px;
 }
 
 .defect-detail-drawer__case-toolbar :deep(.el-button) {
-  height: 32px;
+  height: 30px;
+  padding: 0 12px;
   border-radius: var(--app-radius-sm);
   font-size: 13px;
+  font-weight: 400;
 }
 
 .defect-detail-drawer__case-search {
@@ -1480,7 +1483,7 @@ onBeforeUnmount(() => {
 }
 
 .defect-detail-drawer__case-table :deep(.el-table__header th.el-table__cell) {
-  height: 40px;
+  height: 42px;
   background: var(--app-bg-subtle);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
@@ -1488,11 +1491,11 @@ onBeforeUnmount(() => {
 }
 
 .defect-detail-drawer__case-table :deep(.el-table__row) {
-  height: 48px;
+  height: 46px;
 }
 
 .defect-detail-drawer__case-table :deep(.el-table__cell) {
-  padding: 8px 0;
+  padding: 7px 0;
 }
 
 .defect-detail-drawer__case-table :deep(.cell) {
@@ -1509,11 +1512,13 @@ onBeforeUnmount(() => {
   margin-left: 0;
   padding: 0;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .defect-detail-drawer__case-title {
   color: var(--app-text-primary);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .defect-detail-drawer__case-action {

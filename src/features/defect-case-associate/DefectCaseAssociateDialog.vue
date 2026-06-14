@@ -18,11 +18,13 @@ const props = withDefaults(
     currentCaseId?: number | null
     currentCaseIds?: number[]
     associating?: boolean
+    errorMessage?: string
   }>(),
   {
     currentCaseId: null,
     currentCaseIds: () => [],
     associating: false,
+    errorMessage: '',
   },
 )
 
@@ -49,7 +51,6 @@ const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(10)
 let caseLoadSeq = 0
-let syncingSelection = false
 
 const treeData = computed<DirectoryTreeNode[]>(() => [{
   key: ROOT_KEY,
@@ -82,7 +83,7 @@ const selectedDirectoryId = computed(() => {
   return Number.isFinite(parsed) ? parsed : null
 })
 
-const canSubmit = computed(() => selectedCaseIds.value.length > 0 && !props.associating)
+const canSubmit = computed(() => selectedCaseIds.value.length > 0 && !props.associating && !caseLoading.value)
 
 function mapDirectoryNode(node: CaseDirectoryNode): DirectoryTreeNode {
   return {
@@ -157,15 +158,15 @@ function handleDirectoryClick(node: DirectoryTreeNode) {
   selectedDirectoryKey.value = node.key
 }
 
-function handleRowClick(row: CaseSummaryItem) {
+function handleRowClick(row: CaseSummaryItem, column?: { type?: string }) {
+  if (column?.type === 'selection') {
+    return
+  }
+
   tableRef.value?.toggleRowSelection(row, !selectedCaseIds.value.includes(row.id))
 }
 
 function handleSelectionChange(rows: CaseSummaryItem[]) {
-  if (syncingSelection) {
-    return
-  }
-
   const currentPageIds = cases.value.map(item => item.id)
   const currentPageSelectedIds = rows.map(item => item.id)
   const otherPageIds = selectedCaseIds.value.filter(id => !currentPageIds.includes(id))
@@ -182,12 +183,9 @@ function isRowSelected(row: CaseSummaryItem) {
 
 async function applyCurrentPageSelection() {
   await nextTick()
-  syncingSelection = true
   cases.value.forEach((row) => {
     tableRef.value?.toggleRowSelection(row, selectedCaseIds.value.includes(row.id))
   })
-  await nextTick()
-  syncingSelection = false
 }
 
 function submitAssociate() {
@@ -306,16 +304,16 @@ watch(currentPage, () => {
             @selection-change="handleSelectionChange"
           >
             <el-table-column type="selection" width="48" :selectable="() => true" />
-            <el-table-column label="用例编号" min-width="160">
+            <el-table-column label="用例编号" min-width="180">
               <template #default="{ row }">
                 <span class="defect-case-associate__case-no" :class="{ 'is-selected': isRowSelected(row) }">
                   {{ row.caseNo || `#${row.id}` }}
                 </span>
               </template>
             </el-table-column>
-            <el-table-column prop="title" label="用例名称" min-width="300" show-overflow-tooltip />
-            <el-table-column prop="workspaceName" label="所属项目" min-width="160" show-overflow-tooltip />
-            <el-table-column label="用例类型" width="120">
+            <el-table-column prop="title" label="用例名称" min-width="320" show-overflow-tooltip />
+            <el-table-column prop="workspaceName" label="所属项目" min-width="180" show-overflow-tooltip />
+            <el-table-column label="用例类型" width="140">
               <template #default="{ row }">
                 {{ row.caseType || '功能用例' }}
               </template>
@@ -336,6 +334,7 @@ watch(currentPage, () => {
             :page-sizes="[10, 20, 50]"
           />
         </div>
+        <p v-if="errorMessage" class="defect-case-associate__error">{{ errorMessage }}</p>
       </section>
     </div>
 
@@ -417,6 +416,9 @@ watch(currentPage, () => {
 
 .defect-case-associate__case-no {
   color: var(--app-primary);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
 }
 
 .defect-case-associate__pagination {
@@ -435,6 +437,13 @@ watch(currentPage, () => {
   line-height: var(--app-line-height-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.defect-case-associate__error {
+  margin: var(--app-space-2) 0 0;
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-sm);
 }
 
 .defect-case-associate__footer {
@@ -457,9 +466,15 @@ watch(currentPage, () => {
 
 .defect-case-associate__table :deep(td.el-table__cell) {
   height: 46px;
+  padding: 7px 0;
   border-bottom-color: var(--app-border-soft);
   color: var(--app-text-main);
   font-size: var(--app-font-size-sm);
+}
+
+.defect-case-associate__table :deep(.cell) {
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .defect-case-associate__table :deep(.el-table__row) {
