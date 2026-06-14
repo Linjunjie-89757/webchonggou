@@ -84,6 +84,29 @@ export interface BatchUpdateCasesPayload {
 
 export type BatchUpdateCasesResult = PageResponse<CaseSummaryItem>
 
+export interface BatchMoveCasesPayload {
+  caseIds: number[]
+  targetDirectoryId: number | null
+}
+
+export interface BatchDeleteCasesPayload {
+  caseIds: number[]
+}
+
+export interface CreateCaseDirectoryPayload {
+  workspaceCode?: string
+  parentId?: number | null
+  name: string
+}
+
+export interface RenameCaseDirectoryPayload {
+  name: string
+}
+
+export interface MoveCaseDirectoryPayload {
+  targetParentId: number | null
+}
+
 export interface CaseDirectoryNode {
   id: number
   name: string

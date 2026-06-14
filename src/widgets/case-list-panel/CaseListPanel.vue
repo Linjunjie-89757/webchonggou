@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { Checked, MoreFilled, Plus, RefreshRight, Setting, View } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   type CaseDetail,
@@ -11,8 +11,10 @@ import {
   caseApi,
   formatCaseDateTime,
   getCaseDirectoryText,
+  type BatchMoveCasesPayload,
   type BatchUpdateCasesPayload,
   type CaseClientFilter,
+  type CaseDirectoryNode,
   type CaseDirectoryWorkspace,
   type ReviewCasePayload,
   type CaseSummaryItem,
@@ -26,6 +28,7 @@ import { runCase } from '@/features/case-run'
 import { getCaseStatusActionText, toggleCaseStatus } from '@/features/case-toggle-status'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import { CaseDetailDrawer } from '@/widgets/case-detail-drawer'
@@ -54,6 +57,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   loaded: [items: CaseSummaryItem[]]
+  reloadDirectories: []
 }>()
 
 const cases = ref<CaseSummaryItem[]>([])
@@ -71,6 +75,9 @@ const detailLoading = ref(false)
 const saving = ref(false)
 const batchDialogVisible = ref(false)
 const batchSaving = ref(false)
+const batchMoveDialogVisible = ref(false)
+const batchMoveSaving = ref(false)
+const batchMoveTargetDirectoryId = ref<number | null>(null)
 const selectedCaseIds = ref<number[]>([])
 const detailDrawerVisible = ref(false)
 const detailCaseId = ref<number | null>(null)
@@ -157,6 +164,38 @@ const currentPageSelectionIndeterminate = computed(() => {
   return selectedCases.value.length > 0 && !allCurrentPageSelected.value
 })
 
+const selectedWorkspaceCodes = computed(() => [...new Set(selectedCases.value.map((item) => item.workspaceCode))])
+const batchMoveWorkspaceCode = computed(() => (selectedWorkspaceCodes.value.length === 1 ? selectedWorkspaceCodes.value[0] : ''))
+
+type DirectoryOption = {
+  value: number | null
+  label: string
+}
+
+function buildDirectoryOptions(nodes: CaseDirectoryNode[], prefix = ''): DirectoryOption[] {
+  const options: DirectoryOption[] = []
+  nodes.forEach((node) => {
+    const label = prefix ? `${prefix} / ${node.name}` : node.name
+    options.push({ value: node.id, label })
+    if (node.children.length) {
+      options.push(...buildDirectoryOptions(node.children, label))
+    }
+  })
+  return options
+}
+
+const batchMoveDirectoryOptions = computed<DirectoryOption[]>(() => {
+  if (!batchMoveWorkspaceCode.value) {
+    return []
+  }
+
+  const workspace = props.directories.find((item) => item.workspaceCode === batchMoveWorkspaceCode.value)
+  return [
+    { value: null, label: '空间根目录' },
+    ...buildDirectoryOptions(workspace?.children ?? []),
+  ]
+})
+
 function formatColumnValue(row: CaseSummaryItem, key: CaseTableColumnKey) {
   switch (key) {
     case 'caseNo':
@@ -236,6 +275,19 @@ function openBatchDialog() {
   }
 
   batchDialogVisible.value = true
+}
+
+function openBatchMoveDialog() {
+  if (!selectedCaseIds.value.length) {
+    return
+  }
+  if (!batchMoveWorkspaceCode.value) {
+    ElMessage.warning('批量移动暂不支持跨空间混选')
+    return
+  }
+
+  batchMoveTargetDirectoryId.value = null
+  batchMoveDialogVisible.value = true
 }
 
 async function loadCases() {
@@ -350,6 +402,31 @@ async function saveBatchUpdate(payload: BatchUpdateCasesPayload) {
   }
 }
 
+async function saveBatchMove() {
+  if (!selectedCaseIds.value.length || !batchMoveWorkspaceCode.value || batchMoveSaving.value) {
+    return
+  }
+
+  const payload: BatchMoveCasesPayload = {
+    caseIds: [...selectedCaseIds.value],
+    targetDirectoryId: batchMoveTargetDirectoryId.value,
+  }
+
+  batchMoveSaving.value = true
+  try {
+    await caseApi.batchMoveCases(batchMoveWorkspaceCode.value, payload)
+    ElMessage.success('批量移动已完成')
+    batchMoveDialogVisible.value = false
+    clearSelection()
+    emit('reloadDirectories')
+    await loadCases()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    batchMoveSaving.value = false
+  }
+}
+
 function isMessageBoxCancel(error: unknown) {
   if (error === 'cancel' || error === 'close') {
     return true
@@ -366,6 +443,36 @@ async function handleDeleteCase(item: CaseSummaryItem) {
   try {
     await deleteCase(item, props.workspaceCode)
     ElMessage.success('用例已删除')
+    await loadCases()
+  } catch (error) {
+    if (!isMessageBoxCancel(error)) {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    deletingCaseId.value = null
+  }
+}
+
+async function handleBatchDeleteCases() {
+  if (!selectedCaseIds.value.length || deletingCaseId.value !== null || runningCaseId.value !== null || togglingCaseId.value !== null || reviewingCaseId.value !== null) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`确认删除当前页选中的 ${selectedCaseIds.value.length} 条用例吗？`, '批量删除', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+    deletingCaseId.value = -1
+    await caseApi.batchDeleteCases(props.workspaceCode, {
+      caseIds: [...selectedCaseIds.value],
+    })
+    ElMessage.success('批量删除已完成')
+    if (cases.value.length === selectedCaseIds.value.length && pageNo.value > 1) {
+      pageNo.value -= 1
+    }
+    clearSelection()
     await loadCases()
   } catch (error) {
     if (!isMessageBoxCancel(error)) {
@@ -508,14 +615,6 @@ defineExpose({
     </AppEmptyState>
 
     <div v-else class="case-list-panel__table-card">
-      <div v-if="selectedCaseIds.length" class="case-list-panel__batch-bar">
-        <span>已选择 {{ selectedCaseIds.length }} 条用例</span>
-        <div class="case-list-panel__batch-actions">
-          <AppButton size="small" @click="clearSelection">清空选择</AppButton>
-          <AppButton size="small" type="primary" @click="openBatchDialog">批量更新</AppButton>
-        </div>
-      </div>
-
       <div v-if="errorMessage" class="case-list-panel__inline-error">
         {{ errorMessage }}
         <AppButton size="small" :icon="RefreshRight" @click="loadCases">重试</AppButton>
@@ -660,17 +759,32 @@ defineExpose({
       />
 
       <footer class="case-list-panel__footer">
-        <span>共 {{ total }} 条，{{ totalPages }} 页</span>
-        <el-pagination
-          background
-          layout="sizes, prev, pager, next"
-          :current-page="pageNo"
-          :page-size="pageSize"
-          :page-sizes="pageSizeOptions"
-          :total="total"
-          @current-change="handlePageChange"
-          @size-change="handlePageSizeChange"
-        />
+        <div class="case-list-panel__footer-left">
+          <div v-if="selectedCaseIds.length" class="case-list-panel__batch-bar">
+            <span>已选 {{ selectedCaseIds.length }} 条</span>
+            <div class="case-list-panel__batch-actions">
+              <AppButton size="small" @click="openBatchMoveDialog">移动到</AppButton>
+              <AppButton size="small" @click="openBatchDialog">批量编辑</AppButton>
+              <AppButton size="small" type="danger" :loading="deletingCaseId === -1" @click="handleBatchDeleteCases">
+                批量删除
+              </AppButton>
+              <AppButton size="small" @click="clearSelection">取消</AppButton>
+            </div>
+          </div>
+        </div>
+        <div class="case-list-panel__pagination">
+          <span>共 {{ total }} 条，{{ totalPages }} 页</span>
+          <el-pagination
+            background
+            layout="sizes, prev, pager, next"
+            :current-page="pageNo"
+            :page-size="pageSize"
+            :page-sizes="pageSizeOptions"
+            :total="total"
+            @current-change="handlePageChange"
+            @size-change="handlePageSizeChange"
+          />
+        </div>
       </footer>
     </div>
 
@@ -693,6 +807,34 @@ defineExpose({
       :saving="batchSaving"
       @submit="saveBatchUpdate"
     />
+
+    <AppDialog
+      v-model="batchMoveDialogVisible"
+      title="批量移动用例"
+      width="420px"
+    >
+      <div class="case-batch-move-dialog">
+        <div class="case-batch-move-dialog__summary">
+          已选择 {{ selectedCaseIds.length }} 条用例
+        </div>
+        <label class="case-batch-move-dialog__field">
+          <span>目标目录</span>
+          <el-select v-model="batchMoveTargetDirectoryId" placeholder="请选择目标目录" clearable>
+            <el-option
+              v-for="item in batchMoveDirectoryOptions"
+              :key="String(item.value)"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </label>
+      </div>
+
+      <template #footer>
+        <AppButton :disabled="batchMoveSaving" @click="batchMoveDialogVisible = false">取消</AppButton>
+        <AppButton type="primary" :loading="batchMoveSaving" @click="saveBatchMove">保存</AppButton>
+      </template>
+    </AppDialog>
 
     <CaseReviewDialog
       v-model="reviewDialogVisible"
@@ -784,12 +926,9 @@ defineExpose({
 .case-list-panel__batch-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--app-space-3);
-  min-height: 44px;
-  padding: var(--app-space-2) var(--app-space-4);
-  border-bottom: 1px solid var(--app-border-soft);
-  background: var(--app-primary-soft);
+  min-height: 32px;
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
 }
@@ -972,6 +1111,18 @@ defineExpose({
   font-size: var(--app-font-size-sm);
 }
 
+.case-list-panel__footer-left {
+  min-width: 0;
+  flex: 1;
+}
+
+.case-list-panel__pagination {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--app-space-3);
+}
+
 .case-list-panel__row-actions {
   display: flex;
   align-items: center;
@@ -986,6 +1137,34 @@ defineExpose({
 
 :global(.case-list-panel__danger-action) {
   color: var(--app-danger);
+}
+
+.case-batch-move-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.case-batch-move-dialog__summary {
+  padding: var(--app-space-2) var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+.case-batch-move-dialog__field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-2);
+}
+
+.case-batch-move-dialog__field > span {
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
 }
 
 @media (max-width: 720px) {
@@ -1003,6 +1182,11 @@ defineExpose({
   .case-list-panel__batch-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .case-list-panel__pagination {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }
 </style>

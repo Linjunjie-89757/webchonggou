@@ -3,9 +3,14 @@ import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shar
 import type {
   BatchUpdateCasesPayload,
   BatchUpdateCasesResult,
+  BatchDeleteCasesPayload,
+  BatchMoveCasesPayload,
   CaseDetail,
   CaseDirectoryWorkspace,
+  CreateCaseDirectoryPayload,
   CaseListQuery,
+  MoveCaseDirectoryPayload,
+  RenameCaseDirectoryPayload,
   ReviewCasePayload,
   ReviewCaseResult,
   RunCasePayload,
@@ -55,6 +60,50 @@ export const caseApi = {
     })
 
     return unwrapApiResponse(payload)
+  },
+
+  async createCaseDirectory(workspaceCode = 'ALL', payload: CreateCaseDirectoryPayload) {
+    const response = await httpPost<ApiResponse<CaseDirectoryWorkspace>, CreateCaseDirectoryPayload>(
+      '/cases/directories',
+      payload,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async renameCaseDirectory(id: number, workspaceCode = 'ALL', payload: RenameCaseDirectoryPayload) {
+    const response = await httpPut<ApiResponse<CaseDirectoryWorkspace>, RenameCaseDirectoryPayload>(
+      `/cases/directories/${id}`,
+      payload,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async moveCaseDirectory(id: number, workspaceCode = 'ALL', payload: MoveCaseDirectoryPayload) {
+    const response = await httpPost<ApiResponse<CaseDirectoryWorkspace>, MoveCaseDirectoryPayload>(
+      `/cases/directories/${id}/move`,
+      payload,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async deleteCaseDirectory(id: number, workspaceCode = 'ALL') {
+    const response = await httpDelete<ApiResponse<null>>(`/cases/directories/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(response)
   },
 
   async getCaseDetail(id: number, workspaceCode = 'ALL') {
@@ -112,6 +161,30 @@ export const caseApi = {
   async batchUpdateCases(workspaceCode = 'ALL', payload: BatchUpdateCasesPayload) {
     const response = await httpPost<ApiResponse<BatchUpdateCasesResult>, BatchUpdateCasesPayload>(
       '/cases/batch/update',
+      payload,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async batchMoveCases(workspaceCode = 'ALL', payload: BatchMoveCasesPayload) {
+    const response = await httpPost<ApiResponse<BatchUpdateCasesResult>, BatchMoveCasesPayload>(
+      '/cases/batch/move',
+      payload,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async batchDeleteCases(workspaceCode = 'ALL', payload: BatchDeleteCasesPayload) {
+    const response = await httpPost<ApiResponse<BatchUpdateCasesResult>, BatchDeleteCasesPayload>(
+      '/cases/batch/delete',
       payload,
       {
         headers: workspaceHeaders(workspaceCode),

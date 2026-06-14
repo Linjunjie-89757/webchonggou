@@ -13,13 +13,18 @@ export {
   caseReviewStatusOptions,
 } from './model/options'
 export type {
+  BatchDeleteCasesPayload,
+  BatchMoveCasesPayload,
   BatchUpdateCasesPayload,
   BatchUpdateCasesResult,
   CaseClientFilter,
   CaseDetail,
   CaseDirectoryNode,
   CaseDirectoryWorkspace,
+  CreateCaseDirectoryPayload,
   CaseListQuery,
+  MoveCaseDirectoryPayload,
+  RenameCaseDirectoryPayload,
   ReviewCasePayload,
   ReviewCaseResult,
   RunCasePayload,
