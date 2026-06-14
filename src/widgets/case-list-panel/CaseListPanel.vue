@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Checked, Edit, MoreFilled, Plus, RefreshRight, VideoPlay, View } from '@element-plus/icons-vue'
+import { Checked, MoreFilled, Plus, RefreshRight, Setting, View } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -29,6 +29,12 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import { CaseDetailDrawer } from '@/widgets/case-detail-drawer'
+import CaseTableSettingsDrawer from './CaseTableSettingsDrawer.vue'
+import {
+  useCaseTableSettings,
+  type CaseTableColumnDefinition,
+  type CaseTableColumnKey,
+} from './useCaseTableSettings'
 
 const props = withDefaults(
   defineProps<{
@@ -76,6 +82,59 @@ const deletingCaseId = ref<number | null>(null)
 const togglingCaseId = ref<number | null>(null)
 let filterReloadTimer: number | undefined
 let loadRequestSeq = 0
+const pageSizeOptions = [10, 20, 30, 40, 50]
+
+const tableColumnDefinitions = computed<CaseTableColumnDefinition[]>(() => [
+  { key: 'caseNo', label: '用例编号', width: 168, required: true, defaultVisible: true },
+  { key: 'title', label: '用例名称', minWidth: 320, required: true, defaultVisible: true },
+  { key: 'priority', label: '优先级', width: 88, defaultVisible: true },
+  { key: 'sourceType', label: '用例来源', width: 120, defaultVisible: false },
+  { key: 'reviewStatus', label: '评审状态', width: 112, defaultVisible: true },
+  { key: 'reviewedByName', label: '评审人', width: 110, defaultVisible: false },
+  { key: 'reviewedAt', label: '评审时间', width: 156, defaultVisible: false },
+  { key: 'executionStatus', label: '执行状态', width: 112, defaultVisible: true },
+  { key: 'executorName', label: '执行人', width: 104, defaultVisible: true },
+  { key: 'executedAt', label: '执行时间', width: 156, defaultVisible: false },
+  { key: 'workspaceName', label: '所属空间', width: 128, defaultVisible: false },
+  { key: 'directoryName', label: '所属模块', width: 152, defaultVisible: true },
+  { key: 'createdByName', label: '创建人', width: 130, defaultVisible: false },
+  { key: 'createdAt', label: '创建时间', width: 176, defaultVisible: false },
+  { key: 'updatedByName', label: '更新人', width: 130, defaultVisible: false },
+  { key: 'updatedAt', label: '更新时间', width: 176, defaultVisible: false },
+])
+const tableSettings = useCaseTableSettings({
+  storageKey: 'case-list-table-settings-v1',
+  columns: tableColumnDefinitions,
+})
+const visibleColumns = computed(() => tableSettings.visibleColumns.value)
+const dataGridMinWidth = computed(() => {
+  const columnWidth = visibleColumns.value.reduce((total, column) => {
+    if (typeof column.width === 'number') {
+      return total + column.width
+    }
+    if (typeof column.minWidth === 'number') {
+      return total + column.minWidth
+    }
+    return total + 120
+  }, 56)
+
+  return `${columnWidth}px`
+})
+const dataGridTemplateColumns = computed(() => [
+  '56px',
+  ...visibleColumns.value.map((column) => {
+    if (typeof column.width === 'number') {
+      return `${column.width}px`
+    }
+    if (column.key === 'title' && typeof column.minWidth === 'number') {
+      return `minmax(${column.minWidth}px, 1fr)`
+    }
+    if (typeof column.minWidth === 'number') {
+      return `${column.minWidth}px`
+    }
+    return '120px'
+  }),
+].join(' '))
 
 const defaultDialogWorkspaceCode = computed(() => {
   if (props.workspaceCode !== 'ALL') {
@@ -97,6 +156,45 @@ const allCurrentPageSelected = computed(() => {
 const currentPageSelectionIndeterminate = computed(() => {
   return selectedCases.value.length > 0 && !allCurrentPageSelected.value
 })
+
+function formatColumnValue(row: CaseSummaryItem, key: CaseTableColumnKey) {
+  switch (key) {
+    case 'caseNo':
+      return row.caseNo || '-'
+    case 'title':
+      return row.title || '-'
+    case 'priority':
+      return row.priority || '-'
+    case 'sourceType':
+      return row.sourceType || '-'
+    case 'reviewStatus':
+      return row.reviewStatus || '-'
+    case 'reviewedByName':
+      return row.reviewedByName || '-'
+    case 'reviewedAt':
+      return formatCaseDateTime(row.reviewedAt)
+    case 'executionStatus':
+      return row.executionStatus || '-'
+    case 'executorName':
+      return row.executorName || '-'
+    case 'executedAt':
+      return formatCaseDateTime(row.executedAt)
+    case 'workspaceName':
+      return row.workspaceName || row.workspaceCode || '-'
+    case 'directoryName':
+      return getCaseDirectoryText(row)
+    case 'createdByName':
+      return row.createdByName || '-'
+    case 'createdAt':
+      return formatCaseDateTime(row.createdAt)
+    case 'updatedByName':
+      return row.updatedByName || '-'
+    case 'updatedAt':
+      return formatCaseDateTime(row.updatedAt)
+    default:
+      return '-'
+  }
+}
 
 function applyPage(page: PageResponse<CaseSummaryItem>) {
   cases.value = Array.isArray(page.items) ? page.items : []
@@ -341,6 +439,7 @@ function handlePageChange(value: number) {
 }
 
 function handlePageSizeChange(value: number) {
+  tableSettings.updatePageSize(value)
   pageSize.value = value
   pageNo.value = 1
   void loadCases()
@@ -367,6 +466,10 @@ watch(
 )
 
 onMounted(() => {
+  tableSettings.load()
+  if (tableSettings.pageSize.value && pageSizeOptions.includes(tableSettings.pageSize.value)) {
+    pageSize.value = tableSettings.pageSize.value
+  }
   void loadCases()
 })
 
@@ -418,113 +521,136 @@ defineExpose({
         <AppButton size="small" :icon="RefreshRight" @click="loadCases">重试</AppButton>
       </div>
 
-      <div v-if="cases.length" class="case-list-panel__scroll">
-        <table>
-          <colgroup>
-            <col class="case-list-panel__select-col" />
-            <col class="case-list-panel__code-col" />
-            <col class="case-list-panel__title-col" />
-            <col class="case-list-panel__priority-col" />
-            <col class="case-list-panel__status-col" />
-            <col class="case-list-panel__status-col" />
-            <col class="case-list-panel__person-col" />
-            <col class="case-list-panel__workspace-col" />
-            <col class="case-list-panel__module-col" />
-            <col class="case-list-panel__time-col" />
-            <col class="case-list-panel__action-col" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>
+      <div v-if="cases.length" v-loading="loading" class="case-list-panel__table-shell">
+        <div class="case-list-panel__table-data">
+          <div class="case-list-panel__table-scroll">
+            <div
+              class="case-list-panel__grid case-list-panel__grid--header"
+              :style="{ gridTemplateColumns: dataGridTemplateColumns, minWidth: dataGridMinWidth }"
+            >
+              <div class="case-list-panel__cell case-list-panel__cell--selection">
                 <el-checkbox
                   :model-value="allCurrentPageSelected"
                   :indeterminate="currentPageSelectionIndeterminate"
                   aria-label="选择当前页用例"
                   @change="toggleCurrentPageSelection(Boolean($event))"
                 />
-              </th>
-              <th>用例编号</th>
-              <th>用例名称</th>
-              <th>优先级</th>
-              <th>评审状态</th>
-              <th>执行状态</th>
-              <th>执行人</th>
-              <th>所属空间</th>
-              <th>所属模块</th>
-              <th>更新时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in cases" :key="item.id">
-              <td>
+              </div>
+              <div
+                v-for="column in visibleColumns"
+                :key="`header-${column.key}`"
+                :class="['case-list-panel__cell', `case-list-panel__cell--${column.key}`]"
+              >
+                {{ column.label }}
+              </div>
+            </div>
+
+            <div
+              v-for="item in cases"
+              :key="item.id"
+              class="case-list-panel__grid case-list-panel__grid--row"
+              :style="{ gridTemplateColumns: dataGridTemplateColumns, minWidth: dataGridMinWidth }"
+            >
+              <div class="case-list-panel__cell case-list-panel__cell--selection">
                 <el-checkbox
                   :model-value="isCaseSelected(item.id)"
                   :aria-label="`选择用例 ${item.caseNo}`"
                   @change="toggleCaseSelected(item.id, Boolean($event))"
                 />
-              </td>
-              <td>
-                <span class="case-list-panel__mono">{{ item.caseNo }}</span>
-              </td>
-              <td>
-                <div class="case-list-panel__title">{{ item.title }}</div>
-                <div class="case-list-panel__subtitle">{{ item.caseType }} · {{ item.sourceType }}</div>
-              </td>
-              <td><CasePriorityBadge :priority="item.priority" /></td>
-              <td><CaseReviewStatusBadge :status="item.reviewStatus" /></td>
-              <td><CaseExecutionStatusBadge :status="item.executionStatus" /></td>
-              <td>{{ item.executorName || '-' }}</td>
-              <td>
-                <span class="case-list-panel__muted">{{ item.workspaceName || item.workspaceCode }}</span>
-              </td>
-              <td>
-                <span class="case-list-panel__muted">{{ getCaseDirectoryText(item) }}</span>
-              </td>
-              <td>{{ formatCaseDateTime(item.updatedAt) }}</td>
-              <td>
-                <div class="case-list-panel__row-actions">
-                  <el-button text size="small" :icon="View" @click="openDetailDrawer(item)">详情</el-button>
-                  <el-button text size="small" :icon="Edit" @click="openEditDialog(item)">编辑</el-button>
-                  <el-dropdown trigger="click">
-                    <el-button text size="small" :icon="MoreFilled">更多</el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item
-                          :icon="VideoPlay"
-                          :disabled="runningCaseId === item.id"
-                          @click="handleRunCase(item)"
-                        >
-                          {{ runningCaseId === item.id ? '执行中' : '执行' }}
-                        </el-dropdown-item>
-                        <el-dropdown-item
-                          :icon="Checked"
-                          :disabled="reviewingCaseId === item.id"
-                          @click="openReviewDialog(item)"
-                        >
-                          {{ reviewingCaseId === item.id ? '评审中' : '评审' }}
-                        </el-dropdown-item>
-                        <el-dropdown-item
-                          :disabled="togglingCaseId === item.id || runningCaseId === item.id || deletingCaseId === item.id || reviewingCaseId === item.id"
-                          @click="handleToggleCaseStatus(item)"
-                        >
-                          {{ togglingCaseId === item.id ? '处理中' : getCaseStatusActionText(item.status) }}
-                        </el-dropdown-item>
-                        <el-dropdown-item
-                          class="case-list-panel__danger-action"
-                          :disabled="deletingCaseId === item.id || runningCaseId === item.id || togglingCaseId === item.id || reviewingCaseId === item.id"
-                          @click="handleDeleteCase(item)"
-                        >
-                          {{ deletingCaseId === item.id ? '删除中' : '删除' }}
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </div>
+              <div
+                v-for="column in visibleColumns"
+                :key="`${item.id}-${column.key}`"
+                :class="['case-list-panel__cell', `case-list-panel__cell--${column.key}`]"
+              >
+                <span v-if="column.key === 'caseNo'" class="case-list-panel__code">
+                  {{ formatColumnValue(item, column.key) }}
+                </span>
+                <el-tooltip
+                  v-else-if="column.key === 'title'"
+                  :content="formatColumnValue(item, column.key)"
+                  placement="top"
+                >
+                  <span class="case-list-panel__title">{{ formatColumnValue(item, column.key) }}</span>
+                </el-tooltip>
+                <CasePriorityBadge v-else-if="column.key === 'priority'" :priority="item.priority" />
+                <CaseReviewStatusBadge v-else-if="column.key === 'reviewStatus'" :status="item.reviewStatus" />
+                <CaseExecutionStatusBadge v-else-if="column.key === 'executionStatus'" :status="item.executionStatus" />
+                <span v-else class="case-list-panel__cell-text">{{ formatColumnValue(item, column.key) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="case-list-panel__table-actions-fixed">
+          <div class="case-list-panel__actions-header">
+            <span>操作</span>
+            <button
+              type="button"
+              class="case-list-panel__settings-trigger"
+              aria-label="字段设置"
+              @click="tableSettings.settingsVisible.value = true"
+            >
+              <el-icon><Setting /></el-icon>
+            </button>
+          </div>
+
+          <div
+            v-for="item in cases"
+            :key="`action-${item.id}`"
+            class="case-list-panel__actions-row"
+          >
+            <div class="case-list-panel__row-actions">
+              <el-button text size="small" type="primary" @click="openEditDialog(item)">编辑</el-button>
+              <el-button
+                text
+                size="small"
+                type="primary"
+                :disabled="runningCaseId === item.id"
+                @click="handleRunCase(item)"
+              >
+                {{ runningCaseId === item.id ? '执行中' : '执行' }}
+              </el-button>
+              <el-dropdown trigger="click">
+                <el-button text size="small" type="primary" class="case-list-panel__more-button">
+                  <el-icon><MoreFilled /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      :icon="View"
+                      @click="openDetailDrawer(item)"
+                    >
+                      详情
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      :icon="Checked"
+                      :disabled="reviewingCaseId === item.id"
+                      @click="openReviewDialog(item)"
+                    >
+                      {{ reviewingCaseId === item.id ? '评审中' : '评审' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item disabled>提缺陷</el-dropdown-item>
+                    <el-dropdown-item disabled>复制</el-dropdown-item>
+                    <el-dropdown-item
+                      :disabled="togglingCaseId === item.id || runningCaseId === item.id || deletingCaseId === item.id || reviewingCaseId === item.id"
+                      @click="handleToggleCaseStatus(item)"
+                    >
+                      {{ togglingCaseId === item.id ? '处理中' : getCaseStatusActionText(item.status) }}
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      class="case-list-panel__danger-action"
+                      :disabled="deletingCaseId === item.id || runningCaseId === item.id || togglingCaseId === item.id || reviewingCaseId === item.id"
+                      @click="handleDeleteCase(item)"
+                    >
+                      {{ deletingCaseId === item.id ? '删除中' : '删除' }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+        </div>
       </div>
 
       <AppEmptyState
@@ -540,7 +666,7 @@ defineExpose({
           layout="sizes, prev, pager, next"
           :current-page="pageNo"
           :page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
+          :page-sizes="pageSizeOptions"
           :total="total"
           @current-change="handlePageChange"
           @size-change="handlePageSizeChange"
@@ -580,14 +706,32 @@ defineExpose({
       :case-id="detailCaseId"
       :workspace-code="workspaceCode"
     />
+
+    <CaseTableSettingsDrawer
+      v-model="tableSettings.settingsVisible.value"
+      :columns="tableSettings.drawerColumns.value"
+      :dragging-key="tableSettings.draggingColumnKey.value"
+      :page-size="pageSize"
+      :page-size-options="pageSizeOptions"
+      @toggle-column="tableSettings.toggleColumnVisibility"
+      @update-page-size="handlePageSizeChange"
+      @drag-start="tableSettings.handleDragStart"
+      @drag-end="tableSettings.handleDragEnd"
+      @drop-column="tableSettings.moveColumnToTarget"
+      @reset="tableSettings.reset"
+    />
   </section>
 </template>
 
 <style scoped>
 .case-list-panel {
+  --case-table-header-height: 48px;
+  --case-table-row-height: 54px;
+  --case-table-actions-width: 164px;
   display: flex;
   flex-direction: column;
   gap: var(--app-space-3);
+  min-width: 0;
 }
 
 .case-list-panel__header {
@@ -661,115 +805,156 @@ defineExpose({
   gap: var(--app-space-2);
 }
 
-.case-list-panel__scroll {
-  overflow-x: auto;
+.case-list-panel__table-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--case-table-actions-width);
+  min-width: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--app-border-soft);
 }
 
-.case-list-panel__scroll::-webkit-scrollbar {
+.case-list-panel__table-data {
+  min-width: 0;
+}
+
+.case-list-panel__table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
+}
+
+.case-list-panel__table-scroll::-webkit-scrollbar {
   height: 10px;
 }
 
-.case-list-panel__scroll::-webkit-scrollbar-track {
+.case-list-panel__table-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.case-list-panel__scroll::-webkit-scrollbar-thumb {
+.case-list-panel__table-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.5);
 }
 
-.case-list-panel table {
-  width: 100%;
-  min-width: 1268px;
-  border-collapse: collapse;
-  table-layout: fixed;
+.case-list-panel__grid {
+  display: grid;
 }
 
-.case-list-panel__select-col {
-  width: 48px;
-}
-
-.case-list-panel th {
-  padding: var(--app-space-2) var(--app-space-4);
+.case-list-panel__grid--header {
+  min-height: var(--case-table-header-height);
   border-bottom: 1px solid var(--app-border);
-  background: var(--app-bg-page);
+  background: #f8fafc;
   color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  font-size: 12px;
   font-weight: 600;
-  text-align: left;
 }
 
-.case-list-panel td {
-  height: var(--app-table-row-height);
-  padding: var(--app-space-2) var(--app-space-4);
+.case-list-panel__grid--row {
+  min-height: var(--case-table-row-height);
   border-bottom: 1px solid var(--app-border-soft);
-  color: var(--app-text-main);
-  font-size: var(--app-font-size-sm);
-  vertical-align: middle;
+  background: var(--app-bg-panel);
+  transition: background-color 160ms ease;
 }
 
-.case-list-panel tbody tr:hover {
-  background: var(--app-bg-subtle);
+.case-list-panel__grid--row:hover {
+  background: #f8fafc;
 }
 
-.case-list-panel tr:last-child td {
-  border-bottom: 0;
+.case-list-panel__cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  padding: 0 var(--app-space-5);
 }
 
-.case-list-panel__code-col {
-  width: 136px;
+.case-list-panel__cell--selection {
+  justify-content: center;
+  padding: 0;
 }
 
-.case-list-panel__title-col {
-  width: 300px;
-}
-
-.case-list-panel__priority-col {
-  width: 84px;
-}
-
-.case-list-panel__status-col {
-  width: 104px;
-}
-
-.case-list-panel__person-col,
-.case-list-panel__workspace-col,
-.case-list-panel__module-col {
-  width: 132px;
-}
-
-.case-list-panel__time-col {
-  width: 148px;
-}
-
-.case-list-panel__action-col {
-  width: 176px;
-}
-
+.case-list-panel__code,
 .case-list-panel__title,
-.case-list-panel__subtitle,
-.case-list-panel__muted,
-.case-list-panel__mono {
+.case-list-panel__cell-text {
   display: block;
+  width: 100%;
   overflow: hidden;
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.case-list-panel__code {
+  color: var(--app-primary);
+  font-family: Consolas, Monaco, monospace;
+  font-weight: 400;
+}
+
 .case-list-panel__title {
   color: var(--app-text-primary);
+  font-weight: 500;
+}
+
+.case-list-panel__cell-text {
+  color: var(--app-text-main);
+}
+
+.case-list-panel__table-actions-fixed {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--app-border);
+  background: var(--app-bg-panel);
+}
+
+.case-list-panel__actions-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--app-space-1);
+  min-height: var(--case-table-header-height);
+  border-bottom: 1px solid var(--app-border);
+  background: #f8fafc;
+  color: var(--app-text-muted);
+  font-size: 12px;
   font-weight: 600;
 }
 
-.case-list-panel__subtitle,
-.case-list-panel__muted {
-  color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
+.case-list-panel__settings-trigger {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
 }
 
-.case-list-panel__mono {
-  font-family: Consolas, Monaco, monospace;
-  font-size: var(--app-font-size-xs);
+.case-list-panel__settings-trigger:hover {
+  background: var(--app-primary-soft);
+}
+
+.case-list-panel__actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--case-table-row-height);
+  border-bottom: 1px solid var(--app-border-soft);
+  transition: background-color 160ms ease;
+}
+
+.case-list-panel__actions-row:hover {
+  background: #f8fafc;
+}
+
+.case-list-panel__more-button {
+  width: 28px;
+  padding-right: 0;
+  padding-left: 0;
 }
 
 .case-list-panel__footer {
@@ -790,7 +975,8 @@ defineExpose({
 .case-list-panel__row-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  justify-content: center;
+  gap: 0;
   white-space: nowrap;
 }
 
