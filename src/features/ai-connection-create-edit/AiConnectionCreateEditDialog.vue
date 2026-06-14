@@ -340,10 +340,10 @@ watch(
           </span>
         </div>
 
-        <label class="ai-connection-dialog__field">
+        <div class="ai-connection-dialog__field">
           <span>连接名称</span>
           <el-input v-model="form.connectionName" placeholder="例如：OpenAI 官方 / DeepSeek 代理 / 内网网关" />
-        </label>
+        </div>
 
         <div class="ai-connection-dialog__field">
           <span class="ai-connection-dialog__label-row">
@@ -354,7 +354,7 @@ watch(
           <small>支持自定义代理地址或私有部署地址</small>
         </div>
 
-        <label class="ai-connection-dialog__field">
+        <div class="ai-connection-dialog__field">
           <span>API Key {{ mode === 'create' ? '*' : '' }}</span>
           <el-input
             v-model="form.apiKey"
@@ -379,7 +379,7 @@ watch(
               </button>
             </template>
           </el-input>
-        </label>
+        </div>
 
         <div class="ai-connection-dialog__field">
           <span class="ai-connection-dialog__label-row">

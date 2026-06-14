@@ -83,7 +83,7 @@ watch(
     <div class="case-batch-dialog">
       <div class="case-batch-dialog__summary">已选择 {{ selectedIds.length }} 条用例</div>
 
-      <label class="case-batch-dialog__field">
+      <div class="case-batch-dialog__field">
         <span>优先级</span>
         <el-select v-model="form.priority" clearable placeholder="不修改">
           <el-option
@@ -93,9 +93,9 @@ watch(
             :value="item.value"
           />
         </el-select>
-      </label>
+      </div>
 
-      <label class="case-batch-dialog__field">
+      <div class="case-batch-dialog__field">
         <span>评审状态</span>
         <el-select v-model="form.reviewStatus" clearable placeholder="不修改">
           <el-option
@@ -105,9 +105,9 @@ watch(
             :value="item.value"
           />
         </el-select>
-      </label>
+      </div>
 
-      <label class="case-batch-dialog__field">
+      <div class="case-batch-dialog__field">
         <span>执行状态</span>
         <el-select v-model="form.executionStatus" clearable placeholder="不修改">
           <el-option
@@ -117,7 +117,7 @@ watch(
             :value="item.value"
           />
         </el-select>
-      </label>
+      </div>
 
       <p v-if="formError.message" class="case-batch-dialog__error">{{ formError.message }}</p>
     </div>

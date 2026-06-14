@@ -2,8 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import { defectApi, type DefectClientFilter, type DefectStatistics } from '@/entities/defect'
-import { userApi, type UserItem } from '@/entities/user'
-import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import { workspaceApi, type WorkspaceItem, type WorkspaceMemberItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { DefectFilterPanel } from '@/widgets/defect-filter-panel'
@@ -13,7 +12,7 @@ import { DefectSummaryPanel } from '@/widgets/defect-summary-panel'
 const workspaceCode = ref('ALL')
 const workspaceSelectorCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
-const users = ref<UserItem[]>([])
+const workspaceMembers = ref<WorkspaceMemberItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceReady = ref(false)
 const workspaceErrorMessage = ref('')
@@ -41,9 +40,9 @@ const workspaceOptions = computed(() => {
   return options
 })
 
-const assigneeOptions = computed(() => users.value.map((item) => ({
-  label: item.displayName || item.username,
-  value: String(item.id),
+const assigneeOptions = computed(() => workspaceMembers.value.map((item) => ({
+  label: item.displayName || item.username || `用户 ${item.userId}`,
+  value: String(item.userId),
 })))
 
 const workspaceFilterOptions = computed(() => workspaces.value
@@ -79,14 +78,6 @@ async function loadWorkspaces() {
   }
 }
 
-async function loadUsers() {
-  try {
-    users.value = await userApi.getUsers()
-  } catch {
-    users.value = []
-  }
-}
-
 async function loadStatistics() {
   try {
     statistics.value = await defectApi.getDefectStatistics(workspaceCode.value)
@@ -95,8 +86,30 @@ async function loadStatistics() {
   }
 }
 
+async function loadWorkspaceMembers() {
+  if (!workspaceCode.value || workspaceCode.value === 'ALL') {
+    workspaceMembers.value = []
+    filter.value = {
+      ...filter.value,
+      assigneeId: '',
+    }
+    return
+  }
+
+  try {
+    workspaceMembers.value = await workspaceApi.getWorkspaceMembers(workspaceCode.value)
+  } catch {
+    workspaceMembers.value = []
+  }
+}
+
 function handleWorkspaceChange(value: string) {
   workspaceCode.value = value
+  filter.value = {
+    ...filter.value,
+    assigneeId: '',
+  }
+  void loadWorkspaceMembers()
   void loadStatistics()
 }
 
@@ -124,8 +137,8 @@ function resetFilters() {
 
 onMounted(() => {
   void (async () => {
-    await Promise.all([loadWorkspaces(), loadUsers()])
-    await loadStatistics()
+    await loadWorkspaces()
+    await Promise.all([loadWorkspaceMembers(), loadStatistics()])
   })()
 })
 </script>
@@ -169,7 +182,7 @@ onMounted(() => {
       <section class="defects-page__list-shell">
         <DefectFilterPanel
           v-model="filter"
-          :assignee-options="assigneeOptions"
+          :workspace-code="workspaceCode"
           :workspace-options="workspaceFilterOptions"
           :show-create-button="workspaceReady"
           :show-workspace-filter="showWorkspaceFilter"

@@ -98,7 +98,7 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="workspace-member-dialog">
-      <label class="workspace-member-dialog__field">
+      <div class="workspace-member-dialog__field">
         <span>用户 {{ mode === 'create' ? '*' : '' }}</span>
         <el-select
           v-model="form.userIds"
@@ -116,7 +116,7 @@ watch(
             :value="user.id"
           />
         </el-select>
-      </label>
+      </div>
 
       <div class="workspace-member-dialog__field">
         <span>成员角色</span>

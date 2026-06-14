@@ -10,6 +10,7 @@ export interface DefectForm {
   severity: DefectSeverity
   assigneeId: string
   relatedCaseId: string
+  relatedCaseIds: string[]
   tagsText: string
   tags: string[]
 }
@@ -23,6 +24,7 @@ export function createDefaultDefectForm(workspaceCode = 'ALL'): DefectForm {
     severity: 'MEDIUM',
     assigneeId: '',
     relatedCaseId: '',
+    relatedCaseIds: [],
     tagsText: '',
     tags: [],
   }
@@ -37,6 +39,7 @@ export function createDefectFormFromDetail(item: DefectDetail): DefectForm {
     severity: (item.severity || 'MEDIUM') as DefectSeverity,
     assigneeId: item.assigneeId ? String(item.assigneeId) : '',
     relatedCaseId: item.relatedCaseId ? String(item.relatedCaseId) : '',
+    relatedCaseIds: Array.isArray(item.relatedCases) ? item.relatedCases.map(caseItem => String(caseItem.id)) : item.relatedCaseId ? [String(item.relatedCaseId)] : [],
     tagsText: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     tags: Array.isArray(item.tags) ? [...item.tags] : [],
   }
@@ -51,6 +54,7 @@ export function createDefectFormFromSummary(item: DefectSummaryItem, fallbackWor
     severity: (item.severity || 'MEDIUM') as DefectSeverity,
     assigneeId: '',
     relatedCaseId: item.relatedCaseId ? String(item.relatedCaseId) : '',
+    relatedCaseIds: item.relatedCaseId ? [String(item.relatedCaseId)] : [],
     tagsText: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     tags: Array.isArray(item.tags) ? [...item.tags] : [],
   }
@@ -81,7 +85,7 @@ export function buildSaveDefectPayload(form: DefectForm): SaveDefectPayload {
     priority: form.priority,
     severity: form.severity,
     assigneeId: parseOptionalId(form.assigneeId),
-    relatedCaseId: parseOptionalId(form.relatedCaseId),
+    relatedCaseId: form.relatedCaseIds.length ? parseOptionalId(form.relatedCaseIds[0]) : parseOptionalId(form.relatedCaseId),
     tags: form.tags.length ? form.tags : parseTags(form.tagsText),
   }
 }

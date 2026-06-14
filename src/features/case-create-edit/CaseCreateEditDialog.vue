@@ -125,15 +125,15 @@ watch(
     <div class="case-dialog">
       <div v-if="loadingDetail" class="case-dialog__hint">正在加载用例详情...</div>
 
-      <label class="case-dialog__field">
+      <div class="case-dialog__field">
         <span>工作空间</span>
         <el-input v-model="form.workspaceCode" placeholder="ALL" />
-      </label>
+      </div>
 
-      <label class="case-dialog__field">
+      <div class="case-dialog__field">
         <span>用例名称 *</span>
         <el-input v-model="form.title" placeholder="请输入用例名称" />
-      </label>
+      </div>
 
       <div class="case-dialog__grid">
         <div class="case-dialog__field">
@@ -194,7 +194,7 @@ watch(
       </div>
 
       <div class="case-dialog__grid">
-        <label class="case-dialog__field">
+        <div class="case-dialog__field">
           <span>所属目录</span>
           <el-select
             v-model="form.directoryId"
@@ -210,28 +210,28 @@ watch(
               :value="item.value"
             />
           </el-select>
-        </label>
+        </div>
 
-        <label class="case-dialog__field">
+        <div class="case-dialog__field">
           <span>负责人 ID</span>
           <el-input v-model="form.ownerId" placeholder="可选" />
-        </label>
+        </div>
       </div>
 
-      <label class="case-dialog__field">
+      <div class="case-dialog__field">
         <span>前置条件</span>
         <el-input v-model="form.precondition" type="textarea" :rows="2" placeholder="可选" />
-      </label>
+      </div>
 
-      <label class="case-dialog__field">
+      <div class="case-dialog__field">
         <span>测试步骤</span>
         <el-input v-model="form.steps" type="textarea" :rows="4" placeholder="请输入测试步骤" />
-      </label>
+      </div>
 
-      <label class="case-dialog__field">
+      <div class="case-dialog__field">
         <span>预期结果</span>
         <el-input v-model="form.expectedResult" type="textarea" :rows="3" placeholder="请输入预期结果" />
-      </label>
+      </div>
 
       <p v-if="formError.message" class="case-dialog__error">{{ formError.message }}</p>
     </div>

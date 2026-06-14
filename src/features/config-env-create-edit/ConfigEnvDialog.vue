@@ -86,15 +86,15 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="config-env-dialog">
-      <label class="config-env-dialog__field">
+      <div class="config-env-dialog__field">
         <span>目标空间</span>
         <el-input v-model="form.workspaceCode" placeholder="ALL" />
-      </label>
+      </div>
 
-      <label class="config-env-dialog__field">
+      <div class="config-env-dialog__field">
         <span>环境名称 *</span>
         <el-input v-model="form.envName" placeholder="例如：测试环境" />
-      </label>
+      </div>
 
       <div class="config-env-dialog__field">
         <span>环境类型</span>
@@ -111,12 +111,12 @@ watch(
         </div>
       </div>
 
-      <label class="config-env-dialog__field">
+      <div class="config-env-dialog__field">
         <span>Base URL *</span>
         <el-input v-model="form.baseUrl" placeholder="https://api.example.com" />
-      </label>
+      </div>
 
-      <label class="config-env-dialog__field">
+      <div class="config-env-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.configJson"
@@ -124,7 +124,7 @@ watch(
           :rows="3"
           placeholder="描述该环境的用途或注意事项"
         />
-      </label>
+      </div>
 
       <div class="config-env-dialog__field">
         <span>状态</span>

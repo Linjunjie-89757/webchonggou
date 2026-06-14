@@ -96,15 +96,15 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="config-db-dialog">
-      <label class="config-db-dialog__field">
+      <div class="config-db-dialog__field">
         <span>目标空间</span>
         <el-input v-model="form.workspaceCode" placeholder="ALL" />
-      </label>
+      </div>
 
-      <label class="config-db-dialog__field">
+      <div class="config-db-dialog__field">
         <span>连接名称 *</span>
         <el-input v-model="form.connectionName" placeholder="例如：主数据库（测试）" />
-      </label>
+      </div>
 
       <div class="config-db-dialog__field">
         <span>数据库类型</span>
@@ -122,27 +122,27 @@ watch(
       </div>
 
       <div class="config-db-dialog__grid is-two">
-        <label class="config-db-dialog__field">
+        <div class="config-db-dialog__field">
           <span>主机地址 *</span>
           <el-input v-model="form.host" placeholder="localhost 或 IP" />
-        </label>
-        <label class="config-db-dialog__field">
+        </div>
+        <div class="config-db-dialog__field">
           <span>端口 *</span>
           <el-input v-model="form.port" placeholder="3306" />
-        </label>
+        </div>
       </div>
 
-      <label class="config-db-dialog__field">
+      <div class="config-db-dialog__field">
         <span>数据库名 *</span>
         <el-input v-model="form.database" placeholder="数据库名称" />
-      </label>
+      </div>
 
       <div class="config-db-dialog__grid is-two">
-        <label class="config-db-dialog__field">
+        <div class="config-db-dialog__field">
           <span>用户名</span>
           <el-input v-model="form.username" autocomplete="username" placeholder="用户名" />
-        </label>
-        <label class="config-db-dialog__field">
+        </div>
+        <div class="config-db-dialog__field">
           <span>密码</span>
           <el-input
             v-model="form.password"
@@ -164,21 +164,21 @@ watch(
               </button>
             </template>
           </el-input>
-        </label>
+        </div>
       </div>
 
       <div class="config-db-dialog__grid is-two">
-        <label class="config-db-dialog__field">
+        <div class="config-db-dialog__field">
           <span>连接池大小</span>
           <el-input-number v-model="form.poolMax" :min="1" :max="200" />
-        </label>
-        <label class="config-db-dialog__field">
+        </div>
+        <div class="config-db-dialog__field">
           <span>超时时间（ms）</span>
           <el-input-number v-model="form.timeoutMs" :min="1000" :max="120000" :step="500" />
-        </label>
+        </div>
       </div>
 
-      <label class="config-db-dialog__field">
+      <div class="config-db-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.description"
@@ -186,7 +186,7 @@ watch(
           :rows="3"
           placeholder="描述该连接的用途或注意事项"
         />
-      </label>
+      </div>
 
       <div class="config-db-dialog__field">
         <span>状态</span>

@@ -29,6 +29,20 @@ export interface DefectSummaryItem {
   workspaceName: string
 }
 
+export interface DefectCaseSummary {
+  id: number
+  caseNo: string | null
+  title: string | null
+  workspaceCode: string | null
+  workspaceName: string | null
+  directoryId: number | null
+  directoryName: string | null
+  modulePath: string | null
+  executionStatus: string | null
+  executionComment: string | null
+  executedAt: string | null
+}
+
 export interface DefectDetail extends DefectSummaryItem {
   description: string
   sourceType: string | null
@@ -36,6 +50,7 @@ export interface DefectDetail extends DefectSummaryItem {
   reporterId: number | null
   relatedReportId: number | null
   relatedTaskId: number | null
+  relatedCases: DefectCaseSummary[]
   createdAt: string | null
   attachments?: DefectAttachment[]
   sourceContext?: unknown
@@ -117,6 +132,10 @@ export interface DefectClientFilter {
   severity: string
   assigneeId: string
   workspaceCode: string
+}
+
+export interface ReplaceDefectCasesPayload {
+  caseIds: number[]
 }
 
 export interface DefectListQuery {

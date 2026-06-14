@@ -984,11 +984,11 @@ watch(
 
       <template v-else>
         <section class="team-filter-card">
-          <label class="team-filter-field is-keyword">
+          <div class="team-filter-field is-keyword">
             <span>关键词</span>
             <input v-model="userKeyword" type="search" placeholder="搜索姓名、账号或邮箱" />
-          </label>
-          <label class="team-filter-field">
+          </div>
+          <div class="team-filter-field">
             <span>平台角色</span>
             <select v-model="userRoleFilter">
               <option value="">全部角色</option>
@@ -996,8 +996,8 @@ watch(
                 {{ option.label }}
               </option>
             </select>
-          </label>
-          <label class="team-filter-field">
+          </div>
+          <div class="team-filter-field">
             <span>状态</span>
             <select v-model="userStatusFilter">
               <option value="">全部状态</option>
@@ -1005,8 +1005,8 @@ watch(
                 {{ option.label }}
               </option>
             </select>
-          </label>
-          <label class="team-filter-field">
+          </div>
+          <div class="team-filter-field">
             <span>所属空间</span>
             <select v-model="userWorkspaceFilter">
               <option value="">全部空间</option>
@@ -1015,7 +1015,7 @@ watch(
                 {{ option.label }}
               </option>
             </select>
-          </label>
+          </div>
           <button type="button" class="team-reset-button" @click="resetUserFilters">重置</button>
         </section>
 
@@ -1247,31 +1247,31 @@ watch(
       width="560px"
     >
       <div class="user-edit-dialog">
-        <label class="user-edit-dialog__field is-full">
+        <div class="user-edit-dialog__field is-full">
           <span>账号 <i>*</i></span>
           <el-input
             v-model="userForm.username"
             :disabled="userDialogMode === 'edit'"
             :placeholder="userDialogMode === 'create' ? '请输入账号' : ''"
           />
-        </label>
-        <label class="user-edit-dialog__field">
+        </div>
+        <div class="user-edit-dialog__field">
           <span>邮箱 <i>*</i></span>
           <el-input v-model="userForm.email" placeholder="请输入邮箱" />
-        </label>
-        <label class="user-edit-dialog__field">
+        </div>
+        <div class="user-edit-dialog__field">
           <span>姓名 <i>*</i></span>
           <el-input v-model="userForm.displayName" placeholder="请输入姓名" />
-        </label>
-        <label class="user-edit-dialog__field">
+        </div>
+        <div class="user-edit-dialog__field">
           <span>平台角色 <i>*</i></span>
           <el-radio-group v-model="userForm.roleCode" class="user-edit-dialog__role-group">
             <el-radio v-if="isCurrentSuperAdmin" :value="platformAdminRoleValue">平台管理员</el-radio>
             <el-radio value="MEMBER">成员</el-radio>
           </el-radio-group>
-        </label>
+        </div>
         <template v-if="!isPlatformAdminSelected">
-          <label class="user-edit-dialog__field is-full">
+          <div class="user-edit-dialog__field is-full">
             <span>可访问空间</span>
             <el-select
               v-model="userForm.workspaceCodes"
@@ -1291,7 +1291,7 @@ watch(
                 :value="workspace.workspaceCode"
               />
             </el-select>
-          </label>
+          </div>
         </template>
         <div v-if="isPlatformAdminSelected" class="user-edit-dialog__field is-full">
           <span>可访问空间</span>
@@ -1317,7 +1317,7 @@ watch(
         <div class="batch-user-dialog__note">
           每行一个账号，格式为 <span>账号,姓名,邮箱</span>。也支持从 Excel 复制三列后直接粘贴。批量新增账号默认角色为普通账号。
         </div>
-        <label class="user-edit-dialog__field is-full">
+        <div class="user-edit-dialog__field is-full">
           <span>账号数据 *</span>
           <el-input
             v-model="batchUserForm.rawText"
@@ -1325,8 +1325,8 @@ watch(
             :rows="9"
             placeholder="zhangsan,张三,zhangsan@example.com&#10;lisi,李四,lisi@example.com"
           />
-        </label>
-        <label class="user-edit-dialog__field is-full">
+        </div>
+        <div class="user-edit-dialog__field is-full">
           <span>可访问空间</span>
           <el-select
             v-model="batchUserForm.workspaceCodes"
@@ -1346,7 +1346,7 @@ watch(
               :value="workspace.workspaceCode"
             />
           </el-select>
-        </label>
+        </div>
         <div v-if="batchUserResults.length" class="batch-user-results">
           <div
             v-for="item in batchUserResults"

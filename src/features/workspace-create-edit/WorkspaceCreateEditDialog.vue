@@ -91,12 +91,12 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="workspace-dialog">
-      <label class="workspace-dialog__field">
+      <div class="workspace-dialog__field">
         <span>空间名称 *</span>
         <el-input v-model="form.workspaceName" placeholder="例如：开户工作空间" />
-      </label>
+      </div>
 
-      <label class="workspace-dialog__field">
+      <div class="workspace-dialog__field">
         <span>空间描述</span>
         <el-input
           v-model="form.description"
@@ -104,7 +104,7 @@ watch(
           :rows="3"
           placeholder="描述该工作空间的用途和范围"
         />
-      </label>
+      </div>
 
       <div class="workspace-dialog__field">
         <span>空间类型</span>
@@ -123,7 +123,7 @@ watch(
         </div>
       </div>
 
-      <label class="workspace-dialog__field">
+      <div class="workspace-dialog__field">
         <span>负责人（Owner）</span>
         <select v-model="form.ownerUserId" class="workspace-dialog__select">
           <option :value="null">组织管理员</option>
@@ -132,7 +132,7 @@ watch(
           </option>
         </select>
         <small>负责人拥有空间最高权限，创建后可通过成员管理添加管理员和成员</small>
-      </label>
+      </div>
 
       <div class="workspace-dialog__field">
         <span>状态</span>

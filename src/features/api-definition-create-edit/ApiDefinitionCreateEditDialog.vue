@@ -102,21 +102,21 @@ watch(
       </div>
 
       <div class="api-definition-dialog__grid">
-        <label class="api-definition-dialog__field">
+        <div class="api-definition-dialog__field">
           <span>工作空间</span>
           <el-input v-model="form.workspaceCode" disabled placeholder="ALL" />
-        </label>
+        </div>
 
-        <label class="api-definition-dialog__field">
+        <div class="api-definition-dialog__field">
           <span>模块目录</span>
           <el-input v-model="form.directoryName" :disabled="loadingDetail" placeholder="例如：订单/查询" />
-        </label>
+        </div>
       </div>
 
-      <label class="api-definition-dialog__field">
+      <div class="api-definition-dialog__field">
         <span>接口名称 *</span>
         <el-input v-model="form.name" :disabled="loadingDetail" placeholder="请输入接口名称" />
-      </label>
+      </div>
 
       <div class="api-definition-dialog__grid is-request">
         <div class="api-definition-dialog__field">
@@ -126,25 +126,25 @@ watch(
           </el-select>
         </div>
 
-        <label class="api-definition-dialog__field">
+        <div class="api-definition-dialog__field">
           <span>接口路径 *</span>
           <el-input v-model="form.path" :disabled="loadingDetail" placeholder="/api/example 或完整 URL" />
-        </label>
+        </div>
       </div>
 
       <div class="api-definition-dialog__grid">
-        <label class="api-definition-dialog__field">
+        <div class="api-definition-dialog__field">
           <span>超时时间 ms *</span>
           <el-input v-model="form.timeoutMs" :disabled="loadingDetail" placeholder="10000" />
-        </label>
+        </div>
 
-        <label class="api-definition-dialog__field">
+        <div class="api-definition-dialog__field">
           <span>标签</span>
           <el-input v-model="form.tagsText" :disabled="loadingDetail" placeholder="多个标签用逗号或换行分隔" />
-        </label>
+        </div>
       </div>
 
-      <label class="api-definition-dialog__field">
+      <div class="api-definition-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.description"
@@ -153,7 +153,7 @@ watch(
           :disabled="loadingDetail"
           placeholder="补充接口用途、调用场景或注意事项"
         />
-      </label>
+      </div>
 
       <p v-if="formError.message" class="api-definition-dialog__error">{{ formError.message }}</p>
     </div>

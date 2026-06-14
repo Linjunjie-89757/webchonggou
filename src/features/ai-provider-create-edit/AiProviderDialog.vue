@@ -93,15 +93,15 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="ai-provider-dialog">
-      <label class="ai-provider-dialog__field">
+      <div class="ai-provider-dialog__field">
         <span>目标空间</span>
         <el-input v-model="form.workspaceCode" placeholder="ALL" />
-      </label>
+      </div>
 
-      <label class="ai-provider-dialog__field">
+      <div class="ai-provider-dialog__field">
         <span>连接名称 *</span>
         <el-input v-model="form.connectionName" placeholder="例如：OpenAI 主连接" />
-      </label>
+      </div>
 
       <div class="ai-provider-dialog__field">
         <span>协议类型</span>
@@ -118,17 +118,17 @@ watch(
         </div>
       </div>
 
-      <label class="ai-provider-dialog__field">
+      <div class="ai-provider-dialog__field">
         <span>Base URL *</span>
         <el-input v-model="form.baseUrl" placeholder="https://api.example.com/v1" />
-      </label>
+      </div>
 
-      <label class="ai-provider-dialog__field">
+      <div class="ai-provider-dialog__field">
         <span>模型名称 *</span>
         <el-input v-model="form.modelName" placeholder="例如：gpt-4.1" />
-      </label>
+      </div>
 
-      <label class="ai-provider-dialog__field">
+      <div class="ai-provider-dialog__field">
         <span>API Key {{ mode === 'create' ? '*' : '' }}</span>
         <el-input
           v-model="form.apiKey"
@@ -150,13 +150,13 @@ watch(
             </button>
           </template>
         </el-input>
-      </label>
+      </div>
 
       <div class="ai-provider-dialog__grid is-two">
-        <label class="ai-provider-dialog__field">
+        <div class="ai-provider-dialog__field">
           <span>请求超时（秒）</span>
           <el-input-number v-model="form.requestTimeoutSeconds" :min="1" :max="600" />
-        </label>
+        </div>
 
         <div class="ai-provider-dialog__field">
           <span>状态</span>

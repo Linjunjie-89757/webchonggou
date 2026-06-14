@@ -12,15 +12,17 @@ import {
   defectPriorityOptions,
   defectSeverityOptions,
   type DefectAttachment,
+  type DefectCaseSummary,
   type DefectDetail,
 } from '@/entities/defect'
-import { userApi, type UserItem } from '@/entities/user'
 import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import DefectCaseAssociateDialog from '@/features/defect-case-associate/DefectCaseAssociateDialog.vue'
 import DefectRichTextEditor from '@/features/defect-create-edit/DefectRichTextEditor.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import AppTagInput from '@/shared/ui/app-tag-input/AppTagInput.vue'
+import AppUserSelect from '@/shared/ui/app-user-select/AppUserSelect.vue'
 import {
   buildSaveDefectPayload,
   createDefaultDefectForm,
@@ -40,13 +42,14 @@ const router = useRouter()
 
 const form = reactive<DefectForm>(createDefaultDefectForm())
 const detail = ref<DefectDetail | null>(null)
-const users = ref<UserItem[]>([])
 const workspaces = ref<WorkspaceItem[]>([])
 const caseOptions = ref<CaseSummaryItem[]>([])
+const selectedCases = ref<Array<CaseSummaryItem | DefectCaseSummary>>([])
 const loading = ref(false)
 const saving = ref(false)
 const optionsLoading = ref(false)
 const caseOptionsLoading = ref(false)
+const caseAssociateVisible = ref(false)
 const errorMessage = ref('')
 const formError = ref('')
 const optionErrorMessage = ref('')
@@ -104,14 +107,13 @@ const attachmentPanelItems = computed<DefectAttachmentPanelItem[]>(() => [
 ])
 const isDirty = computed(() => buildDirtySnapshot() !== initialSnapshot.value)
 
-function getUserLabel(user: UserItem) {
-  return user.displayName || user.username || `鐢ㄦ埛 ${user.id}`
-}
+const selectedCaseLabel = computed(() => {
+  if (!selectedCases.value.length) {
+    return '未关联用例'
+  }
 
-function getCaseLabel(item: CaseSummaryItem) {
-  const caseNo = item.caseNo || `#${item.id}`
-  return item.title ? `${caseNo} / ${item.title}` : caseNo
-}
+  return `已关联 ${selectedCases.value.length} 条用例`
+})
 
 function getConcreteWorkspaces() {
   return workspaces.value.filter(item => item.workspaceCode && item.workspaceCode !== 'ALL' && !item.allScope)
@@ -162,6 +164,7 @@ function buildDirtySnapshot() {
     severity: form.severity,
     assigneeId: form.assigneeId,
     relatedCaseId: form.relatedCaseId,
+    relatedCaseIds: [...form.relatedCaseIds],
     tags: [...form.tags],
     pendingFiles: pendingFiles.value.map(item => item.file.name),
     inlineImages: inlineImages.value.map(item => item.src),
@@ -394,11 +397,7 @@ async function loadOptions() {
   optionsLoading.value = true
   optionErrorMessage.value = ''
   try {
-    const [userList, workspaceList] = await Promise.all([
-      userApi.getUsers(),
-      workspaceApi.getSwitchableWorkspaces(),
-    ])
-    users.value = userList
+    const workspaceList = await workspaceApi.getSwitchableWorkspaces()
     workspaces.value = workspaceList
     if (isCreateMode.value && (!form.workspaceCode || form.workspaceCode === 'ALL')) {
       form.workspaceCode = resolveInitialWorkspaceCode(workspaceList)
@@ -414,6 +413,7 @@ async function loadOptions() {
 async function loadCaseOptions(workspaceCode: string) {
   if (!workspaceCode || workspaceCode === 'ALL') {
     caseOptions.value = []
+    selectedCases.value = []
     return
   }
 
@@ -424,11 +424,39 @@ async function loadCaseOptions(workspaceCode: string) {
       pageSize: 50,
     })
     caseOptions.value = Array.isArray(page.items) ? page.items : []
+    if (!selectedCases.value.length && form.relatedCaseIds.length) {
+      selectedCases.value = caseOptions.value.filter(item => form.relatedCaseIds.includes(String(item.id)))
+    }
   } catch {
     caseOptions.value = []
   } finally {
     caseOptionsLoading.value = false
   }
+}
+
+function openCaseAssociateDialog() {
+  if (!form.workspaceCode || form.workspaceCode === 'ALL') {
+    ElMessage.warning('请先选择具体工作空间')
+    return
+  }
+
+  caseAssociateVisible.value = true
+}
+
+function handleCaseAssociated(caseIds: number[]) {
+  form.relatedCaseIds = caseIds.map(String)
+  form.relatedCaseId = form.relatedCaseIds[0] ?? ''
+  selectedCases.value = [
+    ...selectedCases.value.filter(item => caseIds.includes(item.id)),
+    ...caseOptions.value.filter(item => caseIds.includes(item.id) && !selectedCases.value.some(selected => selected.id === item.id)),
+  ]
+  caseAssociateVisible.value = false
+}
+
+function clearAssociatedCase() {
+  form.relatedCaseId = ''
+  form.relatedCaseIds = []
+  selectedCases.value = []
 }
 
 async function loadDefectDetail() {
@@ -452,6 +480,9 @@ async function loadDefectDetail() {
     await loadAttachmentImageUrls(nextDetail)
     Object.assign(form, createDefectFormFromDetail(nextDetail))
     await loadCaseOptions(nextDetail.workspaceCode)
+    selectedCases.value = nextDetail.relatedCases?.length
+      ? nextDetail.relatedCases
+      : caseOptions.value.filter(item => form.relatedCaseIds.includes(String(item.id)))
     markClean()
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
@@ -517,6 +548,11 @@ async function submit(keepCreating = false) {
           description,
         })
       }
+      if (form.relatedCaseIds.length !== (payload.relatedCaseId ? 1 : 0)) {
+        await defectApi.replaceDefectCases(workspaceCode, created.id, {
+          caseIds: form.relatedCaseIds.map(Number).filter(Number.isFinite),
+        })
+      }
       await uploadPendingAttachments(created.id, workspaceCode)
       ElMessage.success('缺陷创建成功')
       if (keepCreating) {
@@ -530,6 +566,11 @@ async function submit(keepCreating = false) {
         description,
       })
       const uploaded = await uploadPendingAttachments(defectId.value, workspaceCode)
+      if (form.relatedCaseIds.length !== (payload.relatedCaseId ? 1 : 0)) {
+        await defectApi.replaceDefectCases(workspaceCode, defectId.value, {
+          caseIds: form.relatedCaseIds.map(Number).filter(Number.isFinite),
+        })
+      }
       existingAttachments.value = [...(updated.attachments ?? existingAttachments.value), ...uploaded]
       await loadAttachmentImageUrls({
         ...updated,
@@ -576,6 +617,7 @@ watch(
       return
     }
     form.relatedCaseId = ''
+    form.assigneeId = ''
     void loadCaseOptions(workspaceCode)
   },
 )
@@ -606,7 +648,7 @@ watch(
 
         <div v-else class="defect-edit-page__form-surface">
           <section class="defect-edit-page__main">
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span class="is-required">缺陷标题</span>
               <el-input
                 v-model="form.title"
@@ -615,16 +657,16 @@ watch(
                 placeholder="请输入缺陷标题"
                 :disabled="saving"
               />
-            </label>
+            </div>
 
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span class="is-required">缺陷描述</span>
               <DefectRichTextEditor
                 v-model="form.description"
                 :disabled="saving"
                 @add-inline-image="addInlineImage"
               />
-            </label>
+            </div>
 
             <section
               class="defect-edit-page__evidence"
@@ -658,7 +700,7 @@ watch(
           </section>
 
           <aside class="defect-edit-page__side">
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span class="is-required">工作空间</span>
               <el-select
                 v-model="form.workspaceCode"
@@ -674,30 +716,18 @@ watch(
                   :value="workspace.workspaceCode"
                 />
               </el-select>
-            </label>
+            </div>
 
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span class="is-required">处理人</span>
-              <el-select
+              <AppUserSelect
                 v-model="form.assigneeId"
-                class="defect-edit-page__select"
-                :loading="optionsLoading"
-                filterable
+                :workspace-code="form.workspaceCode"
+                :disabled="saving"
+                :fallback-label="detail?.assigneeName"
                 placeholder="请选择处理人"
-              >
-                <el-option
-                  v-for="user in users"
-                  :key="user.id"
-                  :label="getUserLabel(user)"
-                  :value="String(user.id)"
-                >
-                  <div class="defect-edit-page__option">
-                    <span>{{ getUserLabel(user) }}</span>
-                    <small>{{ user.username }}</small>
-                  </div>
-                </el-option>
-              </el-select>
-            </label>
+              />
+            </div>
 
             <div class="defect-edit-page__field">
               <span class="is-required">优先级</span>
@@ -714,7 +744,7 @@ watch(
               </div>
             </div>
 
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span class="is-required">严重级别</span>
               <el-select v-model="form.severity" class="defect-edit-page__select">
                 <el-option
@@ -724,39 +754,32 @@ watch(
                   :value="item.value"
                 />
               </el-select>
-            </label>
+            </div>
 
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span>关联用例</span>
-              <el-select
-                v-model="form.relatedCaseId"
-                class="defect-edit-page__select"
-                :loading="caseOptionsLoading"
-                clearable
-                filterable
-                placeholder="可选"
-              >
-                <el-option
-                  v-for="item in caseOptions"
-                  :key="item.id"
-                  :label="getCaseLabel(item)"
-                  :value="String(item.id)"
-                >
-                  <div class="defect-edit-page__option">
-                    <span>{{ item.title || '-' }}</span>
-                    <small>{{ item.caseNo || `#${item.id}` }}</small>
-                  </div>
-                </el-option>
-              </el-select>
-            </label>
+              <div class="defect-edit-page__case-picker" :class="{ 'is-empty': !form.relatedCaseIds.length }">
+                <div class="defect-edit-page__case-picker-main">
+                  <strong>{{ selectedCaseLabel }}</strong>
+                </div>
+                <div class="defect-edit-page__case-picker-actions">
+                  <AppButton size="small" :disabled="saving || caseOptionsLoading" @click="openCaseAssociateDialog">
+                    选择
+                  </AppButton>
+                  <AppButton v-if="form.relatedCaseIds.length" size="small" :disabled="saving" @click="clearAssociatedCase">
+                    清除
+                  </AppButton>
+                </div>
+              </div>
+            </div>
 
-            <label class="defect-edit-page__field">
+            <div class="defect-edit-page__field">
               <span>标签</span>
               <AppTagInput
                 v-model="form.tags"
                 placeholder="输入内容后回车可直接添加标签"
               />
-            </label>
+            </div>
 
             <p v-if="optionErrorMessage" class="defect-edit-page__inline-error">{{ optionErrorMessage }}</p>
           </aside>
@@ -777,6 +800,14 @@ watch(
     </div>
 
   </section>
+
+  <DefectCaseAssociateDialog
+    v-model="caseAssociateVisible"
+    :workspace-code="form.workspaceCode"
+    :current-case-id="form.relatedCaseId ? Number(form.relatedCaseId) : null"
+    :current-case-ids="form.relatedCaseIds.map(Number).filter(Number.isFinite)"
+    @associate="handleCaseAssociated"
+  />
 </template>
 
 <style scoped>
@@ -939,6 +970,58 @@ watch(
   width: 100%;
 }
 
+.defect-edit-page__case-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--app-space-3);
+  min-height: 66px;
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.defect-edit-page__case-picker.is-empty {
+  border-style: dashed;
+  background: var(--app-bg-subtle);
+}
+
+.defect-edit-page__case-picker-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.defect-edit-page__case-picker-main strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+  line-height: var(--app-line-height-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defect-edit-page__case-picker.is-empty .defect-edit-page__case-picker-main strong {
+  color: var(--app-text-muted);
+}
+
+.defect-edit-page__case-picker-main span {
+  overflow: hidden;
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.defect-edit-page__case-picker-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
 .defect-edit-page__evidence {
   display: flex;
   min-width: 0;
@@ -1007,33 +1090,6 @@ watch(
   border-color: var(--app-primary);
   background: var(--app-primary-soft);
   color: var(--app-primary);
-}
-
-.defect-edit-page__option {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 0;
-}
-
-.defect-edit-page__option span {
-  overflow: hidden;
-  color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
-  font-weight: 500;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.defect-edit-page__option small {
-  overflow: hidden;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .defect-edit-page__error,

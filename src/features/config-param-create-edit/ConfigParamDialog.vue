@@ -86,24 +86,24 @@ watch(
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="config-param-dialog">
-      <label class="config-param-dialog__field">
+      <div class="config-param-dialog__field">
         <span>目标空间</span>
         <el-input v-model="form.workspaceCode" placeholder="ALL" />
-      </label>
+      </div>
 
-      <label class="config-param-dialog__field">
+      <div class="config-param-dialog__field">
         <span>参数名 *</span>
         <el-input v-model="form.paramName" placeholder="例如：REQUEST_TIMEOUT" />
-      </label>
+      </div>
 
-      <label class="config-param-dialog__field">
+      <div class="config-param-dialog__field">
         <span>参数值 *</span>
         <el-input
           v-model="form.value"
           :type="form.sensitive ? 'password' : 'text'"
           placeholder="请输入参数值"
         />
-      </label>
+      </div>
 
       <div class="config-param-dialog__field">
         <span>参数类型</span>
@@ -120,7 +120,7 @@ watch(
         </div>
       </div>
 
-      <label class="config-param-dialog__field">
+      <div class="config-param-dialog__field">
         <span>说明</span>
         <el-input
           v-model="form.description"
@@ -128,7 +128,7 @@ watch(
           :rows="3"
           placeholder="描述该参数的用途或取值规则"
         />
-      </label>
+      </div>
 
       <label class="config-param-dialog__checkbox">
         <input v-model="form.sensitive" type="checkbox">

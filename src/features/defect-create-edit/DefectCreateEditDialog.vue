@@ -8,11 +8,11 @@ import {
   type DefectDetail,
   type DefectSummaryItem,
 } from '@/entities/defect'
-import { userApi, type UserItem } from '@/entities/user'
 import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
+import AppUserSelect from '@/shared/ui/app-user-select/AppUserSelect.vue'
 
 import {
   buildSaveDefectPayload,
@@ -53,16 +53,12 @@ const form = reactive<DefectForm>(createDefaultDefectForm(props.defaultWorkspace
 const formError = reactive({
   message: '',
 })
-const users = ref<UserItem[]>([])
-const userOptionsLoading = ref(false)
-const userOptionsError = ref('')
 const workspaceOptions = ref<WorkspaceItem[]>([])
 const workspaceOptionsLoading = ref(false)
 const workspaceOptionsError = ref('')
 const caseOptions = ref<CaseSummaryItem[]>([])
 const caseOptionsLoading = ref(false)
 const caseOptionsError = ref('')
-let userOptionsLoaded = false
 let workspaceOptionsLoaded = false
 let caseOptionsRequestSeq = 0
 let loadedCaseOptionsWorkspaceCode = ''
@@ -72,9 +68,6 @@ const activeWorkspaceCode = computed(() => form.workspaceCode || props.defaultWo
 const dialogTitle = computed(() => (props.mode === 'create' ? '新增缺陷' : '编辑缺陷'))
 const introTitle = computed(() => (props.mode === 'create' ? '填写缺陷基础信息' : '调整缺陷基础信息'))
 
-function getUserLabel(user: UserItem) {
-  return user.displayName || user.username || `用户 ${user.id}`
-}
 
 function getCaseLabel(item: CaseSummaryItem) {
   const caseNo = item.caseNo || `#${item.id}`
@@ -108,23 +101,6 @@ function ensureConcreteWorkspace() {
     concreteWorkspaces.find((item) => item.current || item.default || item.isCurrent || item.isDefault) ||
     concreteWorkspaces[0]
   form.workspaceCode = preferredWorkspace.workspaceCode
-}
-
-async function loadUserOptions() {
-  if (userOptionsLoaded || userOptionsLoading.value) {
-    return
-  }
-
-  userOptionsLoading.value = true
-  userOptionsError.value = ''
-  try {
-    users.value = await userApi.getUsers()
-    userOptionsLoaded = true
-  } catch (error) {
-    userOptionsError.value = getRequestErrorMessage(error)
-  } finally {
-    userOptionsLoading.value = false
-  }
 }
 
 async function loadWorkspaceOptions() {
@@ -214,7 +190,6 @@ watch(
   (visible) => {
     if (visible) {
       resetForm()
-      void loadUserOptions()
       void loadWorkspaceOptions()
       if (activeWorkspaceCode.value !== 'ALL') {
         void loadCaseOptions(activeWorkspaceCode.value)
@@ -277,12 +252,12 @@ watch(
               <span>填写缺陷标题和现象描述</span>
             </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span class="is-required">缺陷标题</span>
               <el-input v-model="form.title" :disabled="loadingDetail" placeholder="请输入缺陷标题" />
-            </label>
+            </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span class="is-required">缺陷描述</span>
               <el-input
                 v-model="form.description"
@@ -292,7 +267,7 @@ watch(
                 :disabled="loadingDetail"
                 placeholder="请输入复现现象、影响范围或必要上下文"
               />
-            </label>
+            </div>
           </section>
 
           <aside class="defect-dialog__side">
@@ -301,7 +276,7 @@ watch(
               <span>保持当前后端契约，只调整视觉和信息层次</span>
             </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span class="is-required">工作空间</span>
               <el-select
                 v-model="form.workspaceCode"
@@ -324,32 +299,17 @@ watch(
                 </el-option>
               </el-select>
               <small v-if="workspaceOptionsError" class="defect-dialog__field-error">{{ workspaceOptionsError }}</small>
-            </label>
+            </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span class="is-required">处理人</span>
-              <el-select
+              <AppUserSelect
                 v-model="form.assigneeId"
-                class="defect-dialog__select"
-                :disabled="loadingDetail || userOptionsLoading"
-                :loading="userOptionsLoading"
-                filterable
-                placeholder="请选择处理人"
-              >
-                <el-option
-                  v-for="user in users"
-                  :key="user.id"
-                  :label="getUserLabel(user)"
-                  :value="String(user.id)"
-                >
-                  <div class="defect-dialog__option">
-                    <span>{{ getUserLabel(user) }}</span>
-                    <small>{{ user.username }}</small>
-                  </div>
-                </el-option>
-              </el-select>
-              <small v-if="userOptionsError" class="defect-dialog__field-error">{{ userOptionsError }}</small>
-            </label>
+                :workspace-code="activeWorkspaceCode"
+                :disabled="loadingDetail"
+                placeholder="&#35831;&#36873;&#25321;&#22788;&#29702;&#20154;"
+              />
+            </div>
 
             <div class="defect-dialog__field">
               <span class="is-required">优先级</span>
@@ -367,7 +327,7 @@ watch(
               </div>
             </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span class="is-required">严重级别</span>
               <el-select
                 v-model="form.severity"
@@ -381,9 +341,9 @@ watch(
                   :value="item.value"
                 />
               </el-select>
-            </label>
+            </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span>关联用例</span>
               <el-select
                 v-model="form.relatedCaseId"
@@ -407,16 +367,16 @@ watch(
                 </el-option>
               </el-select>
               <small v-if="caseOptionsError" class="defect-dialog__field-error">{{ caseOptionsError }}</small>
-            </label>
+            </div>
 
-            <label class="defect-dialog__field">
+            <div class="defect-dialog__field">
               <span>标签</span>
               <el-input
                 v-model="form.tagsText"
                 :disabled="loadingDetail"
                 placeholder="多个标签用逗号或换行分隔"
               />
-            </label>
+            </div>
           </aside>
         </div>
       </div>

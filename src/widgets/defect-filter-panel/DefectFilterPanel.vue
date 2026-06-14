@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { nextTick, reactive, watch } from 'vue'
 import { Plus, RefreshRight, Search } from '@element-plus/icons-vue'
 
@@ -9,12 +9,13 @@ import {
   type DefectClientFilter,
 } from '@/entities/defect'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import AppUserSelect from '@/shared/ui/app-user-select/AppUserSelect.vue'
 
 const props = defineProps<{
   modelValue: DefectClientFilter
   showCreateButton?: boolean
   embedded?: boolean
-  assigneeOptions?: Array<{ label: string; value: string }>
+  workspaceCode?: string
   workspaceOptions?: Array<{ label: string; value: string }>
   showWorkspaceFilter?: boolean
 }>()
@@ -92,32 +93,31 @@ function resetFilters() {
         v-model="form.keyword"
         class="defect-filter-panel__search"
         clearable
-        placeholder="搜索缺陷编号 / 标题 / 描述"
+        placeholder="&#25628;&#32034;&#32570;&#38519;&#32534;&#21495; / &#26631;&#39064; / &#25551;&#36848;"
         :prefix-icon="Search"
       />
-      <el-select v-model="form.status" class="defect-filter-panel__control" clearable placeholder="状态">
+      <el-select v-model="form.status" class="defect-filter-panel__control" clearable placeholder="&#29366;&#24577;">
         <el-option v-for="item in defectStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
-      <el-select v-model="form.priority" class="defect-filter-panel__control" clearable placeholder="优先级">
+      <el-select v-model="form.priority" class="defect-filter-panel__control" clearable placeholder="&#20248;&#20808;&#32423;">
         <el-option v-for="item in defectPriorityOptions" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
-      <el-select v-model="form.severity" class="defect-filter-panel__control" clearable placeholder="严重级别">
+      <el-select v-model="form.severity" class="defect-filter-panel__control" clearable placeholder="&#20005;&#37325;&#32423;&#21035;">
         <el-option v-for="item in defectSeverityOptions" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
-      <el-select v-model="form.assigneeId" class="defect-filter-panel__control" clearable placeholder="处理人">
-        <el-option
-          v-for="item in assigneeOptions ?? []"
-          :key="item.value"
-          :label="item.label"
-          :value="item.value"
-        />
-      </el-select>
+      <AppUserSelect
+        v-model="form.assigneeId"
+        class="defect-filter-panel__control"
+        :workspace-code="workspaceCode"
+        clearable
+        placeholder="&#22788;&#29702;&#20154;"
+      />
       <el-select
         v-if="showWorkspaceFilter"
         v-model="form.workspaceCode"
         class="defect-filter-panel__control"
         clearable
-        placeholder="所属空间"
+        placeholder="&#25152;&#23646;&#31354;&#38388;"
       >
         <el-option
           v-for="item in workspaceOptions ?? []"
@@ -126,11 +126,11 @@ function resetFilters() {
           :value="item.value"
         />
       </el-select>
-      <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
+      <AppButton :icon="RefreshRight" @click="resetFilters">&#37325;&#32622;</AppButton>
     </div>
 
     <div class="defect-filter-panel__right">
-      <AppButton v-if="showCreateButton" type="primary" :icon="Plus" @click="$emit('create')">新增缺陷</AppButton>
+      <AppButton v-if="showCreateButton" type="primary" :icon="Plus" @click="$emit('create')">&#26032;&#22686;&#32570;&#38519;</AppButton>
     </div>
   </section>
 </template>

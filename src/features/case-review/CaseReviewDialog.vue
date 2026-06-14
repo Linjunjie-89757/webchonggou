@@ -101,7 +101,7 @@ watch(
         </div>
       </div>
 
-      <label class="case-review-dialog__field">
+      <div class="case-review-dialog__field">
         <span>评审意见</span>
         <el-input
           v-model="form.reviewComment"
@@ -111,7 +111,7 @@ watch(
           show-word-limit
           placeholder="可选"
         />
-      </label>
+      </div>
 
       <p v-if="formError.message" class="case-review-dialog__error">{{ formError.message }}</p>
     </div>

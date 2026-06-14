@@ -16,6 +16,7 @@ import {
   type DefectComment,
   type DefectDetail,
 } from '@/entities/defect'
+import DefectCaseAssociateDialog from '@/features/defect-case-associate/DefectCaseAssociateDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDrawer from '@/shared/ui/app-drawer/AppDrawer.vue'
@@ -23,14 +24,13 @@ import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 type DefectActivityRecord = Record<string, unknown>
 type DetailTab = 'basic' | 'detail' | 'case' | 'comment' | 'history'
-type DefectCaseSummary = {
-  id?: number | null
+type DefectCaseRow = {
+  id: number
   caseNo?: string | null
   title?: string | null
   workspaceName?: string | null
   caseType?: string | null
 }
-
 const props = withDefaults(
   defineProps<{
     modelValue: boolean
@@ -75,6 +75,9 @@ const attachmentInputRef = ref<HTMLInputElement | null>(null)
 const attachmentImageUrls = ref<Record<number, string>>({})
 const activeTab = ref<DetailTab>('detail')
 const caseKeyword = ref('')
+const caseAssociateVisible = ref(false)
+const caseAssociating = ref(false)
+const caseErrorMessage = ref('')
 let detailRequestSeq = 0
 let commentsRequestSeq = 0
 let attachmentImageRequestSeq = 0
@@ -149,11 +152,11 @@ function emitIfDetail(event: 'edit' | 'transition' | 'delete') {
   emit('delete')
 }
 
-function getCaseRowKey(caseItem: DefectCaseSummary, index: number) {
+function getCaseRowKey(caseItem: DefectCaseRow, index: number) {
   return String(caseItem.id ?? caseItem.caseNo ?? `case-${index}`)
 }
 
-function openCase(caseItem: DefectCaseSummary) {
+function openCase(caseItem: DefectCaseRow) {
   if (!caseItem.id) {
     ElMessage.info('当前关联用例缺少详情 ID，暂不能打开。')
     return
@@ -162,8 +165,63 @@ function openCase(caseItem: DefectCaseSummary) {
   ElMessage.info('用例详情页尚未接入，后续会按用例中心路由统一处理。')
 }
 
-function explainCaseAssociationGap() {
-  ElMessage.info('当前缺陷仅支持展示已关联用例，关联/取消关联需要后端提供多用例契约后再接入。')
+function openCaseAssociateDialog() {
+  if (!detail.value?.workspaceCode || detail.value.workspaceCode === 'ALL') {
+    ElMessage.warning('当前缺陷缺少具体工作空间，暂不能关联用例。')
+    return
+  }
+
+  caseAssociateVisible.value = true
+}
+
+async function associateCase(caseIds: number[]) {
+  if (!detail.value) {
+    return
+  }
+
+  caseAssociating.value = true
+  caseErrorMessage.value = ''
+  try {
+    detail.value = await defectApi.replaceDefectCases(detail.value.workspaceCode, detail.value.id, {
+      caseIds,
+    })
+    caseAssociateVisible.value = false
+    ElMessage.success('关联用例已更新')
+    void loadDetail()
+  } catch (error) {
+    caseErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    caseAssociating.value = false
+  }
+}
+
+async function unlinkCase(caseItem: DefectCaseRow) {
+  if (!detail.value) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm('确认取消关联当前用例吗？', '取消关联用例', {
+      type: 'warning',
+      confirmButtonText: '取消关联',
+      cancelButtonText: '保留',
+      confirmButtonClass: 'el-button--danger',
+    })
+  } catch {
+    return
+  }
+
+  caseAssociating.value = true
+  caseErrorMessage.value = ''
+  try {
+    detail.value = await defectApi.deleteDefectCase(detail.value.workspaceCode, detail.value.id, caseItem.id)
+    ElMessage.success('已取消关联用例')
+    void loadDetail()
+  } catch (error) {
+    caseErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    caseAssociating.value = false
+  }
 }
 
 function navigatePrev() {
@@ -249,16 +307,30 @@ function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
-function getCaseRows(value: DefectDetail | null): DefectCaseSummary[] {
+function getCaseRows(value: DefectDetail | null): DefectCaseRow[] {
   if (!value) {
     return []
+  }
+
+  if (Array.isArray(value.relatedCases) && value.relatedCases.length) {
+    return value.relatedCases.map(item => ({
+      id: item.id,
+      caseNo: item.caseNo,
+      title: item.title,
+      workspaceName: item.workspaceName,
+      caseType: '功能用例',
+    }))
   }
 
   const context = readRecord(value.sourceContext)
   const caseSummary = readRecord(context?.caseSummary)
   if (caseSummary) {
+    const caseId = typeof caseSummary.id === 'number' ? caseSummary.id : value.relatedCaseId
+    if (!caseId) {
+      return []
+    }
     return [{
-      id: typeof caseSummary.id === 'number' ? caseSummary.id : value.relatedCaseId,
+      id: caseId,
       caseNo: typeof caseSummary.caseNo === 'string' ? caseSummary.caseNo : null,
       title: typeof caseSummary.title === 'string' ? caseSummary.title : null,
       workspaceName: typeof caseSummary.workspaceName === 'string' ? caseSummary.workspaceName : value.workspaceName,
@@ -706,7 +778,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="defect-detail-drawer__meta-row">
                   <dt>关联用例</dt>
-                  <dd>{{ displayText(detail.relatedCaseId || detail.relatedCaseCount) }}</dd>
+                  <dd>{{ detail.relatedCaseCount ? `${detail.relatedCaseCount} 条` : '-' }}</dd>
                 </div>
                 <div class="defect-detail-drawer__meta-row">
                   <dt>创建时间</dt>
@@ -797,7 +869,7 @@ onBeforeUnmount(() => {
           <section v-show="activeTab === 'case'" class="defect-detail-drawer__pane">
             <div class="defect-detail-drawer__section">
               <div class="defect-detail-drawer__case-toolbar">
-                <AppButton size="small" type="primary" plain @click="explainCaseAssociationGap">
+                <AppButton size="small" type="primary" plain :loading="caseAssociating" @click="openCaseAssociateDialog">
                   关联用例
                 </AppButton>
                 <el-input
@@ -811,7 +883,7 @@ onBeforeUnmount(() => {
               <el-table
                 v-if="caseRows.length"
                 :data="caseRows"
-                :row-key="(row: DefectCaseSummary, index: number) => getCaseRowKey(row, index)"
+                :row-key="(row: DefectCaseRow, index: number) => getCaseRowKey(row, index)"
                 class="defect-detail-drawer__case-table"
               >
                 <el-table-column prop="caseNo" label="用例编号" min-width="150">
@@ -837,8 +909,8 @@ onBeforeUnmount(() => {
                   </template>
                 </el-table-column>
                 <el-table-column label="操作" width="120" fixed="right">
-                  <template #default>
-                    <el-button text type="danger" class="defect-detail-drawer__case-action" @click="explainCaseAssociationGap">
+                  <template #default="{ row }">
+                    <el-button text type="danger" class="defect-detail-drawer__case-action" :loading="caseAssociating" @click="unlinkCase(row)">
                       取消关联
                     </el-button>
                   </template>
@@ -846,6 +918,9 @@ onBeforeUnmount(() => {
               </el-table>
 
               <el-empty v-else description="暂无关联用例" :image-size="72" />
+              <p v-if="caseErrorMessage" class="defect-detail-drawer__form-error">
+                {{ caseErrorMessage }}
+              </p>
             </div>
           </section>
 
@@ -948,6 +1023,14 @@ onBeforeUnmount(() => {
         </template>
       </div>
     </div>
+    <DefectCaseAssociateDialog
+      v-model="caseAssociateVisible"
+      :workspace-code="detail?.workspaceCode || props.workspaceCode"
+      :current-case-id="detail?.relatedCaseId ?? null"
+      :current-case-ids="getCaseRows(detail).map(item => item.id).filter((id): id is number => typeof id === 'number')"
+      :associating="caseAssociating"
+      @associate="associateCase"
+    />
   </AppDrawer>
 </template>
 

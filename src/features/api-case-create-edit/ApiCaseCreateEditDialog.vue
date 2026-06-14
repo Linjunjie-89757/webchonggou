@@ -108,21 +108,21 @@ watch(
       </div>
 
       <div class="api-case-dialog__grid">
-        <label class="api-case-dialog__field">
+        <div class="api-case-dialog__field">
           <span>所属接口定义</span>
           <el-input :model-value="form.definitionName || '-'" disabled />
-        </label>
+        </div>
 
-        <label class="api-case-dialog__field">
+        <div class="api-case-dialog__field">
           <span>工作空间</span>
           <el-input v-model="form.workspaceCode" disabled placeholder="ALL" />
-        </label>
+        </div>
       </div>
 
-      <label class="api-case-dialog__field">
+      <div class="api-case-dialog__field">
         <span>用例名称 *</span>
         <el-input v-model="form.name" :disabled="loadingDetail" placeholder="请输入用例名称" />
-      </label>
+      </div>
 
       <div class="api-case-dialog__grid is-request">
         <div class="api-case-dialog__field">
@@ -132,25 +132,25 @@ watch(
           </el-select>
         </div>
 
-        <label class="api-case-dialog__field">
+        <div class="api-case-dialog__field">
           <span>请求路径 *</span>
           <el-input v-model="form.path" :disabled="loadingDetail" placeholder="/api/example 或完整 URL" />
-        </label>
+        </div>
       </div>
 
       <div class="api-case-dialog__grid">
-        <label class="api-case-dialog__field">
+        <div class="api-case-dialog__field">
           <span>超时时间 ms *</span>
           <el-input v-model="form.timeoutMs" :disabled="loadingDetail" placeholder="10000" />
-        </label>
+        </div>
 
-        <label class="api-case-dialog__field">
+        <div class="api-case-dialog__field">
           <span>标签</span>
           <el-input v-model="form.tagsText" :disabled="loadingDetail" placeholder="多个标签用逗号或换行分隔" />
-        </label>
+        </div>
       </div>
 
-      <label class="api-case-dialog__field">
+      <div class="api-case-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.description"
@@ -159,7 +159,7 @@ watch(
           :disabled="loadingDetail"
           placeholder="补充用例场景、前置条件或注意事项"
         />
-      </label>
+      </div>
 
       <p v-if="formError.message" class="api-case-dialog__error">{{ formError.message }}</p>
     </div>

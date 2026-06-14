@@ -5,12 +5,14 @@ import type {
   AssignDefectPayload,
   AssignDefectResult,
   DefectAttachment,
+  DefectCaseSummary,
   DefectComment,
   DefectDetail,
   DefectListQuery,
   DefectListResponse,
   DefectStatistics,
   DefectSummaryItem,
+  ReplaceDefectCasesPayload,
   SaveDefectPayload,
   TransitionDefectPayload,
   TransitionDefectResult,
@@ -75,6 +77,22 @@ function normalizeDefectAttachment(item: DefectAttachment): DefectAttachment {
   }
 }
 
+function normalizeDefectCase(item: DefectCaseSummary): DefectCaseSummary {
+  return {
+    ...item,
+    caseNo: item.caseNo || null,
+    title: item.title || null,
+    workspaceCode: item.workspaceCode || null,
+    workspaceName: item.workspaceName || null,
+    directoryId: item.directoryId ?? null,
+    directoryName: item.directoryName || null,
+    modulePath: item.modulePath || null,
+    executionStatus: item.executionStatus || null,
+    executionComment: item.executionComment || null,
+    executedAt: item.executedAt || null,
+  }
+}
+
 function normalizeDefectDetail(item: DefectDetail): DefectDetail {
   const summary = normalizeDefectItem(item)
 
@@ -86,6 +104,7 @@ function normalizeDefectDetail(item: DefectDetail): DefectDetail {
     assigneeId: item.assigneeId ?? null,
     reporterId: item.reporterId ?? null,
     relatedCaseId: item.relatedCaseId ?? null,
+    relatedCases: Array.isArray(item.relatedCases) ? item.relatedCases.map(normalizeDefectCase) : [],
     relatedReportId: item.relatedReportId ?? null,
     relatedTaskId: item.relatedTaskId ?? null,
     attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeDefectAttachment) : [],
@@ -193,6 +212,31 @@ export const defectApi = {
 
   async updateDefect(workspaceCode = 'ALL', id: number, data: SaveDefectPayload) {
     const payload = await httpPut<ApiResponse<DefectDetail>, SaveDefectPayload>(`/bugs/${id}`, data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async getDefectCases(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<DefectCaseSummary[]>>(`/bugs/${id}/cases`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    const cases = unwrapApiResponse(payload)
+    return Array.isArray(cases) ? cases.map(normalizeDefectCase) : []
+  },
+
+  async replaceDefectCases(workspaceCode = 'ALL', id: number, data: ReplaceDefectCasesPayload) {
+    const payload = await httpPut<ApiResponse<DefectDetail>, ReplaceDefectCasesPayload>(`/bugs/${id}/cases`, data, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDefectDetail(unwrapApiResponse(payload))
+  },
+
+  async deleteDefectCase(workspaceCode = 'ALL', id: number, caseId: number) {
+    const payload = await httpDelete<ApiResponse<DefectDetail>>(`/bugs/${id}/cases/${caseId}`, {
       headers: workspaceHeaders(workspaceCode),
     })
 
