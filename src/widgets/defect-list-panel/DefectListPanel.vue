@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshRight } from '@element-plus/icons-vue'
-import { Settings2 } from '@lucide/vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 
@@ -23,8 +22,9 @@ import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
+import AppTableColumnSettingsDrawer from '@/shared/ui/app-table-column-settings-drawer/AppTableColumnSettingsDrawer.vue'
+import AppTableSettingsTrigger from '@/shared/ui/app-table-settings-trigger/AppTableSettingsTrigger.vue'
 import { DefectDetailDrawer } from '@/widgets/defect-detail-drawer'
-import DefectTableSettingsDrawer from './DefectTableSettingsDrawer.vue'
 import {
   useDefectTableSettings,
   type DefectTableColumnDefinition,
@@ -523,14 +523,7 @@ defineExpose({
         <div class="defect-list-panel__table-actions">
           <div class="defect-list-panel__actions-header">
             <span>操作</span>
-            <button
-              type="button"
-              class="defect-list-panel__actions-settings"
-              aria-label="字段设置"
-              @click="tableSettings.settingsVisible.value = true"
-            >
-              <Settings2 :size="14" />
-            </button>
+            <AppTableSettingsTrigger @click="tableSettings.settingsVisible.value = true" />
           </div>
 
           <template v-if="pagedDefects.length">
@@ -608,7 +601,7 @@ defineExpose({
       :saving="transitioningDefectId !== null"
       @submit="submitTransitionDefect"
     />
-    <DefectTableSettingsDrawer
+    <AppTableColumnSettingsDrawer
       v-model="tableSettings.settingsVisible.value"
       :columns="tableSettings.drawerColumns.value"
       :dragging-key="tableSettings.draggingColumnKey.value"
@@ -812,28 +805,6 @@ defineExpose({
   font-weight: 600;
   background: #f8fafc;
   white-space: nowrap;
-}
-
-.defect-list-panel__actions-settings {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  min-width: 24px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--app-text-subtle);
-  cursor: pointer;
-}
-
-.defect-list-panel__actions-settings:hover,
-.defect-list-panel__actions-settings:focus-visible {
-  background: rgba(59, 130, 246, 0.08);
-  color: var(--app-primary);
-  outline: none;
 }
 
 .defect-list-panel__actions-row {

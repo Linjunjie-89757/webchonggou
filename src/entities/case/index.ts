@@ -1,5 +1,20 @@
 export { caseApi } from './api/caseApi'
 export {
+  buildCaseDirectoryOptions,
+  buildCaseTreeNodes,
+  collectCaseDirectoryDescendantIds,
+  collectCaseTreeDescendantNodeIds,
+  collectCaseTreeExpandableNodeIds,
+  findCaseTreeNode,
+  findCaseTreeParentNode,
+  flattenCaseTreeNodes,
+  formatCaseDirectoryPath,
+  getCaseWorkspaceNodeId,
+  type CaseDirectoryOption,
+  type CaseTreeNode,
+  type CaseTreeNodeType,
+} from './lib/directoryTree'
+export {
   formatCaseDateTime,
   getCaseDirectoryText,
   getCaseExecutionStatusMeta,

@@ -147,7 +147,14 @@ export function useDefectTableSettings(options: UseDefectTableSettingsOptions) {
     persist()
   }
 
-  function toggleColumnVisibility(key: DefectTableColumnKey, value: boolean | string | number) {
+  function isDefectTableColumnKey(key: string): key is DefectTableColumnKey {
+    return allColumns.value.some(column => column.key === key)
+  }
+
+  function toggleColumnVisibility(key: string, value: boolean | string | number) {
+    if (!isDefectTableColumnKey(key)) {
+      return
+    }
     const targetColumn = allColumns.value.find(column => column.key === key)
     if (!targetColumn || targetColumn.required) {
       return
@@ -164,7 +171,10 @@ export function useDefectTableSettings(options: UseDefectTableSettingsOptions) {
     return optionalColumns.value.some(column => column.key === key)
   }
 
-  function handleDragStart(key: DefectTableColumnKey) {
+  function handleDragStart(key: string) {
+    if (!isDefectTableColumnKey(key)) {
+      return
+    }
     if (!canDragColumn(key)) {
       return
     }
@@ -176,7 +186,10 @@ export function useDefectTableSettings(options: UseDefectTableSettingsOptions) {
     draggingColumnKey.value = null
   }
 
-  function moveColumnToTarget(targetKey: DefectTableColumnKey) {
+  function moveColumnToTarget(targetKey: string) {
+    if (!isDefectTableColumnKey(targetKey)) {
+      return
+    }
     const sourceKey = draggingColumnKey.value
     if (!sourceKey || sourceKey === targetKey || !canDragColumn(sourceKey) || !canDragColumn(targetKey)) {
       return

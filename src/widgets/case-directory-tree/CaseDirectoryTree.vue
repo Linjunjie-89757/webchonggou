@@ -1,18 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Folder, FolderOpened, MoreFilled, Plus } from '@element-plus/icons-vue'
+import { computed, ref } from 'vue'
 
-import type { CaseDirectoryNode, CaseDirectoryWorkspace } from '@/entities/case'
+import {
+  buildCaseTreeNodes,
+  type CaseDirectoryWorkspace,
+  type CaseTreeNode,
+  type CaseTreeNodeType,
+} from '@/entities/case'
+import AppDirectoryTree, { type AppDirectoryTreeNode } from '@/shared/ui/app-directory-tree/AppDirectoryTree.vue'
 
-type TreeNodeType = 'root' | 'workspace' | 'module'
-
-interface CaseTreeNode {
-  id: string
-  label: string
-  type: TreeNodeType
-  workspaceCode: string
-  directoryId: number | null
-  children: CaseTreeNode[]
+type CaseDirectoryTreeNode = AppDirectoryTreeNode & {
+  meta: CaseTreeNode
+  children?: CaseDirectoryTreeNode[]
 }
 
 const props = defineProps<{
@@ -20,278 +19,167 @@ const props = defineProps<{
   loading?: boolean
   selectedNodeId: string
   currentWorkspaceCode?: string
+  expandedNodeIds?: string[]
+  renderKey?: number
 }>()
 
 const emit = defineEmits<{
   select: [payload: { nodeId: string; workspaceCode: string; directoryId: number | null }]
-  createChild: [payload: { nodeId: string; workspaceCode: string; directoryId: number | null; label: string; type: TreeNodeType }]
+  createChild: [payload: { nodeId: string; workspaceCode: string; directoryId: number | null; label: string; type: CaseTreeNodeType }]
   rename: [payload: { nodeId: string; workspaceCode: string; directoryId: number; label: string }]
+  move: [payload: { nodeId: string; workspaceCode: string; directoryId: number; label: string }]
   delete: [payload: { nodeId: string; workspaceCode: string; directoryId: number; label: string }]
+  nodeExpand: [nodeId: string]
+  nodeCollapse: [nodeId: string]
+  expandAll: []
+  collapseAll: []
 }>()
 
-function mapDirectoryNode(node: CaseDirectoryNode): CaseTreeNode {
+const searchKeyword = ref('')
+
+const rootNode = computed(() => buildCaseTreeNodes(props.directories, props.currentWorkspaceCode || 'ALL')[0])
+const treeNodes = computed<CaseDirectoryTreeNode[]>(() => rootNode.value?.children.map(mapCaseNodeToDirectoryNode) ?? [])
+const filteredTreeNodes = computed(() => filterDirectoryNodes(treeNodes.value, searchKeyword.value.trim()))
+const visibleExpandedNodeIds = computed(() => {
+  if (!searchKeyword.value.trim()) {
+    return props.expandedNodeIds ?? []
+  }
+
+  const ids = new Set(props.expandedNodeIds ?? [])
+  collectExpandableNodeIds(filteredTreeNodes.value).forEach(id => ids.add(id))
+  return [...ids]
+})
+
+function mapCaseNodeToDirectoryNode(node: CaseTreeNode): CaseDirectoryTreeNode {
   return {
-    id: `directory:${node.id}`,
-    label: node.name,
-    type: 'module',
-    workspaceCode: node.workspaceCode,
-    directoryId: node.id,
-    children: node.children.map(mapDirectoryNode),
-  }
-}
-
-const treeData = computed<CaseTreeNode[]>(() => [
-  {
-    id: 'root',
-    label: '用例目录',
-    type: 'root',
-    workspaceCode: props.currentWorkspaceCode || 'ALL',
-    directoryId: null,
-    children: props.directories.map((workspace) => ({
-      id: `workspace:${workspace.workspaceCode}`,
-      label: workspace.workspaceName || workspace.workspaceCode,
-      type: 'workspace',
-      workspaceCode: workspace.workspaceCode,
-      directoryId: null,
-      children: workspace.children.map(mapDirectoryNode),
-    })),
-  },
-])
-
-const defaultExpandedKeys = computed(() => [
-  'root',
-  ...props.directories.map((item) => `workspace:${item.workspaceCode}`),
-])
-
-function handleNodeClick(node: CaseTreeNode) {
-  emit('select', {
-    nodeId: node.id,
-    workspaceCode: node.type === 'root' ? (props.currentWorkspaceCode || 'ALL') : node.workspaceCode,
-    directoryId: node.type === 'module' ? node.directoryId : null,
-  })
-}
-
-function emitCreateChild(node: CaseTreeNode) {
-  if (node.type === 'root') {
-    return
-  }
-
-  emit('createChild', {
-    nodeId: node.id,
-    workspaceCode: node.workspaceCode,
-    directoryId: node.directoryId,
+    id: node.id,
     label: node.label,
     type: node.type,
+    canCreate: node.type !== 'root',
+    canMore: node.type === 'module',
+    children: node.children.map(mapCaseNodeToDirectoryNode),
+    meta: node,
+  }
+}
+
+function filterDirectoryNodes(nodes: CaseDirectoryTreeNode[], keyword: string): CaseDirectoryTreeNode[] {
+  if (!keyword) {
+    return nodes
+  }
+
+  return nodes.flatMap((node) => {
+    const children = filterDirectoryNodes(node.children ?? [], keyword)
+    const matched = node.label.toLowerCase().includes(keyword.toLowerCase())
+    return matched || children.length
+      ? [{ ...node, children }]
+      : []
   })
 }
 
-function handleModuleCommand(command: string | number | object, node: CaseTreeNode) {
-  if (node.type !== 'module' || node.directoryId === null) {
+function collectExpandableNodeIds(nodes: CaseDirectoryTreeNode[]): string[] {
+  return nodes.flatMap((node) => {
+    const children = node.children ?? []
+    return children.length ? [node.id, ...collectExpandableNodeIds(children)] : []
+  })
+}
+
+function getCaseNode(node: AppDirectoryTreeNode) {
+  return node.meta as CaseTreeNode
+}
+
+function handleNodeSelect(node: AppDirectoryTreeNode) {
+  const data = getCaseNode(node)
+  emit('select', {
+    nodeId: data.id,
+    workspaceCode: data.workspaceCode,
+    directoryId: data.type === 'module' ? data.directoryId : null,
+  })
+}
+
+function emitCreateChild(node: AppDirectoryTreeNode) {
+  const data = getCaseNode(node)
+  emit('createChild', {
+    nodeId: data.id,
+    workspaceCode: data.workspaceCode,
+    directoryId: data.directoryId,
+    label: data.label,
+    type: data.type,
+  })
+}
+
+function handleModuleCommand(payload: { command: string | number | object; node: AppDirectoryTreeNode }) {
+  const data = getCaseNode(payload.node)
+  if (data.type !== 'module' || data.directoryId === null) {
     return
   }
 
-  if (String(command) === 'rename') {
+  if (String(payload.command) === 'rename') {
     emit('rename', {
-      nodeId: node.id,
-      workspaceCode: node.workspaceCode,
-      directoryId: node.directoryId,
-      label: node.label,
+      nodeId: data.id,
+      workspaceCode: data.workspaceCode,
+      directoryId: data.directoryId,
+      label: data.label,
+    })
+    return
+  }
+
+  if (String(payload.command) === 'move') {
+    emit('move', {
+      nodeId: data.id,
+      workspaceCode: data.workspaceCode,
+      directoryId: data.directoryId,
+      label: data.label,
     })
     return
   }
 
   emit('delete', {
-    nodeId: node.id,
-    workspaceCode: node.workspaceCode,
-    directoryId: node.directoryId,
-    label: node.label,
+    nodeId: data.id,
+    workspaceCode: data.workspaceCode,
+    directoryId: data.directoryId,
+    label: data.label,
   })
 }
 </script>
 
 <template>
-  <aside class="case-directory-tree">
-    <div class="case-directory-tree__header">
-      <h2>用例目录</h2>
-      <span v-if="loading">加载中</span>
-    </div>
-
-    <el-tree
-      class="case-directory-tree__tree"
-      :data="treeData"
-      node-key="id"
-      :current-node-key="selectedNodeId"
-      :default-expanded-keys="defaultExpandedKeys"
-      highlight-current
-      :expand-on-click-node="false"
-      @node-click="handleNodeClick"
-    >
-      <template #default="{ data }">
-        <div class="case-directory-tree__node">
-          <div class="case-directory-tree__node-main">
-            <el-icon class="case-directory-tree__node-icon">
-              <FolderOpened v-if="data.type === 'root' || data.type === 'workspace'" />
-              <Folder v-else />
-            </el-icon>
-            <span>{{ data.label }}</span>
-          </div>
-          <div v-if="data.type !== 'root'" class="case-directory-tree__node-actions" @click.stop>
-            <el-button
-              text
-              class="case-directory-tree__icon-button"
-              aria-label="新建子模块"
-              title="新建子模块"
-              @click.stop="emitCreateChild(data)"
-            >
-              <el-icon><Plus /></el-icon>
-            </el-button>
-            <el-dropdown
-              v-if="data.type === 'module'"
-              trigger="click"
-              @command="(command: string | number | object) => handleModuleCommand(command, data)"
-            >
-              <el-button
-                text
-                class="case-directory-tree__icon-button"
-                aria-label="更多操作"
-                title="更多操作"
-                @click.stop
-              >
-                <el-icon><MoreFilled /></el-icon>
-              </el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                  <el-dropdown-item command="delete" class="case-directory-tree__danger-action">
-                    删除
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-        </div>
-      </template>
-    </el-tree>
-  </aside>
+  <AppDirectoryTree
+    v-model:search="searchKeyword"
+    title="用例目录"
+    search-placeholder="搜索模块"
+    :nodes="filteredTreeNodes"
+    :loading="loading"
+    :show-title-count="false"
+    show-collapse-all
+    :selected-node-id="selectedNodeId"
+    :expanded-node-ids="visibleExpandedNodeIds"
+    :render-key="renderKey"
+    @select="handleNodeSelect"
+    @create="emitCreateChild"
+    @command="handleModuleCommand"
+    @node-expand="emit('nodeExpand', $event)"
+    @node-collapse="emit('nodeCollapse', $event)"
+    @collapse-all="emit('collapseAll')"
+  >
+    <template #dropdown="{ node }">
+      <el-dropdown-menu v-if="(node.meta as CaseTreeNode).type === 'module'">
+        <el-dropdown-item command="rename">重命名</el-dropdown-item>
+        <el-dropdown-item command="move">移动</el-dropdown-item>
+        <el-dropdown-item command="delete" class="case-directory-tree__danger-action">
+          删除
+        </el-dropdown-item>
+      </el-dropdown-menu>
+    </template>
+  </AppDirectoryTree>
 </template>
 
 <style scoped>
-.case-directory-tree {
-  width: 300px;
-  flex: 0 0 300px;
-  overflow: hidden;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
-  background: var(--app-bg-panel);
-  box-shadow: var(--app-shadow-card);
-}
-
-.case-directory-tree__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--app-space-3);
-  min-height: 56px;
-  padding: 0 24px;
-}
-
-.case-directory-tree__header h2 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.case-directory-tree__header span {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
-}
-
-.case-directory-tree__tree {
-  max-height: calc(100dvh - 224px);
-  overflow: auto;
-  padding: 0 24px 20px;
-}
-
-.case-directory-tree__tree :deep(.el-tree-node__content) {
-  height: 34px;
-  border-radius: var(--app-radius-sm);
-  color: var(--app-text-secondary);
-}
-
-.case-directory-tree__tree :deep(.el-tree-node__content:hover) {
-  background: var(--app-bg-muted);
-}
-
-.case-directory-tree__tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: var(--app-primary-soft);
-  color: var(--app-primary);
-  font-weight: 500;
-}
-
-.case-directory-tree__node {
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--app-space-2);
-  font-size: var(--app-font-size-sm);
-}
-
-.case-directory-tree__node-main {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--app-space-2);
-}
-
-.case-directory-tree__node-main span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.case-directory-tree__node-icon {
-  flex: 0 0 auto;
-  color: var(--app-primary);
-}
-
-.case-directory-tree__node-actions {
-  display: none;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 2px;
-}
-
-.case-directory-tree__tree :deep(.el-tree-node__content:hover) .case-directory-tree__node-actions,
-.case-directory-tree__tree :deep(.el-tree-node.is-current > .el-tree-node__content) .case-directory-tree__node-actions {
-  display: inline-flex;
-}
-
-.case-directory-tree__icon-button {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  color: var(--app-text-muted);
-}
-
-.case-directory-tree__icon-button:hover {
-  background: var(--app-bg-muted);
-  color: var(--app-primary);
-}
-
 :global(.case-directory-tree__danger-action) {
   color: var(--app-danger);
 }
 
-@media (max-width: 900px) {
-  .case-directory-tree {
-    width: 100%;
-    flex-basis: auto;
-  }
-
-  .case-directory-tree__tree {
-    max-height: 260px;
-  }
+:global(.case-directory-tree__danger-action:hover) {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
 }
 </style>

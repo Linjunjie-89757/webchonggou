@@ -4,10 +4,8 @@ import { GripVertical } from '@lucide/vue'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDrawer from '@/shared/ui/app-drawer/AppDrawer.vue'
 
-import type { DefectTableColumnKey } from './useDefectTableSettings'
-
-interface DrawerColumnItem {
-  key: DefectTableColumnKey
+export interface AppTableColumnSettingsItem {
+  key: string
   label: string
   required: boolean
   visible: boolean
@@ -16,37 +14,35 @@ interface DrawerColumnItem {
 
 withDefaults(defineProps<{
   modelValue: boolean
-  columns: DrawerColumnItem[]
-  draggingKey?: DefectTableColumnKey | null
+  columns: AppTableColumnSettingsItem[]
+  draggingKey?: string | null
+  title?: string
 }>(), {
   draggingKey: null,
+  title: '字段设置',
 })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  toggleColumn: [key: DefectTableColumnKey, value: boolean | string | number]
-  dragStart: [key: DefectTableColumnKey]
+  toggleColumn: [key: string, value: boolean | string | number]
+  dragStart: [key: string]
   dragEnd: []
-  dropColumn: [targetKey: DefectTableColumnKey]
+  dropColumn: [targetKey: string]
   reset: []
 }>()
-
-function closeDrawer() {
-  emit('update:modelValue', false)
-}
 </script>
 
 <template>
   <AppDrawer
     :model-value="modelValue"
-    title="字段设置"
+    :title="title"
     size="420px"
-    drawer-class="defect-table-settings-drawer-host"
+    drawer-class="app-table-column-settings-drawer-host"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <div class="defect-table-settings-drawer">
-      <section class="defect-table-settings-drawer__section">
-        <div class="defect-table-settings-drawer__section-head">
+    <div class="app-table-column-settings-drawer">
+      <section class="app-table-column-settings-drawer__section">
+        <div class="app-table-column-settings-drawer__section-head">
           <div>
             <h4>列表字段</h4>
             <p>支持显示控制和字段排序，必显字段保持在前侧。</p>
@@ -54,12 +50,12 @@ function closeDrawer() {
           <AppButton size="small" @click="emit('reset')">恢复默认</AppButton>
         </div>
 
-        <div class="defect-table-settings-drawer__list">
+        <div class="app-table-column-settings-drawer__list">
           <div
             v-for="column in columns"
             :key="column.key"
             :class="[
-              'defect-table-settings-drawer__item',
+              'app-table-column-settings-drawer__item',
               { 'is-dragging': draggingKey === column.key },
             ]"
             :draggable="column.draggable"
@@ -68,15 +64,15 @@ function closeDrawer() {
             @dragover.prevent
             @drop.prevent="emit('dropColumn', column.key)"
           >
-            <div class="defect-table-settings-drawer__item-main">
+            <div class="app-table-column-settings-drawer__item-main">
               <span
                 v-if="column.draggable"
-                class="defect-table-settings-drawer__drag-handle"
+                class="app-table-column-settings-drawer__drag-handle"
                 aria-hidden="true"
               >
                 <GripVertical :size="15" />
               </span>
-              <div class="defect-table-settings-drawer__item-text">
+              <div class="app-table-column-settings-drawer__item-text">
                 <span>{{ column.label }}</span>
                 <small v-if="column.required">必显</small>
               </div>
@@ -90,32 +86,28 @@ function closeDrawer() {
         </div>
       </section>
     </div>
-
-    <template #footer>
-      <AppButton @click="closeDrawer">完成</AppButton>
-    </template>
   </AppDrawer>
 </template>
 
 <style scoped>
-.defect-table-settings-drawer {
+.app-table-column-settings-drawer {
   padding: var(--app-space-5) var(--app-space-6);
 }
 
-.defect-table-settings-drawer__section {
+.app-table-column-settings-drawer__section {
   display: flex;
   flex-direction: column;
   gap: var(--app-space-4);
 }
 
-.defect-table-settings-drawer__section-head {
+.app-table-column-settings-drawer__section-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--app-space-4);
 }
 
-.defect-table-settings-drawer__section-head h4 {
+.app-table-column-settings-drawer__section-head h4 {
   margin: 0;
   color: var(--app-text-primary);
   font-size: var(--app-font-size-md);
@@ -123,20 +115,20 @@ function closeDrawer() {
   line-height: 24px;
 }
 
-.defect-table-settings-drawer__section-head p {
+.app-table-column-settings-drawer__section-head p {
   margin: 4px 0 0;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
   line-height: 18px;
 }
 
-.defect-table-settings-drawer__list {
+.app-table-column-settings-drawer__list {
   display: flex;
   flex-direction: column;
   gap: var(--app-space-2);
 }
 
-.defect-table-settings-drawer__item {
+.app-table-column-settings-drawer__item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -149,20 +141,20 @@ function closeDrawer() {
   transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
 }
 
-.defect-table-settings-drawer__item.is-dragging {
+.app-table-column-settings-drawer__item.is-dragging {
   border-color: #bfdbfe;
   background: #f8fbff;
   box-shadow: 0 6px 18px rgba(59, 130, 246, 0.08);
 }
 
-.defect-table-settings-drawer__item-main {
+.app-table-column-settings-drawer__item-main {
   display: flex;
   min-width: 0;
   align-items: center;
   gap: var(--app-space-3);
 }
 
-.defect-table-settings-drawer__drag-handle {
+.app-table-column-settings-drawer__drag-handle {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -171,7 +163,7 @@ function closeDrawer() {
   cursor: grab;
 }
 
-.defect-table-settings-drawer__item-text {
+.app-table-column-settings-drawer__item-text {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -181,7 +173,7 @@ function closeDrawer() {
   line-height: 20px;
 }
 
-.defect-table-settings-drawer__item-text small {
+.app-table-column-settings-drawer__item-text small {
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
   line-height: 18px;

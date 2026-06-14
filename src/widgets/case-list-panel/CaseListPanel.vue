@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { Checked, MoreFilled, Plus, RefreshRight, Setting, View } from '@element-plus/icons-vue'
+import { Checked, MoreFilled, Plus, RefreshRight, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
@@ -29,7 +29,7 @@ import {
   type SaveDefectPayload,
 } from '@/entities/defect'
 import { CaseBatchUpdateDialog, batchUpdateCases } from '@/features/case-batch-update'
-import { CaseCreateEditDialog } from '@/features/case-create-edit'
+import { CaseCreateEditDrawer } from '@/features/case-create-edit'
 import type { CaseDialogMode } from '@/features/case-create-edit/model'
 import { deleteCase } from '@/features/case-delete'
 import { CaseReviewDialog, reviewCase } from '@/features/case-review'
@@ -40,10 +40,11 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
+import AppTableColumnSettingsDrawer from '@/shared/ui/app-table-column-settings-drawer/AppTableColumnSettingsDrawer.vue'
+import AppTableSettingsTrigger from '@/shared/ui/app-table-settings-trigger/AppTableSettingsTrigger.vue'
 import AppTagInput from '@/shared/ui/app-tag-input/AppTagInput.vue'
 import AppUserSelect from '@/shared/ui/app-user-select/AppUserSelect.vue'
 import { CaseDetailDrawer } from '@/widgets/case-detail-drawer'
-import CaseTableSettingsDrawer from './CaseTableSettingsDrawer.vue'
 import {
   useCaseTableSettings,
   type CaseTableColumnDefinition,
@@ -178,6 +179,16 @@ const selectedCases = computed(() => {
   const selectedIdSet = new Set(selectedCaseIds.value)
   return cases.value.filter((item) => selectedIdSet.has(item.id))
 })
+
+const editingCaseIndex = computed(() => {
+  if (!editingCase.value) {
+    return -1
+  }
+  return cases.value.findIndex(item => item.id === editingCase.value?.id)
+})
+
+const canNavigatePrevCase = computed(() => dialogMode.value === 'edit' && editingCaseIndex.value > 0)
+const canNavigateNextCase = computed(() => dialogMode.value === 'edit' && editingCaseIndex.value >= 0 && editingCaseIndex.value < cases.value.length - 1)
 
 const allCurrentPageSelected = computed(() => {
   return cases.value.length > 0 && cases.value.every((item) => selectedCaseIds.value.includes(item.id))
@@ -381,6 +392,36 @@ async function openEditDialog(item: CaseSummaryItem) {
   } finally {
     detailLoading.value = false
   }
+}
+
+async function switchEditCase(item: CaseSummaryItem) {
+  const previousCase = editingCase.value
+  editingCase.value = item
+  detailLoading.value = true
+  try {
+    const detail = await caseApi.getCaseDetail(item.id, props.workspaceCode)
+    editingCaseDetail.value = detail
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+    editingCase.value = previousCase
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function openAdjacentEditCase(direction: 'prev' | 'next') {
+  if (dialogMode.value !== 'edit' || detailLoading.value || saving.value) {
+    return
+  }
+
+  const currentIndex = editingCaseIndex.value
+  const nextIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1
+  const nextCase = cases.value[nextIndex]
+  if (!nextCase) {
+    return
+  }
+
+  await switchEditCase(nextCase)
 }
 
 async function openCopyDialog(item: CaseSummaryItem) {
@@ -656,7 +697,6 @@ function handlePageChange(value: number) {
 }
 
 function handlePageSizeChange(value: number) {
-  tableSettings.updatePageSize(value)
   pageSize.value = value
   pageNo.value = 1
   void loadCases()
@@ -684,9 +724,6 @@ watch(
 
 onMounted(() => {
   tableSettings.load()
-  if (tableSettings.pageSize.value && pageSizeOptions.includes(tableSettings.pageSize.value)) {
-    pageSize.value = tableSettings.pageSize.value
-  }
   void loadCases()
 })
 
@@ -794,14 +831,7 @@ defineExpose({
         <div class="case-list-panel__table-actions-fixed">
           <div class="case-list-panel__actions-header">
             <span>操作</span>
-            <button
-              type="button"
-              class="case-list-panel__settings-trigger"
-              aria-label="字段设置"
-              @click="tableSettings.settingsVisible.value = true"
-            >
-              <el-icon><Setting /></el-icon>
-            </button>
+            <AppTableSettingsTrigger @click="tableSettings.settingsVisible.value = true" />
           </div>
 
           <div
@@ -903,7 +933,7 @@ defineExpose({
       </footer>
     </div>
 
-    <CaseCreateEditDialog
+    <CaseCreateEditDrawer
       v-model="dialogVisible"
       :mode="dialogMode"
       :case-item="editingCase"
@@ -913,7 +943,14 @@ defineExpose({
       :default-directory-id="directoryId"
       :saving="saving"
       :loading-detail="detailLoading"
+      :show-navigator="dialogMode === 'edit' && cases.length > 1"
+      :can-go-prev="canNavigatePrevCase"
+      :can-go-next="canNavigateNextCase"
+      :current-index="editingCaseIndex >= 0 ? editingCaseIndex + 1 : 0"
+      :total-count="cases.length"
       @submit="saveCase"
+      @prev="openAdjacentEditCase('prev')"
+      @next="openAdjacentEditCase('next')"
     />
 
     <CaseBatchUpdateDialog
@@ -1058,14 +1095,11 @@ defineExpose({
       :workspace-code="workspaceCode"
     />
 
-    <CaseTableSettingsDrawer
+    <AppTableColumnSettingsDrawer
       v-model="tableSettings.settingsVisible.value"
       :columns="tableSettings.drawerColumns.value"
       :dragging-key="tableSettings.draggingColumnKey.value"
-      :page-size="pageSize"
-      :page-size-options="pageSizeOptions"
       @toggle-column="tableSettings.toggleColumnVisibility"
-      @update-page-size="handlePageSizeChange"
       @drag-start="tableSettings.handleDragStart"
       @drag-end="tableSettings.handleDragEnd"
       @drop-column="tableSettings.moveColumnToTarget"
@@ -1234,7 +1268,6 @@ defineExpose({
 
 .case-list-panel__code {
   color: var(--app-primary);
-  font-family: Consolas, Monaco, monospace;
   font-weight: 400;
 }
 
@@ -1266,24 +1299,6 @@ defineExpose({
   color: var(--app-text-muted);
   font-size: 12px;
   font-weight: 600;
-}
-
-.case-list-panel__settings-trigger {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-primary);
-  cursor: pointer;
-}
-
-.case-list-panel__settings-trigger:hover {
-  background: var(--app-primary-soft);
 }
 
 .case-list-panel__actions-row {

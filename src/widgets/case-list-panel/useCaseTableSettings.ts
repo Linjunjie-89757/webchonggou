@@ -35,7 +35,6 @@ interface UseCaseTableSettingsOptions {
 interface PersistedCaseTableSettings {
   columns?: Partial<Record<CaseTableColumnKey, boolean>>
   columnOrder?: CaseTableColumnKey[]
-  pageSize?: number
 }
 
 export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
@@ -43,7 +42,6 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
   const draggingColumnKey = ref<CaseTableColumnKey | null>(null)
   const columnVisibility = ref<Partial<Record<CaseTableColumnKey, boolean>>>({})
   const columnOrder = ref<CaseTableColumnKey[]>([])
-  const pageSize = ref<number | null>(null)
 
   const allColumns = computed(() => toValue(options.columns))
   const requiredColumns = computed(() => allColumns.value.filter(column => column.required))
@@ -106,7 +104,6 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
     const payload: PersistedCaseTableSettings = {
       columns: columnVisibility.value,
       columnOrder: columnOrder.value,
-      pageSize: pageSize.value ?? undefined,
     }
 
     localStorage.setItem(options.storageKey, JSON.stringify(payload))
@@ -132,7 +129,6 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
     try {
       const parsed = JSON.parse(raw) as PersistedCaseTableSettings
       columnOrder.value = normalizeColumnOrder(parsed.columnOrder)
-      pageSize.value = typeof parsed.pageSize === 'number' ? parsed.pageSize : null
       columnVisibility.value = allColumns.value.reduce<Partial<Record<CaseTableColumnKey, boolean>>>((result, column) => {
         result[column.key] = column.required
           ? true
@@ -150,16 +146,17 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
   function reset() {
     columnOrder.value = buildDefaultOrder()
     columnVisibility.value = buildDefaultVisibility()
-    pageSize.value = null
     persist()
   }
 
-  function updatePageSize(value: number) {
-    pageSize.value = value
-    persist()
+  function isCaseTableColumnKey(key: string): key is CaseTableColumnKey {
+    return allColumns.value.some(column => column.key === key)
   }
 
-  function toggleColumnVisibility(key: CaseTableColumnKey, value: boolean | string | number) {
+  function toggleColumnVisibility(key: string, value: boolean | string | number) {
+    if (!isCaseTableColumnKey(key)) {
+      return
+    }
     const targetColumn = allColumns.value.find(column => column.key === key)
     if (!targetColumn || targetColumn.required) {
       return
@@ -176,7 +173,10 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
     return optionalColumns.value.some(column => column.key === key)
   }
 
-  function handleDragStart(key: CaseTableColumnKey) {
+  function handleDragStart(key: string) {
+    if (!isCaseTableColumnKey(key)) {
+      return
+    }
     if (!canDragColumn(key)) {
       return
     }
@@ -188,7 +188,10 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
     draggingColumnKey.value = null
   }
 
-  function moveColumnToTarget(targetKey: CaseTableColumnKey) {
+  function moveColumnToTarget(targetKey: string) {
+    if (!isCaseTableColumnKey(targetKey)) {
+      return
+    }
     const sourceKey = draggingColumnKey.value
     if (!sourceKey || sourceKey === targetKey || !canDragColumn(sourceKey) || !canDragColumn(targetKey)) {
       return
@@ -213,12 +216,10 @@ export function useCaseTableSettings(options: UseCaseTableSettingsOptions) {
   return {
     settingsVisible,
     draggingColumnKey,
-    pageSize,
     drawerColumns,
     visibleColumns,
     load,
     reset,
-    updatePageSize,
     toggleColumnVisibility,
     handleDragStart,
     handleDragEnd,

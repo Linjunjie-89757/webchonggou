@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus, RefreshRight } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
+  buildCaseDirectoryOptions,
+  buildCaseTreeNodes,
   caseApi,
+  collectCaseDirectoryDescendantIds,
+  collectCaseTreeDescendantNodeIds,
+  collectCaseTreeExpandableNodeIds,
+  findCaseTreeNode,
+  findCaseTreeParentNode,
   type CaseClientFilter,
   type CaseDirectoryWorkspace,
   type CaseSummaryItem,
+  type CaseTreeNode,
+  getCaseWorkspaceNodeId,
 } from '@/entities/case'
-import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -18,13 +28,19 @@ import CaseDirectoryTree from '@/widgets/case-directory-tree/CaseDirectoryTree.v
 import CaseFilterPanel from '@/widgets/case-filter-panel/CaseFilterPanel.vue'
 import CaseListPanel from '@/widgets/case-list-panel/CaseListPanel.vue'
 
+const route = useRoute()
+const router = useRouter()
+const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 const workspaceCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
+const workspaceReady = ref(false)
 const workspaceErrorMessage = ref('')
 const workspaceSelectorCode = ref('ALL')
 const selectedNodeId = ref('root')
 const selectedDirectoryId = ref<number | null>(null)
+const expandedTreeKeys = ref<string[]>(['root'])
+const treeRenderKey = ref(0)
 const directories = ref<CaseDirectoryWorkspace[]>([])
 const directoriesLoading = ref(false)
 const directoriesErrorMessage = ref('')
@@ -43,6 +59,8 @@ const activeDirectoryNode = ref<{
 const moduleForm = reactive({
   name: '',
 })
+const moveDialogVisible = ref(false)
+const moveTargetDirectoryId = ref<number | null>(null)
 const filter = ref<CaseClientFilter>({
   keyword: '',
   priority: '',
@@ -52,6 +70,9 @@ const filter = ref<CaseClientFilter>({
   createdByName: '',
   workspaceCode: '',
 })
+
+const CASE_DIRECTORY_MEMORY_KEY = 'case-management-directory-memory-v1'
+let directoryLoadSequence = 0
 
 const workspaceOptions = computed(() => {
   const options = workspaces.value.map((item) => ({
@@ -85,39 +106,211 @@ const executorOptions = computed(() => currentPageUserNames.value)
 const creatorOptions = computed(() => currentPageUserNames.value)
 const moduleDialogTitle = computed(() => (moduleDialogMode.value === 'create' ? '新建子模块' : '重命名子模块'))
 const moduleSubmitDisabled = computed(() => !moduleForm.name.trim() || moduleSaving.value)
+const moveTargetOptions = computed(() => {
+  const node = activeDirectoryNode.value
+  if (!node || node.directoryId === null) {
+    return []
+  }
+
+  const workspace = directories.value.find(item => item.workspaceCode === node.workspaceCode)
+  const disabledIds = collectCaseDirectoryDescendantIds(node.directoryId, workspace?.children ?? [])
+  disabledIds.add(node.directoryId)
+
+  return [
+    { value: null, label: '空间根目录' },
+    ...buildCaseDirectoryOptions(workspace?.children ?? [], '', disabledIds),
+  ]
+})
+
+function resolveMemoryKey(targetWorkspaceCode = workspaceCode.value) {
+  return `${CASE_DIRECTORY_MEMORY_KEY}:${targetWorkspaceCode || 'ALL'}`
+}
+
+function readDirectoryMemory(targetWorkspaceCode = workspaceCode.value) {
+  try {
+    const raw = localStorage.getItem(resolveMemoryKey(targetWorkspaceCode))
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as {
+      workspaceCode?: string
+      selectedNodeId?: string
+      selectedDirectoryId?: number | null
+      expandedTreeKeys?: string[]
+    }
+    return parsed
+  } catch {
+    localStorage.removeItem(resolveMemoryKey(targetWorkspaceCode))
+    return null
+  }
+}
+
+function persistDirectoryMemory(targetWorkspaceCode = workspaceCode.value) {
+  localStorage.setItem(resolveMemoryKey(targetWorkspaceCode), JSON.stringify({
+    workspaceCode: workspaceCode.value,
+    selectedNodeId: selectedNodeId.value,
+    selectedDirectoryId: selectedDirectoryId.value,
+    expandedTreeKeys: expandedTreeKeys.value,
+  }))
+  localStorage.setItem(`${CASE_DIRECTORY_MEMORY_KEY}:last-workspace`, targetWorkspaceCode || 'ALL')
+}
+
+function restoreDirectoryMemory(targetWorkspaceCode = workspaceCode.value) {
+  const memory = readDirectoryMemory(targetWorkspaceCode)
+  if (!memory) {
+    return false
+  }
+
+  selectedNodeId.value = memory.selectedNodeId || (targetWorkspaceCode === 'ALL' ? 'root' : getCaseWorkspaceNodeId(targetWorkspaceCode))
+  selectedDirectoryId.value = memory.selectedDirectoryId ?? null
+  expandedTreeKeys.value = Array.isArray(memory.expandedTreeKeys) && memory.expandedTreeKeys.length
+    ? memory.expandedTreeKeys
+    : ['root']
+  return true
+}
+
+function getTreeNodes() {
+  return buildCaseTreeNodes(directories.value, workspaceCode.value)
+}
+
+function findTreeNode(nodeId: string) {
+  return findCaseTreeNode(getTreeNodes(), nodeId)
+}
+
+function findParentNode(nodeId: string) {
+  return findCaseTreeParentNode(getTreeNodes(), nodeId)
+}
+
+function collectExpandableNodeIds(nodes: CaseTreeNode[]) {
+  return collectCaseTreeExpandableNodeIds(nodes)
+}
+
+function buildWorkspaceDirectoryFallback(targetWorkspaceCode: string): CaseDirectoryWorkspace[] {
+  if (targetWorkspaceCode === 'ALL') {
+    return workspaces.value
+      .filter(item => item.workspaceCode !== 'ALL' && !item.allScope)
+      .map(item => ({
+        workspaceCode: item.workspaceCode,
+        workspaceName: item.workspaceName || item.workspaceCode,
+        children: [],
+      }))
+  }
+
+  const workspace = workspaces.value.find(item => item.workspaceCode === targetWorkspaceCode)
+  return workspace
+    ? [{
+        workspaceCode: workspace.workspaceCode,
+        workspaceName: workspace.workspaceName || workspace.workspaceCode,
+        children: [],
+      }]
+    : []
+}
+
+function resetDirectorySelectionForWorkspace(targetWorkspaceCode: string) {
+  selectedNodeId.value = targetWorkspaceCode === 'ALL' ? 'root' : getCaseWorkspaceNodeId(targetWorkspaceCode)
+  selectedDirectoryId.value = null
+  expandedTreeKeys.value = ['root', ...(targetWorkspaceCode === 'ALL' ? [] : [getCaseWorkspaceNodeId(targetWorkspaceCode)])]
+  treeRenderKey.value += 1
+}
+
+function sanitizeExpandedTreeKeys(keys: string[]) {
+  const available = new Set(collectExpandableNodeIds(getTreeNodes()))
+  const nextKeys = keys.filter(key => available.has(key))
+  if (available.has('root') && !nextKeys.includes('root')) {
+    nextKeys.unshift('root')
+  }
+  return nextKeys.length ? nextKeys : ['root']
+}
+
+function ensureSelectedNodeExpanded() {
+  const keys = new Set(expandedTreeKeys.value)
+  let cursor = findParentNode(selectedNodeId.value)
+  while (cursor) {
+    if (cursor.children.length) {
+      keys.add(cursor.id)
+    }
+    cursor = findParentNode(cursor.id)
+  }
+  expandedTreeKeys.value = sanitizeExpandedTreeKeys([...keys])
+}
+
+function ensureSelectedNodeValid() {
+  const selected = findTreeNode(selectedNodeId.value)
+  if (selected) {
+    selectedDirectoryId.value = selected.type === 'module' ? selected.directoryId : null
+    ensureSelectedNodeExpanded()
+    return
+  }
+
+  const workspaceNode = findTreeNode(getCaseWorkspaceNodeId(workspaceCode.value))
+  const fallback = workspaceNode ?? findTreeNode('root')
+  selectedNodeId.value = fallback?.id ?? 'root'
+  selectedDirectoryId.value = fallback?.type === 'module' ? fallback.directoryId : null
+  ensureSelectedNodeExpanded()
+}
+
 
 function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
+  const routeWorkspace = Array.isArray(route.query.workspace) ? route.query.workspace[0] : route.query.workspace
+  if (routeWorkspace && (routeWorkspace === 'ALL' || items.some(item => item.workspaceCode === routeWorkspace))) {
+    return routeWorkspace
+  }
+
+  if (
+    selectedWorkspaceCode.value
+    && (selectedWorkspaceCode.value === 'ALL' || items.some(item => item.workspaceCode === selectedWorkspaceCode.value))
+  ) {
+    return selectedWorkspaceCode.value
+  }
+
   const selected = items.find((item) => item.current || item.isCurrent || item.default || item.isDefault)
   return selected?.workspaceCode || items[0]?.workspaceCode || 'ALL'
 }
 
 async function loadWorkspaces() {
   workspaceLoading.value = true
+  workspaceReady.value = false
   workspaceErrorMessage.value = ''
   try {
     const items = await workspaceApi.getSwitchableWorkspaces()
     workspaces.value = items
     workspaceCode.value = resolveDefaultWorkspaceCode(items)
     workspaceSelectorCode.value = workspaceCode.value
+    setSelectedWorkspaceCode(workspaceCode.value)
+    restoreDirectoryMemory(workspaceCode.value)
   } catch (error) {
     workspaceCode.value = 'ALL'
     workspaceSelectorCode.value = 'ALL'
     workspaceErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     workspaceLoading.value = false
+    workspaceReady.value = true
   }
 }
 
 async function loadDirectories() {
+  const requestId = ++directoryLoadSequence
   directoriesLoading.value = true
   directoriesErrorMessage.value = ''
+  const requestWorkspaceCode = workspaceCode.value
   try {
-    const items = await caseApi.getCaseDirectories(workspaceCode.value)
+    const items = await caseApi.getCaseDirectories(requestWorkspaceCode)
+    if (requestId !== directoryLoadSequence || requestWorkspaceCode !== workspaceCode.value) {
+      return
+    }
     directories.value = Array.isArray(items) ? items : []
+    ensureSelectedNodeValid()
+    expandedTreeKeys.value = sanitizeExpandedTreeKeys(expandedTreeKeys.value)
+    treeRenderKey.value += 1
+    persistDirectoryMemory()
   } catch (error) {
-    directoriesErrorMessage.value = getRequestErrorMessage(error)
+    if (requestId === directoryLoadSequence) {
+      directoriesErrorMessage.value = getRequestErrorMessage(error)
+    }
   } finally {
-    directoriesLoading.value = false
+    if (requestId === directoryLoadSequence) {
+      directoriesLoading.value = false
+    }
   }
 }
 
@@ -127,15 +320,36 @@ function handleDirectorySelect(payload: { nodeId: string; workspaceCode: string;
   workspaceCode.value = payload.workspaceCode
   workspaceSelectorCode.value = payload.workspaceCode
   selectedDirectoryId.value = payload.directoryId
+  ensureSelectedNodeExpanded()
+  persistDirectoryMemory()
   if (workspaceChanged) {
     void loadDirectories()
   }
 }
 
-function handleWorkspaceChange(value: string) {
+async function handleWorkspaceChange(value: string) {
+  persistDirectoryMemory()
   workspaceCode.value = value
-  selectedNodeId.value = 'root'
-  selectedDirectoryId.value = null
+  workspaceSelectorCode.value = value
+  setSelectedWorkspaceCode(value)
+  localStorage.setItem(`${CASE_DIRECTORY_MEMORY_KEY}:last-workspace`, value)
+  if (!restoreDirectoryMemory(value)) {
+    resetDirectorySelectionForWorkspace(value)
+  }
+  directories.value = buildWorkspaceDirectoryFallback(value)
+  ensureSelectedNodeValid()
+  expandedTreeKeys.value = sanitizeExpandedTreeKeys(expandedTreeKeys.value)
+  treeRenderKey.value += 1
+  if (route.query.workspace !== value) {
+    await router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        workspace: value,
+      },
+      hash: route.hash,
+    })
+  }
   void loadDirectories()
 }
 
@@ -174,6 +388,45 @@ function openRenameModule(payload: { nodeId: string; workspaceCode: string; dire
   moduleDialogVisible.value = true
 }
 
+function openMoveModule(payload: { nodeId: string; workspaceCode: string; directoryId: number; label: string }) {
+  activeDirectoryNode.value = {
+    ...payload,
+    type: 'module',
+  }
+  selectedNodeId.value = payload.nodeId
+  moveTargetDirectoryId.value = null
+  moveDialogVisible.value = true
+}
+
+function handleTreeNodeExpand(nodeId: string) {
+  if (!expandedTreeKeys.value.includes(nodeId)) {
+    expandedTreeKeys.value = sanitizeExpandedTreeKeys([...expandedTreeKeys.value, nodeId])
+    persistDirectoryMemory()
+  }
+}
+
+function handleTreeNodeCollapse(nodeId: string) {
+  const node = findTreeNode(nodeId)
+  const blockedKeys = new Set([
+    nodeId,
+    ...(node ? collectCaseTreeDescendantNodeIds(node) : []),
+  ])
+  expandedTreeKeys.value = sanitizeExpandedTreeKeys(expandedTreeKeys.value.filter(item => !blockedKeys.has(item)))
+  persistDirectoryMemory()
+}
+
+function expandAllTreeNodes() {
+  expandedTreeKeys.value = collectExpandableNodeIds(getTreeNodes())
+  treeRenderKey.value += 1
+  persistDirectoryMemory()
+}
+
+function collapseAllTreeNodes() {
+  expandedTreeKeys.value = ['root']
+  treeRenderKey.value += 1
+  persistDirectoryMemory()
+}
+
 async function refreshCasesAfterDirectoryChange() {
   await loadDirectories()
   caseListRef.value?.reload()
@@ -204,6 +457,34 @@ async function submitModule() {
       ElMessage.success('子模块已创建')
     }
     moduleDialogVisible.value = false
+    if (moduleDialogMode.value === 'create') {
+      expandedTreeKeys.value = sanitizeExpandedTreeKeys([...expandedTreeKeys.value, node.nodeId])
+    }
+    await refreshCasesAfterDirectoryChange()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    moduleSaving.value = false
+  }
+}
+
+async function submitMoveModule() {
+  const node = activeDirectoryNode.value
+  if (!node || node.directoryId === null || moduleSaving.value) {
+    return
+  }
+
+  moduleSaving.value = true
+  try {
+    await caseApi.moveCaseDirectory(node.directoryId, node.workspaceCode, {
+      targetParentId: moveTargetDirectoryId.value,
+    })
+    ElMessage.success('目录已移动')
+    moveDialogVisible.value = false
+    selectedNodeId.value = node.nodeId
+    selectedDirectoryId.value = node.directoryId
+    ensureSelectedNodeExpanded()
+    persistDirectoryMemory()
     await refreshCasesAfterDirectoryChange()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -239,6 +520,33 @@ onMounted(() => {
     await loadDirectories()
   })()
 })
+
+watch(
+  selectedWorkspaceCode,
+  (value) => {
+    if (!workspaceReady.value || !value || value === workspaceCode.value) {
+      return
+    }
+    if (value !== 'ALL' && !workspaces.value.some(item => item.workspaceCode === value)) {
+      return
+    }
+    void handleWorkspaceChange(value)
+  },
+)
+
+watch(
+  () => route.query.workspace,
+  (value) => {
+    const routeWorkspace = Array.isArray(value) ? value[0] : value
+    if (!workspaceReady.value || !routeWorkspace || routeWorkspace === workspaceCode.value) {
+      return
+    }
+    if (routeWorkspace !== 'ALL' && !workspaces.value.some(item => item.workspaceCode === routeWorkspace)) {
+      return
+    }
+    void handleWorkspaceChange(routeWorkspace)
+  },
+)
 </script>
 
 <template>
@@ -276,10 +584,17 @@ onMounted(() => {
         :loading="directoriesLoading"
         :selected-node-id="selectedNodeId"
         :current-workspace-code="workspaceCode"
+        :expanded-node-ids="expandedTreeKeys"
+        :render-key="treeRenderKey"
         @select="handleDirectorySelect"
         @create-child="openCreateModule"
         @rename="openRenameModule"
+        @move="openMoveModule"
         @delete="deleteModule"
+        @node-expand="handleTreeNodeExpand"
+        @node-collapse="handleTreeNodeCollapse"
+        @expand-all="expandAllTreeNodes"
+        @collapse-all="collapseAllTreeNodes"
       />
 
       <main class="cases-page__content">
@@ -356,6 +671,40 @@ onMounted(() => {
         <AppButton type="primary" :loading="moduleSaving" :disabled="moduleSubmitDisabled" @click="submitModule">
           {{ moduleDialogMode === 'create' ? '创建' : '保存' }}
         </AppButton>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="moveDialogVisible"
+      title="移动模块"
+      width="420px"
+      append-to-body
+    >
+      <div class="case-module-dialog">
+        <div class="case-module-dialog__meta">
+          当前模块：{{ activeDirectoryNode?.label || '-' }}
+        </div>
+        <label class="case-module-dialog__field">
+          <span>移动到</span>
+          <el-select
+            v-model="moveTargetDirectoryId"
+            class="case-module-dialog__select"
+            clearable
+            placeholder="请选择目标位置"
+          >
+            <el-option
+              v-for="item in moveTargetOptions"
+              :key="String(item.value)"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+        </label>
+      </div>
+
+      <template #footer>
+        <AppButton :disabled="moduleSaving" @click="moveDialogVisible = false">取消</AppButton>
+        <AppButton type="primary" :loading="moduleSaving" @click="submitMoveModule">保存</AppButton>
       </template>
     </el-dialog>
   </AppPage>
@@ -472,6 +821,10 @@ onMounted(() => {
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 600;
+}
+
+.case-module-dialog__select {
+  width: 100%;
 }
 
 @media (max-width: 900px) {
