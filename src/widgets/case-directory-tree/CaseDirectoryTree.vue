@@ -40,7 +40,7 @@ function mapDirectoryNode(node: CaseDirectoryNode): CaseTreeNode {
 const treeData = computed<CaseTreeNode[]>(() => [
   {
     id: 'root',
-    label: '全部用例',
+    label: '用例目录',
     type: 'root',
     workspaceCode: props.currentWorkspaceCode || 'ALL',
     directoryId: null,
@@ -101,12 +101,13 @@ function handleNodeClick(node: CaseTreeNode) {
 
 <style scoped>
 .case-directory-tree {
-  width: 236px;
-  flex: 0 0 236px;
+  width: 300px;
+  flex: 0 0 300px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-card);
 }
 
 .case-directory-tree__header {
@@ -114,14 +115,13 @@ function handleNodeClick(node: CaseTreeNode) {
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-3);
-  min-height: 48px;
-  padding: 0 var(--app-space-4);
-  border-bottom: 1px solid var(--app-border-soft);
+  min-height: 56px;
+  padding: 0 24px;
 }
 
 .case-directory-tree__header h2 {
   margin: 0;
-  font-size: var(--app-font-size-md);
+  font-size: 15px;
   font-weight: 700;
 }
 
@@ -131,14 +131,14 @@ function handleNodeClick(node: CaseTreeNode) {
 }
 
 .case-directory-tree__tree {
-  max-height: calc(100dvh - 220px);
+  max-height: calc(100dvh - 224px);
   overflow: auto;
-  padding: var(--app-space-2) var(--app-space-1);
+  padding: 0 24px 20px;
 }
 
 .case-directory-tree__tree :deep(.el-tree-node__content) {
   height: 34px;
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-sm);
   color: var(--app-text-secondary);
 }
 
@@ -149,7 +149,7 @@ function handleNodeClick(node: CaseTreeNode) {
 .case-directory-tree__tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
   background: var(--app-primary-soft);
   color: var(--app-primary);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .case-directory-tree__node {
@@ -169,7 +169,7 @@ function handleNodeClick(node: CaseTreeNode) {
 
 .case-directory-tree__node-icon {
   flex: 0 0 auto;
-  color: var(--app-text-muted);
+  color: var(--app-primary);
 }
 
 @media (max-width: 900px) {

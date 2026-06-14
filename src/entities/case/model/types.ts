@@ -114,6 +114,9 @@ export interface CaseClientFilter {
   priority: string
   reviewStatus: string
   executionStatus: string
+  executorName: string
+  createdByName: string
+  workspaceCode: string
 }
 
 export interface CaseStat {

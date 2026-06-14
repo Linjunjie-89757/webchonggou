@@ -36,11 +36,13 @@ const props = withDefaults(
     directoryId?: number | null
     filter: CaseClientFilter
     directories?: CaseDirectoryWorkspace[]
+    showToolbar?: boolean
   }>(),
   {
     workspaceCode: 'ALL',
     directoryId: null,
     directories: () => [],
+    showToolbar: true,
   },
 )
 
@@ -153,7 +155,22 @@ async function loadCases() {
       executionStatus: props.filter.executionStatus,
     })
     if (requestSeq === loadRequestSeq) {
-      applyPage(page)
+      const filteredItems = page.items.filter((item) => {
+        if (props.filter.executorName && item.executorName !== props.filter.executorName) {
+          return false
+        }
+        if (props.filter.createdByName && item.createdByName !== props.filter.createdByName) {
+          return false
+        }
+        if (props.filter.workspaceCode && item.workspaceCode !== props.filter.workspaceCode) {
+          return false
+        }
+        return true
+      })
+      applyPage({
+        ...page,
+        items: filteredItems,
+      })
     }
   } catch (error) {
     if (requestSeq === loadRequestSeq) {
@@ -359,15 +376,15 @@ onBeforeUnmount(() => {
 
 defineExpose({
   reload: loadCases,
+  openCreateDialog,
 })
 </script>
 
 <template>
   <section class="case-list-panel">
-    <header class="case-list-panel__header">
+    <header v-if="showToolbar" class="case-list-panel__header">
       <div>
         <h2>用例列表</h2>
-        <p>第一阶段仅接入读取、分页和当前页筛选。</p>
       </div>
       <div class="case-list-panel__actions">
         <AppButton :icon="Plus" type="primary" @click="openCreateDialog">新增用例</AppButton>
@@ -600,10 +617,10 @@ defineExpose({
 
 .case-list-panel__table-card {
   overflow: hidden;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border: 0;
+  border-radius: 0;
   background: var(--app-bg-panel);
-  box-shadow: var(--app-shadow-card);
+  box-shadow: none;
 }
 
 .case-list-panel__inline-error {

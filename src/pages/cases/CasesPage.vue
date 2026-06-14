@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { RefreshRight } from '@element-plus/icons-vue'
+import { Plus, RefreshRight } from '@element-plus/icons-vue'
 
 import {
   caseApi,
@@ -16,7 +16,6 @@ import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import CaseDirectoryTree from '@/widgets/case-directory-tree/CaseDirectoryTree.vue'
 import CaseFilterPanel from '@/widgets/case-filter-panel/CaseFilterPanel.vue'
 import CaseListPanel from '@/widgets/case-list-panel/CaseListPanel.vue'
-import CaseSummaryPanel from '@/widgets/case-summary-panel/CaseSummaryPanel.vue'
 
 const workspaceCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
@@ -29,11 +28,15 @@ const directories = ref<CaseDirectoryWorkspace[]>([])
 const directoriesLoading = ref(false)
 const directoriesErrorMessage = ref('')
 const currentPageCases = ref<CaseSummaryItem[]>([])
+const caseListRef = ref<InstanceType<typeof CaseListPanel> | null>(null)
 const filter = ref<CaseClientFilter>({
   keyword: '',
   priority: '',
   reviewStatus: '',
   executionStatus: '',
+  executorName: '',
+  createdByName: '',
+  workspaceCode: '',
 })
 
 const workspaceOptions = computed(() => {
@@ -48,6 +51,24 @@ const workspaceOptions = computed(() => {
 
   return options
 })
+
+const businessWorkspaceOptions = computed(() => workspaceOptions.value.filter(item => item.value !== 'ALL'))
+
+const currentPageUserNames = computed(() => {
+  const names = new Set<string>()
+  currentPageCases.value.forEach((item) => {
+    if (item.executorName) {
+      names.add(item.executorName)
+    }
+    if (item.createdByName) {
+      names.add(item.createdByName)
+    }
+  })
+  return [...names]
+})
+
+const executorOptions = computed(() => currentPageUserNames.value)
+const creatorOptions = computed(() => currentPageUserNames.value)
 
 function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
   const selected = items.find((item) => item.current || item.isCurrent || item.default || item.isDefault)
@@ -108,7 +129,14 @@ function resetFilters() {
     priority: '',
     reviewStatus: '',
     executionStatus: '',
+    executorName: '',
+    createdByName: '',
+    workspaceCode: '',
   }
+}
+
+function openCreateCase() {
+  caseListRef.value?.openCreateDialog()
 }
 
 onMounted(() => {
@@ -122,7 +150,7 @@ onMounted(() => {
 <template>
   <AppPage
     title="用例中心"
-    description="按空间和目录查看用例，当前阶段先接入真实读取、分页和当前页筛选。"
+    description=""
   >
     <template #actions>
       <div class="cases-workspace-select">
@@ -174,15 +202,31 @@ onMounted(() => {
             <AppButton size="small" :icon="RefreshRight" @click="loadDirectories">重试</AppButton>
           </div>
 
-          <CaseFilterPanel v-model="filter" @reset="resetFilters" />
-          <CaseSummaryPanel :cases="currentPageCases" />
-          <CaseListPanel
-            :workspace-code="workspaceCode"
-            :directory-id="selectedDirectoryId"
-            :filter="filter"
-            :directories="directories"
-            @loaded="currentPageCases = $event"
-          />
+          <section class="cases-page__workbench">
+            <header class="cases-page__toolbar">
+              <CaseFilterPanel
+                v-model="filter"
+                :executor-options="executorOptions"
+                :creator-options="creatorOptions"
+                :workspace-options="businessWorkspaceOptions"
+                :show-workspace-filter="workspaceCode === 'ALL'"
+                @reset="resetFilters"
+              />
+              <AppButton :icon="Plus" type="primary" class="cases-page__create-button" @click="openCreateCase">
+                新建用例
+              </AppButton>
+            </header>
+
+            <CaseListPanel
+              ref="caseListRef"
+              :workspace-code="workspaceCode"
+              :directory-id="selectedDirectoryId"
+              :filter="filter"
+              :directories="directories"
+              :show-toolbar="false"
+              @loaded="currentPageCases = $event"
+            />
+          </section>
         </div>
       </main>
     </div>
@@ -193,7 +237,7 @@ onMounted(() => {
 .cases-page {
   display: flex;
   align-items: flex-start;
-  gap: var(--app-space-4);
+  gap: 16px;
   min-width: 0;
 }
 
@@ -205,7 +249,29 @@ onMounted(() => {
 .cases-page__stack {
   display: flex;
   flex-direction: column;
+  gap: 0;
+}
+
+.cases-page__workbench {
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-card);
+}
+
+.cases-page__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--app-space-4);
+  min-height: 84px;
+  padding: var(--app-space-5) var(--app-space-6) var(--app-space-4);
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.cases-page__create-button {
+  flex: 0 0 auto;
 }
 
 .cases-page__inline-error {
