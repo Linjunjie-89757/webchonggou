@@ -15,6 +15,11 @@ export {
   type CaseTreeNodeType,
 } from './lib/directoryTree'
 export {
+  loadCaseExecutionContext,
+  saveCaseExecutionContext,
+  type CaseExecutionContext,
+} from './lib/executionContext'
+export {
   formatCaseDateTime,
   getCaseDirectoryText,
   getCaseExecutionStatusMeta,

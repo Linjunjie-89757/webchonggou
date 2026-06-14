@@ -633,6 +633,7 @@ watch(
               ref="caseListRef"
               :workspace-code="workspaceCode"
               :directory-id="selectedDirectoryId"
+              :selected-node-id="selectedNodeId"
               :filter="filter"
               :directories="directories"
               :show-toolbar="false"

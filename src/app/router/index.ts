@@ -63,6 +63,15 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'cases/:id/execute',
+        name: 'case-execution',
+        component: () => import('@/pages/cases/CaseExecutionPage.vue'),
+        meta: {
+          title: '用例执行',
+          description: '按旧项目执行工作台方向接入用例执行。',
+        },
+      },
+      {
         path: 'bugs',
         name: 'bugs',
         component: DefectsPage,

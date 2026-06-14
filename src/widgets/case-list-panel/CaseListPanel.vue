@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { Checked, MoreFilled, Plus, RefreshRight, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRoute, useRouter } from 'vue-router'
 
 import {
   type CaseDetail,
@@ -19,6 +20,7 @@ import {
   type ReviewCasePayload,
   type CaseSummaryItem,
   type PageResponse,
+  saveCaseExecutionContext,
 } from '@/entities/case'
 import {
   defectApi,
@@ -33,7 +35,6 @@ import { CaseCreateEditDrawer } from '@/features/case-create-edit'
 import type { CaseDialogMode } from '@/features/case-create-edit/model'
 import { deleteCase } from '@/features/case-delete'
 import { CaseReviewDialog, reviewCase } from '@/features/case-review'
-import { runCase } from '@/features/case-run'
 import { getCaseStatusActionText, toggleCaseStatus } from '@/features/case-toggle-status'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -55,6 +56,7 @@ const props = withDefaults(
   defineProps<{
     workspaceCode?: string
     directoryId?: number | null
+    selectedNodeId?: string | null
     filter: CaseClientFilter
     directories?: CaseDirectoryWorkspace[]
     showToolbar?: boolean
@@ -62,6 +64,7 @@ const props = withDefaults(
   {
     workspaceCode: 'ALL',
     directoryId: null,
+    selectedNodeId: null,
     directories: () => [],
     showToolbar: true,
   },
@@ -72,6 +75,8 @@ const emit = defineEmits<{
   reloadDirectories: []
 }>()
 
+const route = useRoute()
+const router = useRouter()
 const cases = ref<CaseSummaryItem[]>([])
 const loading = ref(false)
 const errorMessage = ref('')
@@ -634,21 +639,35 @@ async function handleBatchDeleteCases() {
   }
 }
 
-async function handleRunCase(item: CaseSummaryItem) {
+function buildReturnQuery() {
+  return Object.fromEntries(
+    Object.entries(route.query)
+      .filter(([, value]) => typeof value === 'string')
+      .map(([key, value]) => [key, value as string]),
+  )
+}
+
+function openExecutionPage(item: CaseSummaryItem) {
   if (runningCaseId.value !== null || deletingCaseId.value !== null || togglingCaseId.value !== null || reviewingCaseId.value !== null) {
     return
   }
 
-  runningCaseId.value = item.id
-  try {
-    await runCase(item, props.workspaceCode)
-    ElMessage.success('用例执行已记录')
-    await loadCases()
-  } catch (error) {
-    ElMessage.error(getRequestErrorMessage(error))
-  } finally {
-    runningCaseId.value = null
-  }
+  saveCaseExecutionContext({
+    workspaceCode: item.workspaceCode || props.workspaceCode,
+    returnQuery: buildReturnQuery(),
+    selectedDirectoryId: props.directoryId,
+    selectedNodeId: props.selectedNodeId,
+    sourceLabel: getCaseDirectoryText(item),
+    items: cases.value,
+  })
+
+  void router.push({
+    name: 'case-execution',
+    params: { id: item.id },
+    query: {
+      workspace: item.workspaceCode || props.workspaceCode,
+    },
+  })
 }
 
 function openReviewDialog(item: CaseSummaryItem) {
@@ -846,9 +865,9 @@ defineExpose({
                 size="small"
                 type="primary"
                 :disabled="runningCaseId === item.id"
-                @click="handleRunCase(item)"
+                @click="openExecutionPage(item)"
               >
-                {{ runningCaseId === item.id ? '执行中' : '执行' }}
+                执行
               </el-button>
               <el-dropdown trigger="click">
                 <el-button text size="small" type="primary" class="case-list-panel__more-button">
