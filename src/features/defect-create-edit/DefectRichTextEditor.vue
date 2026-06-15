@@ -204,6 +204,7 @@ const editor = useEditor({
       heading: {
         levels: [1, 2, 3, 4, 5, 6],
       },
+      underline: false,
     }),
     TextStyle,
     FontSize,

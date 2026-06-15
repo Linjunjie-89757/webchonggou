@@ -22,6 +22,7 @@ const props = withDefaults(
     emptyDescription?: string
     showDownload?: boolean
     showRemove?: boolean
+    showImageGroupTitle?: boolean
   }>(),
   {
     previewUrls: () => [],
@@ -31,6 +32,7 @@ const props = withDefaults(
     emptyDescription: '当前还没有上传截图、日志或其他证据文件。',
     showDownload: true,
     showRemove: true,
+    showImageGroupTitle: true,
   },
 )
 
@@ -143,7 +145,7 @@ function getFileMeta(item: DefectAttachmentPanelItem) {
 <template>
   <div v-if="items.length" class="defect-attachment-panel">
     <div v-if="imageItems.length" class="defect-attachment-panel__group">
-      <div class="defect-attachment-panel__group-title">图片证据</div>
+      <div v-if="showImageGroupTitle" class="defect-attachment-panel__group-title">图片证据</div>
       <div class="defect-attachment-panel__image-grid">
         <div
           v-for="item in imageItems"

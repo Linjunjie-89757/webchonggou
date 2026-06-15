@@ -39,7 +39,7 @@ export function getCaseExecutionStatusMeta(status: string) {
     return { label: '失败', tone: 'danger' as const }
   }
   if (status === 'BLOCKED') {
-    return { label: '阻塞中', tone: 'primary' as const }
+    return { label: '阻塞中', tone: 'warning' as const }
   }
   return { label: '未执行', tone: 'default' as const }
 }

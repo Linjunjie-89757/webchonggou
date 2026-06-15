@@ -1,4 +1,4 @@
-import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
+import { httpDelete, httpGet, httpPost, httpPut, request, type ApiResponse } from '@/shared/api/request'
 
 import type {
   BatchUpdateCasesPayload,
@@ -6,6 +6,7 @@ import type {
   BatchDeleteCasesPayload,
   BatchMoveCasesPayload,
   CaseDetail,
+  CaseExecutionAttachment,
   CaseDirectoryWorkspace,
   CreateCaseDirectoryPayload,
   CaseListQuery,
@@ -42,6 +43,25 @@ function unwrapApiResponse<T>(payload: ApiResponse<T>) {
   }
 
   return payload.data
+}
+
+function normalizeCaseAttachment(item: CaseExecutionAttachment): CaseExecutionAttachment {
+  return {
+    ...item,
+    fileName: item.fileName || '-',
+    fileSize: item.fileSize ?? null,
+    contentType: item.contentType || null,
+    downloadUrl: item.downloadUrl || null,
+    uploadedByName: item.uploadedByName || null,
+    createdAt: item.createdAt || null,
+  }
+}
+
+function normalizeCaseDetail(item: CaseDetail): CaseDetail {
+  return {
+    ...item,
+    attachments: Array.isArray(item.attachments) ? item.attachments.map(normalizeCaseAttachment) : [],
+  }
 }
 
 export const caseApi = {
@@ -111,7 +131,7 @@ export const caseApi = {
       headers: workspaceHeaders(workspaceCode),
     })
 
-    return unwrapApiResponse(payload)
+    return normalizeCaseDetail(unwrapApiResponse(payload))
   },
 
   async createCase(workspaceCode = 'ALL', payload: SaveCasePayload) {
@@ -147,7 +167,42 @@ export const caseApi = {
       headers: workspaceHeaders(workspaceCode),
     })
 
-    return unwrapApiResponse(response)
+    return normalizeCaseDetail(unwrapApiResponse(response))
+  },
+
+  async uploadCaseExecutionAttachments(workspaceCode = 'ALL', id: number, files: File[]) {
+    const formData = new FormData()
+    files.forEach(file => formData.append('files', file))
+    const payload = await httpPost<ApiResponse<CaseExecutionAttachment[]>, FormData>(
+      `/cases/${id}/attachments`,
+      formData,
+      {
+        headers: {
+          ...workspaceHeaders(workspaceCode),
+          'Content-Type': 'multipart/form-data',
+        },
+      },
+    )
+
+    const attachments = unwrapApiResponse(payload)
+    return Array.isArray(attachments) ? attachments.map(normalizeCaseAttachment) : []
+  },
+
+  async downloadCaseExecutionAttachment(workspaceCode = 'ALL', caseId: number, attachmentId: number) {
+    const response = await request.get<Blob>(`/cases/${caseId}/attachments/${attachmentId}/download`, {
+      headers: workspaceHeaders(workspaceCode),
+      responseType: 'blob',
+    })
+
+    return response.data
+  },
+
+  async deleteCaseExecutionAttachment(workspaceCode = 'ALL', caseId: number, attachmentId: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/cases/${caseId}/attachments/${attachmentId}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
   },
 
   async reviewCase(id: number, workspaceCode = 'ALL', payload: ReviewCasePayload) {

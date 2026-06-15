@@ -29,8 +29,15 @@ const meta = computed(() => getCaseExecutionStatusMeta(props.status))
   background: var(--app-bg-panel);
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-xs);
+  font-weight: 500;
   line-height: var(--app-line-height-xs);
   white-space: nowrap;
+}
+
+.case-badge--warning {
+  border-color: #fed7aa;
+  background: var(--app-warning-soft);
+  color: var(--app-warning);
 }
 
 .case-badge--primary {

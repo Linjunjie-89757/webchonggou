@@ -20,6 +20,7 @@ import DefectCaseAssociateDialog from '@/features/defect-case-associate/DefectCa
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDrawer from '@/shared/ui/app-drawer/AppDrawer.vue'
+import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 type DefectActivityRecord = Record<string, unknown>

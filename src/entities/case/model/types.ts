@@ -43,7 +43,17 @@ export interface CaseDetail extends CaseSummaryItem {
   precondition: string | null
   steps: string | null
   expectedResult: string | null
-  attachments?: unknown[]
+  attachments?: CaseExecutionAttachment[]
+}
+
+export interface CaseExecutionAttachment {
+  id: number
+  fileName: string
+  fileSize: number | null
+  contentType: string | null
+  downloadUrl: string | null
+  uploadedByName: string | null
+  createdAt: string | null
 }
 
 export interface SaveCasePayload {
