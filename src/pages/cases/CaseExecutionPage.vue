@@ -949,7 +949,7 @@ function applySidebarExecutionStatus(value: string | number | object) {
 function goBackToCaseManagement() {
   const query = contextState.value?.returnQuery
   void router.push({
-    name: 'cases',
+    name: 'cases-manage',
     query: query && Object.keys(query).length ? query : { workspace: effectiveWorkspaceCode.value },
   })
 }

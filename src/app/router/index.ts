@@ -3,6 +3,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
 import ApiAutomationPage from '@/pages/automation-api/ApiAutomationPage.vue'
+import CaseCenterPage from '@/pages/cases/CaseCenterPage.vue'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
 import DefectDetailPage from '@/pages/defects/DefectDetailPage.vue'
@@ -55,21 +56,70 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'cases',
-        name: 'cases',
-        component: CasesPage,
+        component: CaseCenterPage,
         meta: {
           title: '用例中心',
           description: '后续按目录树、筛选区、表格、抽屉等区域拆分。',
         },
+        children: [
+          {
+            path: '',
+            redirect: to => ({ path: '/cases/manage', query: to.query, hash: to.hash }),
+          },
+          {
+            path: 'manage',
+            name: 'cases-manage',
+            component: CasesPage,
+            meta: {
+              title: '用例中心',
+              description: '按旧项目方向重建用例管理页。',
+            },
+          },
+          {
+            path: 'manage/execute/:id',
+            name: 'case-execution',
+            component: () => import('@/pages/cases/CaseExecutionPage.vue'),
+            meta: {
+              title: '用例执行',
+              description: '按旧项目执行工作台方向接入用例执行。',
+            },
+          },
+          {
+            path: 'ai-generate',
+            name: 'cases-ai-generate',
+            component: PlaceholderPage,
+            meta: {
+              title: '用例中心',
+              description: 'AI 用例生成页面将按旧项目方向后续补齐。',
+            },
+          },
+          {
+            path: 'ai-records',
+            name: 'cases-ai-records',
+            component: PlaceholderPage,
+            meta: {
+              title: '用例中心',
+              description: 'AI 生成记录页面将按旧项目方向后续补齐。',
+            },
+          },
+          {
+            path: 'ai-config',
+            name: 'cases-ai-config',
+            component: PlaceholderPage,
+            meta: {
+              title: '用例中心',
+              description: 'AI 配置页面将按旧项目方向后续补齐。',
+            },
+          },
+        ],
       },
       {
         path: 'cases/:id/execute',
-        name: 'case-execution',
-        component: () => import('@/pages/cases/CaseExecutionPage.vue'),
-        meta: {
-          title: '用例执行',
-          description: '按旧项目执行工作台方向接入用例执行。',
-        },
+        redirect: to => ({
+          path: `/cases/manage/execute/${to.params.id}`,
+          query: to.query,
+          hash: to.hash,
+        }),
       },
       {
         path: 'bugs',
