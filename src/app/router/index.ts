@@ -3,6 +3,9 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
 import ApiAutomationPage from '@/pages/automation-api/ApiAutomationPage.vue'
+import CaseAiConfigPage from '@/pages/cases/CaseAiConfigPage.vue'
+import CaseAiGeneratePage from '@/pages/cases/CaseAiGeneratePage.vue'
+import CaseAiRecordsPage from '@/pages/cases/CaseAiRecordsPage.vue'
 import CaseCenterPage from '@/pages/cases/CaseCenterPage.vue'
 import CasesPage from '@/pages/cases/CasesPage.vue'
 import ConfigCenterPage from '@/pages/config-center/ConfigCenterPage.vue'
@@ -87,7 +90,7 @@ const routes: RouteRecordRaw[] = [
           {
             path: 'ai-generate',
             name: 'cases-ai-generate',
-            component: PlaceholderPage,
+            component: CaseAiGeneratePage,
             meta: {
               title: '用例中心',
               description: 'AI 用例生成页面将按旧项目方向后续补齐。',
@@ -96,7 +99,7 @@ const routes: RouteRecordRaw[] = [
           {
             path: 'ai-records',
             name: 'cases-ai-records',
-            component: PlaceholderPage,
+            component: CaseAiRecordsPage,
             meta: {
               title: '用例中心',
               description: 'AI 生成记录页面将按旧项目方向后续补齐。',
@@ -105,7 +108,7 @@ const routes: RouteRecordRaw[] = [
           {
             path: 'ai-config',
             name: 'cases-ai-config',
-            component: PlaceholderPage,
+            component: CaseAiConfigPage,
             meta: {
               title: '用例中心',
               description: 'AI 配置页面将按旧项目方向后续补齐。',
