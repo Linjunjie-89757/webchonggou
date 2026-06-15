@@ -106,6 +106,15 @@ const routes: RouteRecordRaw[] = [
             },
           },
           {
+            path: 'ai-records/:taskId',
+            name: 'cases-ai-record-detail',
+            component: () => import('@/pages/cases/CaseAiRecordDetailPage.vue'),
+            meta: {
+              title: '用例中心',
+              description: 'AI 生成记录详情页将按旧项目方向后续补齐。',
+            },
+          },
+          {
             path: 'ai-config',
             name: 'cases-ai-config',
             component: CaseAiConfigPage,

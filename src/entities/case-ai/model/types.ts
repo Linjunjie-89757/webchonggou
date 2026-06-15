@@ -119,11 +119,18 @@ export interface GeneratedAiCaseItem {
   precondition: string | null
   steps: string | null
   expectedResult: string | null
+  riskNotes?: string | null
   testAngle: string | null
   sceneFocus: string | null
   generationReason: string | null
   requirementEvidence: string | null
   aiSource: string | null
+  reviewComment?: string | null
+  optimizationReason?: string | null
+  supplementReason?: string | null
+  coverageGap?: string | null
+  originalCaseSnapshot?: GeneratedAiCaseItem | null
+  warnings?: string[] | null
   ownerId?: number | null
   ownerName?: string | null
   directoryId?: number | null
@@ -136,6 +143,9 @@ export interface GeneratedAiCaseItem {
   aiReviewStructured?: boolean | null
   aiCoverageComment?: string | null
   aiEvidenceComment?: string | null
+  manualEdited?: boolean | null
+  manualEditedByName?: string | null
+  manualEditedAt?: string | null
 }
 
 export interface AiReviewResult {
@@ -213,6 +223,10 @@ export interface CreateAiGenerationTaskPayload {
 }
 
 export interface UpdateAiGenerationTaskPayload {
+  workspaceCode?: string
+  directoryId?: number | null
+  directoryName?: string | null
+  generatedCases?: GeneratedAiCaseItem[]
   adoptedCaseIndexes?: number[]
   deletedCaseIndexes?: number[]
   savedCaseCount?: number

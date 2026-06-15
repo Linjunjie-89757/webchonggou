@@ -736,10 +736,12 @@ async function openScopedProcessDialog(source: DirectoryPickerMode) {
 
 function openTaskDetail(taskId: string) {
   void router.push({
-    name: 'cases-ai-records',
+    name: 'cases-ai-record-detail',
+    params: {
+      taskId,
+    },
     query: {
       workspace: targetWorkspaceCode.value || undefined,
-      taskId,
     },
   })
 }
