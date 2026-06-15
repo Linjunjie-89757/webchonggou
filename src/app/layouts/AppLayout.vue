@@ -62,10 +62,30 @@ const navigationTargetQuery = computed(() => ({
   workspace: selectedWorkspaceCode.value,
 }))
 
-const navigationItems = [
+interface NavigationItem {
+  path: string
+  label: string
+  icon: typeof Grid
+  children?: Array<{
+    path: string
+    label: string
+  }>
+}
+
+const navigationItems: NavigationItem[] = [
   { path: '/', label: '工作台', icon: Grid },
   { path: '/config-center', label: '配置中心', icon: Setting },
-  { path: '/cases', label: '用例中心', icon: Files },
+  {
+    path: '/cases',
+    label: '用例中心',
+    icon: Files,
+    children: [
+      { path: '/cases/manage', label: '用例管理' },
+      { path: '/cases/ai-generate', label: 'AI 用例生成' },
+      { path: '/cases/ai-records', label: 'AI 生成记录' },
+      { path: '/cases/ai-config', label: 'AI 配置' },
+    ],
+  },
   { path: '/bugs', label: '缺陷管理', icon: Warning },
   { path: '/automation/api', label: '接口自动化', icon: Cpu },
   { path: '/automation/web', label: 'Web UI 自动化', icon: Monitor },
@@ -73,8 +93,19 @@ const navigationItems = [
   { path: '/settings', label: '系统设置', icon: User },
 ]
 
-function isNavigationActive(path: string) {
-  return route.path === path
+function matchesNavigationPath(path: string) {
+  return route.path === path || route.path.startsWith(`${path}/`)
+}
+
+function isNavigationItemActive(item: NavigationItem) {
+  if (item.children?.length) {
+    return item.children.some(child => matchesNavigationPath(child.path)) || matchesNavigationPath(item.path)
+  }
+  return matchesNavigationPath(item.path)
+}
+
+function isNavigationChildActive(path: string) {
+  return matchesNavigationPath(path)
 }
 
 function resolveInitialWorkspaceCode(items: WorkspaceItem[]) {
@@ -164,18 +195,38 @@ onMounted(() => {
       </div>
 
       <nav class="app-layout__nav" aria-label="主导航">
-        <RouterLink
+        <div
           v-for="item in navigationItems"
           :key="item.path"
-          class="app-layout__nav-item"
-          :class="{ 'is-active': isNavigationActive(item.path) }"
-          :to="{ path: item.path, query: navigationTargetQuery }"
+          class="app-layout__nav-group"
+          :class="{ 'is-active': isNavigationItemActive(item) }"
         >
-          <el-icon class="app-layout__nav-icon">
-            <component :is="item.icon" />
-          </el-icon>
-          <span>{{ item.label }}</span>
-        </RouterLink>
+          <RouterLink
+            class="app-layout__nav-item"
+            :class="{
+              'is-active': isNavigationItemActive(item),
+              'has-children': Boolean(item.children?.length),
+            }"
+            :to="{ path: item.path, query: navigationTargetQuery }"
+          >
+            <el-icon class="app-layout__nav-icon">
+              <component :is="item.icon" />
+            </el-icon>
+            <span>{{ item.label }}</span>
+          </RouterLink>
+
+          <div v-if="item.children?.length" class="app-layout__nav-children">
+            <RouterLink
+              v-for="child in item.children"
+              :key="child.path"
+              class="app-layout__nav-child"
+              :class="{ 'is-active': isNavigationChildActive(child.path) }"
+              :to="{ path: child.path, query: navigationTargetQuery }"
+            >
+              <span>{{ child.label }}</span>
+            </RouterLink>
+          </div>
+        </div>
       </nav>
     </aside>
 
@@ -290,8 +341,14 @@ onMounted(() => {
 .app-layout__nav {
   display: flex;
   flex-direction: column;
-  gap: var(--app-space-1);
+  gap: var(--app-space-2);
   padding: var(--app-space-4) var(--app-space-3);
+}
+
+.app-layout__nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .app-layout__nav-item {
@@ -308,6 +365,10 @@ onMounted(() => {
   transition: background-color 160ms ease, color 160ms ease;
 }
 
+.app-layout__nav-item.has-children {
+  font-weight: 600;
+}
+
 .app-layout__nav-item:hover {
   background: var(--app-bg-muted);
   color: var(--app-text-primary);
@@ -321,6 +382,36 @@ onMounted(() => {
 .app-layout__nav-icon {
   width: 18px;
   font-size: 18px;
+}
+
+.app-layout__nav-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 34px;
+}
+
+.app-layout__nav-child {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: var(--app-radius-md);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-sm);
+  text-decoration: none;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.app-layout__nav-child:hover {
+  background: var(--app-bg-muted);
+  color: var(--app-text-primary);
+}
+
+.app-layout__nav-child.is-active {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .app-layout__body {
@@ -519,13 +610,17 @@ onMounted(() => {
   }
 
   .app-layout__nav {
-    overflow-x: auto;
-    flex-direction: row;
+    gap: var(--app-space-2);
     padding: var(--app-space-3);
   }
 
-  .app-layout__nav-item {
-    flex: 0 0 auto;
+  .app-layout__nav-item,
+  .app-layout__nav-child {
+    min-width: 0;
+  }
+
+  .app-layout__nav-children {
+    padding-left: 30px;
   }
 
   .app-layout__body {

@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
     <section class="case-ai-config-page">
       <div class="case-ai-config-page__tip">
         <div class="case-ai-config-page__tip-copy">
-          <Cpu class="case-ai-config-page__tip-icon" />
+          <Info class="case-ai-config-page__tip-icon" />
           <span>
             模型来自 AI 连接池，现有 <strong>{{ totalModelCount }}</strong> 个可选模型。若当前没有可用连接，请前往
             <button type="button" class="case-ai-config-page__tip-link" @click="goToAiConnections">
@@ -562,6 +562,7 @@ onBeforeUnmount(() => {
 
           <AppButton
             v-if="canBootstrapFromLegacy"
+            class="case-ai-config-page__tip-button"
             :icon="Wrench"
             :loading="bootstrapping"
             @click="bootstrapLegacyConfig"
@@ -822,8 +823,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--app-space-4);
-  padding: 16px 20px;
+  gap: var(--app-space-3);
+  min-height: 52px;
+  padding: 14px var(--app-space-4);
   border: 1px solid #bfdbfe;
   border-radius: var(--app-radius-lg);
   background: var(--app-primary-soft);
@@ -835,14 +837,16 @@ onBeforeUnmount(() => {
   gap: var(--app-space-3);
   min-width: 0;
   color: var(--app-primary-hover);
-  font-size: var(--app-font-size-md);
-  line-height: var(--app-line-height-md);
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .case-ai-config-page__tip-icon {
   width: 16px;
   height: 16px;
   flex: 0 0 16px;
+  color: var(--app-primary);
+  stroke-width: 2;
 }
 
 .case-ai-config-page__tip-link {
@@ -851,6 +855,7 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
   cursor: pointer;
   font: inherit;
+  font-weight: 500;
   padding: 0;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -859,12 +864,32 @@ onBeforeUnmount(() => {
 .case-ai-config-page__tip-actions {
   display: flex;
   align-items: center;
-  gap: var(--app-space-3);
+  gap: 10px;
   flex: 0 0 auto;
 }
 
 .case-ai-config-page__workspace-select {
-  width: 220px;
+  width: 228px;
+}
+
+.case-ai-config-page__workspace-select :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border-radius: var(--app-radius-lg);
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+.case-ai-config-page__workspace-select :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px #bfdbfe inset;
+}
+
+.case-ai-config-page__workspace-select :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1px var(--app-primary) inset, 0 0 0 2px rgb(59 130 246 / 0.12);
+}
+
+.case-ai-config-page__tip-button {
+  height: 38px;
+  border-radius: var(--app-radius-lg);
+  box-shadow: none;
 }
 
 .case-ai-config-page__state {
@@ -949,16 +974,16 @@ onBeforeUnmount(() => {
 .case-ai-role-card__heading h3 {
   margin: 0;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-md);
+  font-size: 14px;
   font-weight: 600;
-  line-height: var(--app-line-height-md);
+  line-height: 20px;
 }
 
 .case-ai-role-card__heading p {
   margin: 2px 0 0;
   color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
-  line-height: var(--app-line-height-xs);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .case-ai-role-card__body {
@@ -966,7 +991,7 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   flex-direction: column;
-  gap: var(--app-space-4);
+  gap: 14px;
   padding: var(--app-space-4) var(--app-space-6);
 }
 
@@ -994,16 +1019,16 @@ onBeforeUnmount(() => {
 .case-ai-role-card__label,
 .case-ai-role-card__slider-label {
   color: var(--app-text-secondary);
-  font-size: var(--app-font-size-md);
+  font-size: 14px;
   font-weight: 500;
-  line-height: var(--app-line-height-md);
+  line-height: 20px;
 }
 
 .case-ai-role-card__help {
   margin-top: -4px;
   color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
-  line-height: var(--app-line-height-xs);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .case-ai-role-card__field-actions,
@@ -1075,7 +1100,7 @@ onBeforeUnmount(() => {
 .case-ai-role-card__model-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -1086,15 +1111,16 @@ onBeforeUnmount(() => {
 
 .case-ai-role-card__model-trigger {
   width: 100%;
-  min-height: 42px;
+  height: 42px;
   gap: 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
   color: var(--app-text-secondary);
-  padding: 10px 12px;
-  font-size: var(--app-font-size-md);
-  line-height: var(--app-line-height-md);
+  padding: 0 12px;
+  font-size: 14px;
+  line-height: 20px;
+  box-shadow: none;
   transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -1109,7 +1135,9 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-width: 0;
   color: #1f2937;
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1118,6 +1146,8 @@ onBeforeUnmount(() => {
 .case-ai-role-card__model-placeholder {
   flex: 1 1 auto;
   color: var(--app-text-subtle);
+  font-size: 14px;
+  line-height: 20px;
   text-align: left;
 }
 
@@ -1271,9 +1301,10 @@ onBeforeUnmount(() => {
   background: var(--app-bg-panel);
   color: var(--app-text-secondary);
   padding: 0 14px;
-  font-size: var(--app-font-size-md);
-  line-height: var(--app-line-height-md);
+  font-size: 14px;
+  line-height: 20px;
   white-space: nowrap;
+  box-shadow: none;
   transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
@@ -1319,8 +1350,8 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 30;
   top: 50%;
-  left: 20px;
-  width: 208px;
+  left: calc(100% + 8px);
+  width: 220px;
   transform: translateY(-50%) translateX(-2px);
   border-radius: var(--app-radius-lg);
   background: var(--app-text-primary);
@@ -1507,9 +1538,11 @@ onBeforeUnmount(() => {
   border-radius: var(--app-radius-lg);
   background: var(--app-primary);
   color: #fff;
-  font-size: var(--app-font-size-md);
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
   white-space: nowrap;
+  box-shadow: none;
   transition: background 150ms ease, transform 150ms ease;
 }
 
