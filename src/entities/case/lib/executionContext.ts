@@ -1,4 +1,4 @@
-import type { CaseSummaryItem } from '../model/types'
+import type { CaseClientFilter, CaseSummaryItem } from '../model/types'
 
 const CASE_EXECUTION_CONTEXT_KEY = 'case-execution-context-v1'
 
@@ -8,6 +8,7 @@ export interface CaseExecutionContext {
   selectedDirectoryId: number | null
   selectedNodeId: string | null
   sourceLabel: string
+  filter: CaseClientFilter | null
   items: CaseSummaryItem[]
 }
 
@@ -24,6 +25,21 @@ function isCaseSummaryItem(value: unknown): value is CaseSummaryItem {
   return typeof candidate.id === 'number'
     && typeof candidate.caseNo === 'string'
     && typeof candidate.title === 'string'
+    && typeof candidate.workspaceCode === 'string'
+}
+
+function isCaseClientFilter(value: unknown): value is CaseClientFilter {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<CaseClientFilter>
+  return typeof candidate.keyword === 'string'
+    && typeof candidate.priority === 'string'
+    && typeof candidate.reviewStatus === 'string'
+    && typeof candidate.executionStatus === 'string'
+    && typeof candidate.executorName === 'string'
+    && typeof candidate.createdByName === 'string'
     && typeof candidate.workspaceCode === 'string'
 }
 
@@ -55,6 +71,7 @@ export function loadCaseExecutionContext(): CaseExecutionContext | null {
       selectedDirectoryId: typeof parsed.selectedDirectoryId === 'number' ? parsed.selectedDirectoryId : null,
       selectedNodeId: typeof parsed.selectedNodeId === 'string' ? parsed.selectedNodeId : null,
       sourceLabel: typeof parsed.sourceLabel === 'string' ? parsed.sourceLabel : '',
+      filter: isCaseClientFilter(parsed.filter) ? parsed.filter : null,
       items: parsed.items,
     }
   } catch {

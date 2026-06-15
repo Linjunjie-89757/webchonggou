@@ -628,7 +628,7 @@ watch(
     <div class="defect-edit-page__shell">
       <header class="defect-edit-page__header">
         <div class="defect-edit-page__backbar">
-          <el-button text :icon="ArrowLeft" class="defect-edit-page__back-button" @click="goBack">
+          <el-button :icon="ArrowLeft" class="defect-edit-page__back-button" @click="goBack">
             返回缺陷管理
           </el-button>
         </div>
@@ -844,10 +844,22 @@ watch(
 }
 
 .defect-edit-page__back-button {
-  padding: 0;
+  min-height: 32px;
+  padding: 0 12px;
+  border-color: var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+}
+
+.defect-edit-page__back-button:hover,
+.defect-edit-page__back-button:focus-visible {
+  border-color: #93c5fd;
+  background: var(--app-primary-soft);
   color: var(--app-primary);
-  font-size: 13px;
-  font-weight: 600;
+  outline: none;
 }
 
 .defect-edit-page__titlebar {

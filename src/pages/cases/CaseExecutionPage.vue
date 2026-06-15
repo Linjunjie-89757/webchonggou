@@ -13,9 +13,12 @@ import {
   formatCaseDateTime,
   getCaseDirectoryText,
   loadCaseExecutionContext,
+  matchesCaseClientFilter,
   type CaseDetail,
+  type CaseClientFilter,
   type CaseDirectoryWorkspace,
   type CaseExecutionAttachment,
+  type CaseExecutionHistoryItem,
   type CaseExecutionContext,
   type CaseSummaryItem,
   type RunCasePayload,
@@ -60,6 +63,9 @@ const executionCases = ref<CaseSummaryItem[]>([])
 const activeTab = ref('detail')
 const sidebarKeyword = ref('')
 const sidebarExecutionStatus = ref('')
+const executionHistory = ref<CaseExecutionHistoryItem[]>([])
+const historyLoading = ref(false)
+const historyErrorMessage = ref('')
 const actualResult = ref('')
 const executionNote = ref('')
 const pendingAttachments = ref<Array<{
@@ -95,8 +101,10 @@ const editDrawerVisible = ref(false)
 const editSaving = ref(false)
 const directories = ref<CaseDirectoryWorkspace[]>([])
 let detailRequestSeq = 0
+let historyRequestSeq = 0
 let defectsRequestSeq = 0
 let defectAssociateRequestSeq = 0
+let queueRequestSeq = 0
 
 const currentCaseId = computed(() => {
   const rawId = Array.isArray(route.params.id) ? route.params.id[0] : route.params.id
@@ -143,11 +151,18 @@ const activeCaseDisplayIndex = computed(() => (currentVisibleIndex.value >= 0 ? 
 const canMovePrevious = computed(() => currentVisibleIndex.value > 0)
 const canMoveNext = computed(() => currentVisibleIndex.value >= 0 && currentVisibleIndex.value < visibleExecutionCases.value.length - 1)
 
+const pageCaseNo = computed(() => {
+  if (!detail.value) {
+    return ''
+  }
+  return `[${detail.value.caseNo}]`
+})
+
 const pageTitle = computed(() => {
   if (!detail.value) {
     return '用例执行'
   }
-  return `[${detail.value.caseNo}] ${detail.value.title}`
+  return detail.value.title
 })
 
 const modulePath = computed(() => {
@@ -162,18 +177,14 @@ const modulePath = computed(() => {
   return segments.join(' / ')
 })
 
-const historyRows = computed(() => {
-  if (!detail.value?.executedAt && !detail.value?.executorName && !detail.value?.executionComment && !detail.value?.executionNote) {
-    return []
-  }
-
-  return [{
-    status: detail.value.executionStatus || 'NOT_RUN',
-    executorName: detail.value.executorName || '-',
-    executedAt: formatCaseDateTime(detail.value.executedAt),
-    comment: detail.value.executionComment || detail.value.executionNote || '-',
-  }]
-})
+const historyRows = computed(() => executionHistory.value.map(item => ({
+  id: item.id,
+  status: item.executionStatus || 'NOT_RUN',
+  executorName: item.executorName || '-',
+  executedAt: formatCaseDateTime(item.executedAt),
+  executionComment: item.executionComment || '-',
+  executionNote: item.executionNote || '-',
+})))
 
 const pendingAttachmentPreviewUrls = computed(() => (
   pendingAttachments.value.map(item => item.previewUrl).filter((item): item is string => !!item)
@@ -221,6 +232,14 @@ const availableAssociateDefects = computed(() => {
 })
 
 const canSubmitDefect = computed(() => !defectSaving.value)
+
+function canDefectSummaryBelongToCase(item: DefectSummaryItem, caseId: number) {
+  if (item.relatedCaseId === caseId) {
+    return true
+  }
+
+  return item.relatedCaseCount > 0
+}
 
 function displayText(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === '') {
@@ -294,6 +313,28 @@ async function loadAttachmentImageUrls(row: CaseDetail | null) {
     }
   }
   attachmentImageUrls.value = nextUrls
+}
+
+async function loadExecutionHistory(caseId: number) {
+  const requestSeq = ++historyRequestSeq
+  historyLoading.value = true
+  historyErrorMessage.value = ''
+  try {
+    const page = await caseApi.getCaseExecutionHistory(caseId, effectiveWorkspaceCode.value)
+    if (requestSeq !== historyRequestSeq) {
+      return
+    }
+    executionHistory.value = page.items ?? []
+  } catch (error) {
+    if (requestSeq === historyRequestSeq) {
+      executionHistory.value = []
+      historyErrorMessage.value = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestSeq === historyRequestSeq) {
+      historyLoading.value = false
+    }
+  }
 }
 
 function addPendingAttachments(files: File[]) {
@@ -577,17 +618,107 @@ function buildFallbackQueue(row: CaseDetail) {
   executionCases.value = [row as CaseSummaryItem]
 }
 
+function filterExecutionQueueItems(items: CaseSummaryItem[], filter: CaseClientFilter | null) {
+  return items.filter((item) => {
+    if (!filter) {
+      return true
+    }
+
+    if (!matchesCaseClientFilter(item, filter)) {
+      return false
+    }
+    if (filter.executorName && item.executorName !== filter.executorName) {
+      return false
+    }
+    if (filter.createdByName && item.createdByName !== filter.createdByName) {
+      return false
+    }
+    if (filter.workspaceCode && item.workspaceCode !== filter.workspaceCode) {
+      return false
+    }
+    return true
+  })
+}
+
+async function loadExecutionQueue(row: CaseDetail) {
+  const requestSeq = ++queueRequestSeq
+  const context = contextState.value
+  const workspaceCode = row.workspaceCode || effectiveWorkspaceCode.value
+  const filter = context?.filter ?? null
+
+  if (!context) {
+    executionCases.value = [row as CaseSummaryItem]
+    return
+  }
+
+  try {
+    const firstPage = await caseApi.getCases(workspaceCode, {
+      pageNo: 1,
+      pageSize: 100,
+      directoryId: context.selectedDirectoryId,
+      keyword: filter?.keyword,
+      priority: filter?.priority,
+      reviewStatus: filter?.reviewStatus,
+      executionStatus: filter?.executionStatus,
+    })
+
+    if (requestSeq !== queueRequestSeq) {
+      return
+    }
+
+    const totalPages = Math.max(firstPage.totalPages || 0, 1)
+    const pages = totalPages > 1
+      ? await Promise.all(
+          Array.from({ length: totalPages - 1 }, (_, index) => caseApi.getCases(workspaceCode, {
+            pageNo: index + 2,
+            pageSize: 100,
+            directoryId: context.selectedDirectoryId,
+            keyword: filter?.keyword,
+            priority: filter?.priority,
+            reviewStatus: filter?.reviewStatus,
+            executionStatus: filter?.executionStatus,
+          })),
+        )
+      : []
+
+    if (requestSeq !== queueRequestSeq) {
+      return
+    }
+
+    const items = [firstPage, ...pages].flatMap(page => page.items)
+    const filteredItems = filterExecutionQueueItems(items, filter)
+    executionCases.value = filteredItems.length ? filteredItems : [row as CaseSummaryItem]
+  } catch {
+    executionCases.value = context.items.length ? context.items : [row as CaseSummaryItem]
+  }
+}
+
 async function loadRelatedDefects(row: CaseDetail) {
   const requestSeq = ++defectsRequestSeq
   defectsLoading.value = true
   defectsErrorMessage.value = ''
   try {
+    const workspaceCode = row.workspaceCode || effectiveWorkspaceCode.value
     const page = await defectApi.getDefects(row.workspaceCode || effectiveWorkspaceCode.value, {
       pageNo: 1,
       pageSize: 100,
     })
+    if (requestSeq !== defectsRequestSeq) {
+      return
+    }
+
+    const candidateItems = page.items.filter(item => canDefectSummaryBelongToCase(item, row.id))
+    const relatedFlags = await Promise.all(candidateItems.map(async (item) => {
+      if (item.relatedCaseId === row.id) {
+        return true
+      }
+
+      const relatedCases = await defectApi.getDefectCases(workspaceCode, item.id)
+      return relatedCases.some(caseItem => caseItem.id === row.id)
+    }))
+
     if (requestSeq === defectsRequestSeq) {
-      relatedDefects.value = page.items.filter(item => item.relatedCaseId === row.id)
+      relatedDefects.value = candidateItems.filter((_, index) => relatedFlags[index])
     }
   } catch (error) {
     if (requestSeq === defectsRequestSeq) {
@@ -756,6 +887,8 @@ async function loadCaseDetail(caseId: number) {
   const requestSeq = ++detailRequestSeq
   loading.value = true
   errorMessage.value = ''
+  executionHistory.value = []
+  historyErrorMessage.value = ''
   try {
     const row = await caseApi.getCaseDetail(caseId, effectiveWorkspaceCode.value)
     if (requestSeq !== detailRequestSeq) {
@@ -765,8 +898,10 @@ async function loadCaseDetail(caseId: number) {
     syncExecutionInputs(row)
     updateExecutionCollection(row)
     buildFallbackQueue(row)
+    void loadExecutionQueue(row)
     void loadAttachmentImageUrls(row)
     void loadRelatedDefects(row)
+    void loadExecutionHistory(row.id)
   } catch (error) {
     if (requestSeq === detailRequestSeq) {
       errorMessage.value = getRequestErrorMessage(error)
@@ -880,6 +1015,7 @@ async function submitExecution(status: string) {
     detail.value = row
     syncExecutionInputs(row)
     updateExecutionCollection(row)
+    void loadExecutionHistory(row.id)
     ElMessage.success('执行结果已更新')
     if (autoNext.value && canMoveNext.value) {
       moveCase(1)
@@ -900,6 +1036,15 @@ watch(
   (caseId) => {
     if (caseId !== null) {
       void loadCaseDetail(caseId)
+    }
+  },
+)
+
+watch(
+  activeTab,
+  (tab) => {
+    if (tab === 'history' && detail.value) {
+      void loadExecutionHistory(detail.value.id)
     }
   },
 )
@@ -1004,7 +1149,7 @@ onBeforeUnmount(() => {
 
     <main class="case-execution-page__main">
       <div class="case-execution-page__backbar">
-        <el-button text :icon="ArrowLeft" @click="goBackToCaseManagement">返回用例管理</el-button>
+        <el-button class="case-execution-page__back-button" :icon="ArrowLeft" @click="goBackToCaseManagement">返回用例管理</el-button>
       </div>
 
       <AppLoadingState v-if="loading && !detail" text="正在加载执行用例..." />
@@ -1019,7 +1164,10 @@ onBeforeUnmount(() => {
         <header class="case-execution-page__header">
           <div class="case-execution-page__title-block">
             <CaseExecutionStatusBadge :status="detail.executionStatus || 'NOT_RUN'" />
-            <h1>{{ pageTitle }}</h1>
+            <h1>
+              <span v-if="pageCaseNo" class="case-execution-page__title-code">{{ pageCaseNo }}</span>
+              <span class="case-execution-page__title-text">{{ pageTitle }}</span>
+            </h1>
           </div>
           <AppButton :icon="Edit" @click="openCaseEdit">编辑</AppButton>
         </header>
@@ -1194,10 +1342,11 @@ onBeforeUnmount(() => {
 
             <el-tab-pane label="执行历史" name="history">
               <section class="case-execution-page__history">
-                <div v-if="historyRows.length" class="case-execution-page__history-list">
+                <AppLoadingState v-if="historyLoading" text="正在加载执行历史..." />
+                <div v-else-if="historyRows.length" class="case-execution-page__history-list">
                   <article
                     v-for="item in historyRows"
-                    :key="`${item.status}-${item.executedAt}`"
+                    :key="item.id"
                     class="case-execution-page__history-item"
                   >
                     <div>
@@ -1205,13 +1354,23 @@ onBeforeUnmount(() => {
                       <span>{{ item.executedAt }}</span>
                     </div>
                     <p>执行人：{{ item.executorName }}</p>
-                    <p>{{ item.comment }}</p>
+                    <p>实际结果：{{ item.executionComment }}</p>
+                    <p>备注：{{ item.executionNote }}</p>
                   </article>
                 </div>
                 <AppEmptyState
+                  v-else-if="historyErrorMessage"
+                  title="执行历史加载失败"
+                  :description="historyErrorMessage"
+                >
+                  <template #actions>
+                    <AppButton v-if="detail" @click="loadExecutionHistory(detail.id)">重试</AppButton>
+                  </template>
+                </AppEmptyState>
+                <AppEmptyState
                   v-else
                   title="暂无执行历史"
-                  description="当前接口未返回完整历史列表，先展示最近一次执行信息。"
+                  description="当前用例还没有真实执行记录。"
                 />
               </section>
             </el-tab-pane>
@@ -1541,6 +1700,25 @@ onBeforeUnmount(() => {
   padding: var(--app-space-3) var(--app-space-4) 0;
 }
 
+.case-execution-page__back-button {
+  min-height: 32px;
+  padding: 0 12px;
+  border-color: var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+}
+
+.case-execution-page__back-button:hover,
+.case-execution-page__back-button:focus-visible {
+  border-color: #93c5fd;
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  outline: none;
+}
+
 .case-execution-page__header {
   display: flex;
   align-items: center;
@@ -1558,10 +1736,28 @@ onBeforeUnmount(() => {
 }
 
 .case-execution-page__title-block h1 {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
   overflow: hidden;
   margin: 0;
+}
+
+.case-execution-page__title-code {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.case-execution-page__title-text {
+  min-width: 0;
+  overflow: hidden;
   color: var(--app-text-primary);
   font-size: var(--app-font-size-xl);
+  font-weight: 600;
   line-height: 28px;
   text-overflow: ellipsis;
   white-space: nowrap;

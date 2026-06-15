@@ -39,6 +39,7 @@ export type {
   BatchUpdateCasesResult,
   CaseClientFilter,
   CaseDetail,
+  CaseExecutionHistoryItem,
   CaseExecutionAttachment,
   CaseDirectoryNode,
   CaseDirectoryWorkspace,

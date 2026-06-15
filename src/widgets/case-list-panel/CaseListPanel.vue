@@ -658,6 +658,7 @@ function openExecutionPage(item: CaseSummaryItem) {
     selectedDirectoryId: props.directoryId,
     selectedNodeId: props.selectedNodeId,
     sourceLabel: getCaseDirectoryText(item),
+    filter: { ...props.filter },
     items: cases.value,
   })
 

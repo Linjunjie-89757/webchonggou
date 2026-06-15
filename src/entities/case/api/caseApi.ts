@@ -7,6 +7,7 @@ import type {
   BatchMoveCasesPayload,
   CaseDetail,
   CaseExecutionAttachment,
+  CaseExecutionHistoryItem,
   CaseDirectoryWorkspace,
   CreateCaseDirectoryPayload,
   CaseListQuery,
@@ -168,6 +169,14 @@ export const caseApi = {
     })
 
     return normalizeCaseDetail(unwrapApiResponse(response))
+  },
+
+  async getCaseExecutionHistory(id: number, workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<PageResponse<CaseExecutionHistoryItem>>>(`/cases/${id}/executions`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
   },
 
   async uploadCaseExecutionAttachments(workspaceCode = 'ALL', id: number, files: File[]) {

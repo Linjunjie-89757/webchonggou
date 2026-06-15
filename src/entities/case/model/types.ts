@@ -56,6 +56,17 @@ export interface CaseExecutionAttachment {
   createdAt: string | null
 }
 
+export interface CaseExecutionHistoryItem {
+  id: number
+  caseId: number
+  executionStatus: string
+  executionComment: string | null
+  executionNote: string | null
+  executorId: number | null
+  executorName: string | null
+  executedAt: string | null
+}
+
 export interface SaveCasePayload {
   workspaceCode?: string
   directoryId?: number | null
