@@ -51,6 +51,7 @@ type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
 type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
 type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
+type ApiImportMode = 'curl' | 'swagger' | 'postman' | 'har'
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -209,6 +210,8 @@ const batchAddTarget = ref<BatchAddTarget>('query')
 const batchAddText = ref('')
 const activeAssertionId = ref('')
 const importDialogVisible = ref(false)
+const importMode = ref<ApiImportMode>('curl')
+const importCurlText = ref('')
 const caseDialogVisible = ref(false)
 const caseDialogMode = ref<ApiCaseDialogMode>('create')
 const caseDialogSaving = ref(false)
@@ -289,10 +292,11 @@ const aiCaseCountOptions = [
   { label: '40 条', value: '40' },
 ]
 
-const importCapabilityItems = [
-  { name: 'Swagger / OpenAPI', description: '需要后端解析 OpenAPI 文档并批量创建接口定义', status: '待后端接口' },
-  { name: 'Postman Collection', description: '需要后端解析 Collection v2.0 / v2.1', status: '待后端接口' },
-  { name: 'HAR 文件', description: '需要后端解析浏览器 HTTP Archive 文件', status: '待后端接口' },
+const importCapabilityItems: Array<{ mode: ApiImportMode; name: string; description: string; status: string }> = [
+  { mode: 'curl', name: 'Curl', description: '解析 method、URL、Headers、Body，填充到当前请求', status: '已支持' },
+  { mode: 'swagger', name: 'Swagger / OpenAPI', description: '批量解析 OpenAPI 文档并创建接口定义', status: '待后端接口' },
+  { mode: 'postman', name: 'Postman Collection', description: '解析 Collection v2.0 / v2.1', status: '待后端接口' },
+  { mode: 'har', name: 'HAR 文件', description: '解析浏览器 HTTP Archive 文件', status: '待后端接口' },
 ]
 
 const paramTypeOptions = ['string', 'integer', 'number', 'boolean', 'array', 'json', 'file']
@@ -2199,12 +2203,39 @@ async function promptImportCurl() {
 }
 
 function openImportDialog() {
+  importMode.value = 'curl'
+  importCurlText.value = ''
   importDialogVisible.value = true
 }
 
 function openCurlFromImportDialog() {
+  importMode.value = 'curl'
+}
+
+function closeImportDialog() {
   importDialogVisible.value = false
-  void promptImportCurl()
+}
+
+function submitImportDialog() {
+  if (importMode.value !== 'curl') {
+    ElMessage.info('当前导入类型需要后端接口支持')
+    return
+  }
+  if (!importCurlText.value.trim()) {
+    ElMessage.warning('请粘贴 curl 命令')
+    return
+  }
+  if (!activeEditor.value) {
+    openNewRequestTab()
+  }
+  try {
+    applyCurlToActiveEditor(importCurlText.value)
+    importDialogVisible.value = false
+    importCurlText.value = ''
+    ElMessage.success('Curl 已填充到当前请求')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : 'Curl 解析失败')
+  }
 }
 
 function tokenizeCurl(input: string) {
@@ -3558,31 +3589,48 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <el-dialog v-model="importDialogVisible" title="导入接口" width="560px" append-to-body>
+    <el-dialog v-model="importDialogVisible" title="导入接口" width="640px" append-to-body class="api-import-dialog-shell">
       <div class="api-import-dialog">
-        <div class="api-import-notice">
-          <strong>普通导入暂未接入</strong>
-          <span>当前后端未提供 Swagger / OpenAPI、Postman Collection、HAR 文件导入接口，本轮不伪造导入成功。</span>
-        </div>
-        <div class="api-import-capabilities">
-          <div v-for="item in importCapabilityItems" :key="item.name" class="api-import-capability">
+        <div class="api-import-mode-list">
+          <button
+            v-for="item in importCapabilityItems"
+            :key="item.name"
+            type="button"
+            :class="['api-import-mode', { 'is-active': importMode === item.mode, 'is-disabled': item.mode !== 'curl' }]"
+            @click="importMode = item.mode"
+          >
             <div>
               <strong>{{ item.name }}</strong>
               <span>{{ item.description }}</span>
             </div>
             <em>{{ item.status }}</em>
-          </div>
+          </button>
         </div>
-        <div class="api-import-curl">
-          <div>
+
+        <div v-if="importMode === 'curl'" class="api-import-curl-panel">
+          <div class="api-import-panel-head">
             <strong>Curl 导入当前请求</strong>
-            <span>已支持 method、URL、Headers、Body 的最小解析，会填充到当前打开的请求 tab。</span>
+            <span>支持 method、URL、Headers、Body 的最小解析，会填充到当前打开的请求 tab。</span>
           </div>
-          <button type="button" class="api-sidebar-primary" @click="openCurlFromImportDialog">使用 Curl</button>
+          <el-input
+            v-model="importCurlText"
+            type="textarea"
+            :rows="9"
+            resize="none"
+            placeholder="curl -X POST &quot;https://example.com/api&quot; -H &quot;Content-Type: application/json&quot; -d '{&quot;name&quot;:&quot;demo&quot;}'"
+          />
+        </div>
+        <div v-else class="api-import-pending-panel">
+          <strong>{{ importCapabilityItems.find(item => item.mode === importMode)?.name }} 导入待接入</strong>
+          <span>当前后端未提供该导入接口，本页不伪造导入成功。可先使用 Curl 导入单个请求。</span>
+          <button type="button" class="api-dialog-link-button" @click="openCurlFromImportDialog">切换到 Curl</button>
         </div>
       </div>
       <template #footer>
-        <button type="button" class="api-dialog-cancel" @click="importDialogVisible = false">关闭</button>
+        <div class="api-dialog-footer">
+          <button type="button" class="api-dialog-button" @click="closeImportDialog">取消</button>
+          <button type="button" class="api-dialog-button is-primary" @click="submitImportDialog">导入</button>
+        </div>
       </template>
     </el-dialog>
 
@@ -4131,8 +4179,8 @@ onBeforeUnmount(() => {
 .api-interface-sidebar__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  padding: 14px 16px 0;
+  gap: 6px;
+  padding: 12px 14px 0;
 }
 
 .api-sidebar-primary,
@@ -4140,17 +4188,19 @@ onBeforeUnmount(() => {
 .api-send-button,
 .api-curl-button {
   display: inline-flex;
-  height: 36px;
+  height: 34px;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-sm);
   background: #fff;
   color: var(--app-text-primary);
   cursor: pointer;
   font-size: var(--app-font-size-sm);
   font-weight: 600;
+  line-height: 1;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
 .api-sidebar-primary,
@@ -4163,11 +4213,26 @@ onBeforeUnmount(() => {
 .api-sidebar-secondary:hover,
 .api-curl-button:hover {
   background: var(--app-bg-page);
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+}
+
+.api-sidebar-primary:hover,
+.api-send-button:hover {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
+  filter: brightness(0.96);
+}
+
+.api-sidebar-primary:disabled,
+.api-send-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .api-sidebar-search {
   position: relative;
-  padding: 12px 16px 0;
+  padding: 10px 14px 0;
 }
 
 .api-sidebar-search > .el-icon {
@@ -4415,8 +4480,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 12px 16px 10px;
+  gap: 8px;
+  padding: 10px 14px 8px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -4458,7 +4523,7 @@ onBeforeUnmount(() => {
 .api-method-select :deep(.el-select__wrapper),
 .api-url-compose :deep(.el-input__wrapper),
 .api-curl-button {
-  height: 38px;
+  height: 36px;
   border-radius: 0;
 }
 
@@ -4477,16 +4542,34 @@ onBeforeUnmount(() => {
 }
 
 .api-send-button {
-  width: 96px;
-  height: 38px;
+  width: 92px;
+  height: 36px;
 }
 
 .api-save-dropdown {
-  width: 120px;
+  width: 116px;
 }
 
-.api-save-dropdown :deep(.el-button) {
-  height: 38px;
+.api-save-dropdown :deep(.el-button),
+.api-save-dropdown :deep(.el-button-group > .el-button) {
+  height: 36px;
+  border-radius: var(--app-radius-sm);
+  font-weight: 600;
+}
+
+.api-save-dropdown :deep(.el-button-group > .el-button:first-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.api-save-dropdown :deep(.el-button-group > .el-button:last-child) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.api-save-dropdown :deep(.el-button--primary) {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
 }
 
 .api-editor-scroll {
@@ -4500,23 +4583,23 @@ onBeforeUnmount(() => {
 .api-content-tabs,
 .api-response-tabs {
   display: flex;
-  height: 46px;
+  height: 40px;
   align-items: center;
   gap: 0;
-  padding: 0 16px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--app-border);
 }
 
 .api-content-tab,
 .api-response-tabs button {
   position: relative;
-  height: 46px;
+  height: 40px;
   border: 0;
   background: transparent;
   color: var(--app-text-secondary);
   cursor: pointer;
   font-size: var(--app-font-size-sm);
-  padding: 0 12px;
+  padding: 0 10px;
 }
 
 .api-content-tab.is-active,
@@ -4546,7 +4629,7 @@ onBeforeUnmount(() => {
   min-height: 260px;
   flex: 1 1 320px;
   overflow: auto;
-  padding: 10px 16px 12px;
+  padding: 10px 14px 12px;
   border-bottom: 1px solid var(--app-border);
   background: #fff;
 }
@@ -4554,16 +4637,16 @@ onBeforeUnmount(() => {
 .api-param-table {
   overflow: auto;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
 }
 
 .api-param-toolbar {
   display: flex;
   min-width: 0;
-  height: 38px;
+  height: 34px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  padding: 0 10px;
   border-bottom: 1px solid var(--app-border);
   background: #fff;
   color: var(--app-text-primary);
@@ -4578,7 +4661,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: var(--app-font-size-xs);
   font-weight: 600;
 }
 
@@ -4589,7 +4672,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 42px 1.1fr 48px 120px 1.1fr 170px 74px 1fr 64px;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
+  padding: 5px 10px;
 }
 
 .api-param-table.is-header .api-param-header,
@@ -4605,7 +4688,7 @@ onBeforeUnmount(() => {
 }
 
 .api-param-header {
-  min-height: 36px;
+  min-height: 32px;
   background: var(--app-bg-page);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
@@ -4613,14 +4696,14 @@ onBeforeUnmount(() => {
 }
 
 .api-param-row {
-  min-height: 38px;
+  min-height: 36px;
   border-top: 1px solid var(--app-border-soft);
 }
 
 .api-param-row :deep(.el-input__wrapper),
 .api-param-row :deep(.el-select__wrapper),
 .api-param-row :deep(.el-input-number) {
-  min-height: 30px;
+  min-height: 28px;
 }
 
 .api-length-range {
@@ -4640,12 +4723,13 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
 }
 
 .api-add-row {
-  height: 36px;
-  padding-left: 16px;
+  height: 32px;
+  padding-left: 14px;
 }
 
 .api-body-section {
@@ -5912,7 +5996,10 @@ onBeforeUnmount(() => {
   color: var(--app-text-secondary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
+  font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
+  transition: border-color 0.16s ease, color 0.16s ease;
 }
 
 .api-response-case-button:hover {
@@ -5999,79 +6086,148 @@ onBeforeUnmount(() => {
 .api-directory-empty,
 .api-import-dialog {
   display: grid;
-  gap: 14px;
-}
-
-.api-import-notice {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
-  border: 1px solid var(--app-warning-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-warning-soft);
-}
-
-.api-import-notice strong,
-.api-import-curl strong,
-.api-import-capability strong {
-  color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
-}
-
-.api-import-notice span,
-.api-import-curl span,
-.api-import-capability span {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-sm);
-  line-height: 20px;
-}
-
-.api-import-capabilities {
-  display: grid;
-  gap: 8px;
-}
-
-.api-import-capability,
-.api-import-curl {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 12px;
+}
+
+.api-import-dialog-shell :deep(.el-dialog__body) {
+  padding: 10px 18px 8px;
+}
+
+.api-import-dialog-shell :deep(.el-dialog__footer) {
+  padding: 10px 18px 16px;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.api-import-mode-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.api-import-mode {
+  display: flex;
+  min-height: 76px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-sm);
+  background: #fff;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+}
+
+.api-import-mode:hover,
+.api-import-mode.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+}
+
+.api-import-mode.is-active {
+  box-shadow: inset 0 0 0 1px var(--app-primary);
+}
+
+.api-import-mode.is-disabled:not(.is-active) {
   background: var(--app-bg-subtle);
 }
 
-.api-import-capability > div,
-.api-import-curl > div {
+.api-import-mode > div {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.api-import-capability em {
-  flex: 0 0 auto;
-  padding: 3px 8px;
+.api-import-mode strong,
+.api-import-panel-head strong,
+.api-import-pending-panel strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-import-mode span,
+.api-import-panel-head span,
+.api-import-pending-panel span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  line-height: 18px;
+}
+
+.api-import-mode em {
+  width: fit-content;
+  padding: 2px 7px;
   border-radius: 999px;
   background: var(--app-bg-muted);
   color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  font-size: 11px;
   font-style: normal;
 }
 
-.api-dialog-cancel {
-  height: 32px;
-  padding: 0 14px;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
-  color: var(--app-text-secondary);
-  cursor: pointer;
+.api-import-mode.is-active em {
+  background: #fff;
+  color: var(--app-primary);
 }
 
-.api-dialog-cancel:hover {
-  background: var(--app-bg-muted);
+.api-import-curl-panel,
+.api-import-pending-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-import-panel-head,
+.api-import-pending-panel {
+  align-content: start;
+}
+
+.api-import-panel-head {
+  display: grid;
+  gap: 4px;
+}
+
+.api-import-curl-panel :deep(.el-textarea__inner) {
+  min-height: 176px;
+  border-radius: var(--app-radius-sm);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.api-dialog-button,
+.api-dialog-link-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: #fff;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.api-dialog-button:hover,
+.api-dialog-link-button:hover {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+}
+
+.api-dialog-button.is-primary {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
+  color: #fff;
+}
+
+.api-dialog-link-button {
+  width: fit-content;
 }
 
 .api-batch-dialog p {
@@ -6088,6 +6244,19 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.api-dialog-footer :deep(.el-button) {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--app-radius-sm);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.api-dialog-footer :deep(.el-button--primary) {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
 }
 
 @media (max-width: 1180px) {
