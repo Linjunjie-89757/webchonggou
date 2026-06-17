@@ -18,6 +18,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   apiAutomationApi,
   apiMethodOptions,
+  type ApiAiCaseGenerationEvent,
+  type ApiAiCaseGenerationOptionPayload,
+  type ApiAiGeneratedCaseDraft,
+  type ApiAutomationEnvironmentItem,
+  type ApiAutomationVariableSetItem,
   type ApiDefinitionCaseDetail,
   type ApiDefinitionCaseItem,
   type ApiDefinitionDetail,
@@ -25,20 +30,33 @@ import {
   type ApiDefinitionModuleItem,
   type ApiKeyValueInput,
   type ApiRequestConfigInput,
+  type ApiRunHistoryDetail,
+  type ApiRunHistoryItem,
   type ApiRunResult,
   type ApiRunStepResult,
   type SaveApiDefinitionCasePayload,
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
+import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 
-type RequestContentTab = 'headers' | 'body' | 'params' | 'auth' | 'pre' | 'post' | 'tests' | 'settings' | 'cases'
+type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases'
 type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
 type DirectoryNodeType = 'root' | 'module' | 'request' | 'unassigned'
 type BodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT' | 'BINARY'
-type BatchAddTarget = 'query' | 'header' | 'body-form' | 'assertion'
+type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
+type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
+type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
+type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
+
+interface ApiAiGeneratedCaseResult {
+  id: string
+  status: ApiAiGeneratedCaseStatus
+  draft: ApiAiGeneratedCaseDraft
+  message?: string | null
+}
 
 interface ApiAssertionConfig {
   id?: string
@@ -47,9 +65,28 @@ interface ApiAssertionConfig {
   name?: string
   enabled?: boolean
   subject?: string
+  expressionType?: string
+  expression?: string
   condition?: string
   operator?: string
   expectedValue?: string
+  script?: string | null
+  description?: string | null
+}
+
+interface ApiExtractorConfig {
+  id?: string
+  name?: string
+  enabled?: boolean
+  source?: string
+  sourceType?: string
+  extractType?: string
+  expressionType?: string
+  expression?: string
+  variableName?: string
+  defaultValue?: string | null
+  required?: boolean
+  failOnMissing?: boolean
   description?: string | null
 }
 
@@ -59,7 +96,13 @@ interface ApiProcessorConfig {
   name?: string
   enabled?: boolean
   script?: string | null
+  sql?: string | null
+  dataSourceName?: string | null
   delayMs?: number | null
+  expression?: string | null
+  variableName?: string | null
+  sourceType?: string | null
+  extractType?: string | null
   description?: string | null
 }
 
@@ -108,6 +151,12 @@ const definitionErrorMessage = ref('')
 const modules = ref<ApiDefinitionModuleItem[]>([])
 const definitions = ref<ApiDefinitionItem[]>([])
 const cases = ref<ApiDefinitionCaseItem[]>([])
+const environments = ref<ApiAutomationEnvironmentItem[]>([])
+const variableSets = ref<ApiAutomationVariableSetItem[]>([])
+const runOptionsLoading = ref(false)
+const runOptionsErrorMessage = ref('')
+const selectedEnvironmentId = ref<number | null>(null)
+const selectedVariableSetId = ref<number | null>(null)
 const directoryKeyword = ref('')
 const selectedDirectoryKey = ref('definition-root')
 const expandedKeys = ref<string[]>(['definition-root'])
@@ -118,6 +167,8 @@ const sending = ref(false)
 const batchAddVisible = ref(false)
 const batchAddTarget = ref<BatchAddTarget>('query')
 const batchAddText = ref('')
+const activeAssertionId = ref('')
+const importDialogVisible = ref(false)
 const caseDialogVisible = ref(false)
 const caseDialogMode = ref<ApiCaseDialogMode>('create')
 const caseDialogSaving = ref(false)
@@ -126,6 +177,34 @@ const caseDetailErrorMessage = ref('')
 const editingCaseItem = ref<ApiDefinitionCaseItem | null>(null)
 const editingCaseDetail = ref<ApiDefinitionCaseDetail | null>(null)
 const caseRunningId = ref<number | null>(null)
+const caseDetailDrawerVisible = ref(false)
+const caseDetailDrawerTab = ref<ApiCaseDrawerTab>('detail')
+const viewingCaseItem = ref<ApiDefinitionCaseItem | null>(null)
+const viewingCaseDetail = ref<ApiDefinitionCaseDetail | null>(null)
+const viewingCaseDetailLoading = ref(false)
+const viewingCaseDetailErrorMessage = ref('')
+const caseRunHistories = ref<ApiRunHistoryItem[]>([])
+const caseRunHistoryLoading = ref(false)
+const caseRunHistoryErrorMessage = ref('')
+const selectedCaseRunHistoryId = ref<number | null>(null)
+const selectedCaseRunHistoryDetail = ref<ApiRunHistoryDetail | null>(null)
+const caseRunHistoryDetailLoading = ref(false)
+const caseRunHistoryDetailErrorMessage = ref('')
+const maxDebugFileBytes = 5 * 1024 * 1024
+const aiCaseDrawerVisible = ref(false)
+const aiCaseProviders = ref<AiProviderConnectionItem[]>([])
+const aiCaseProvidersLoading = ref(false)
+const aiCaseProviderErrorMessage = ref('')
+const aiCaseSelectedProviderId = ref<number | null>(null)
+const aiCaseCount = ref('AUTO')
+const aiCaseNoDuplicate = ref(true)
+const aiCasePrompt = ref('')
+const aiCaseSelectedOptionKeys = ref<string[]>(['positive-basic', 'negative-required', 'boundary-value'])
+const aiCaseGenerationStatus = ref<ApiAiCaseGenerationStatus>('idle')
+const aiCaseGenerationMessage = ref('')
+const aiCaseGenerationLogs = ref<string[]>([])
+const aiCaseGeneratedResults = ref<ApiAiGeneratedCaseResult[]>([])
+const aiCaseSavingId = ref('')
 
 const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'none', value: 'NONE' },
@@ -137,6 +216,28 @@ const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'binary', value: 'BINARY' },
 ]
 
+const aiCaseGenerationOptions: ApiAiCaseGenerationOptionPayload[] = [
+  { id: 'positive-basic', key: 'positive-basic', group: 'positive', groupLabel: '正向场景', label: '基础成功路径' },
+  { id: 'positive-variant', key: 'positive-variant', group: 'positive', groupLabel: '正向场景', label: '参数组合成功' },
+  { id: 'negative-required', key: 'negative-required', group: 'negative', groupLabel: '异常场景', label: '必填缺失' },
+  { id: 'negative-format', key: 'negative-format', group: 'negative', groupLabel: '异常场景', label: '格式错误' },
+  { id: 'boundary-value', key: 'boundary-value', group: 'boundary', groupLabel: '边界场景', label: '边界值' },
+  { id: 'security-basic', key: 'security-basic', group: 'security', groupLabel: '安全场景', label: '鉴权与越权' },
+]
+
+const aiCaseCountOptions = [
+  { label: '智能数量', value: 'AUTO' },
+  { label: '10 条', value: '10' },
+  { label: '20 条', value: '20' },
+  { label: '40 条', value: '40' },
+]
+
+const importCapabilityItems = [
+  { name: 'Swagger / OpenAPI', description: '需要后端解析 OpenAPI 文档并批量创建接口定义', status: '待后端接口' },
+  { name: 'Postman Collection', description: '需要后端解析 Collection v2.0 / v2.1', status: '待后端接口' },
+  { name: 'HAR 文件', description: '需要后端解析浏览器 HTTP Archive 文件', status: '待后端接口' },
+]
+
 const paramTypeOptions = ['string', 'integer', 'number', 'boolean', 'array', 'json', 'file']
 const assertionTypeOptions = [
   { label: '状态码', value: 'RESPONSE_CODE' },
@@ -144,6 +245,14 @@ const assertionTypeOptions = [
   { label: '响应体', value: 'RESPONSE_BODY' },
   { label: '响应时间', value: 'RESPONSE_TIME' },
   { label: '变量', value: 'VARIABLE' },
+  { label: '脚本', value: 'SCRIPT' },
+]
+const assertionExpressionTypeOptions = [
+  { label: 'JSONPath', value: 'JSON_PATH' },
+  { label: 'XPath', value: 'X_PATH' },
+  { label: 'Regex', value: 'REGEX' },
+  { label: 'Header name', value: 'HEADER' },
+  { label: '变量名', value: 'VARIABLE' },
 ]
 const assertionConditionOptions = [
   { label: '等于', value: 'EQUALS' },
@@ -155,6 +264,56 @@ const assertionConditionOptions = [
   { label: '大于', value: 'GT' },
   { label: '小于', value: 'LT' },
 ]
+
+const extractorSourceOptions = [
+  { label: '响应体', value: 'RESPONSE_BODY' },
+  { label: '响应头', value: 'RESPONSE_HEADER' },
+  { label: 'Cookie', value: 'COOKIE' },
+]
+
+const extractorExpressionTypeOptions = [
+  { label: 'JSONPath', value: 'JSON_PATH' },
+  { label: 'XPath', value: 'X_PATH' },
+  { label: 'Regex', value: 'REGEX' },
+  { label: 'Header name', value: 'HEADER' },
+]
+
+function assertionConditionLabel(value?: string | null) {
+  return assertionConditionOptions.find(item => item.value === value)?.label || value || '-'
+}
+
+function assertionResultLabel(success?: boolean | null) {
+  return success ? '通过' : '不通过'
+}
+
+function assertionResultClass(success?: boolean | null) {
+  return success ? 'is-passed' : 'is-failed'
+}
+
+function extractionResultValue(row: unknown, key: string) {
+  if (!row || typeof row !== 'object') return undefined
+  return (row as Record<string, unknown>)[key]
+}
+
+function extractionResultText(value: unknown) {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+function formatExtractionResults(rows: unknown[]) {
+  if (!rows.length) return ''
+  const lines = ['提取结果']
+  rows.forEach((row, index) => {
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'variableName') ?? `提取器 ${index + 1}`)
+    const success = extractionResultValue(row, 'success')
+    const value = extractionResultText(extractionResultValue(row, 'value') ?? extractionResultValue(row, 'actualValue'))
+    const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage'))
+    lines.push(`[${index + 1}] ${name} / ${success === false ? '失败' : '成功'} / ${value}${message !== '-' ? ` / ${message}` : ''}`)
+  })
+  return lines.join('\n')
+}
+
 const processorTypeOptions = [
   { label: '脚本', value: 'SCRIPT' },
   { label: 'SQL', value: 'SQL' },
@@ -166,9 +325,11 @@ const contentTabs = computed<Array<{ label: string; value: RequestContentTab; co
   { label: '请求头', value: 'headers', count: enabledRows(activeEditor.value?.detail.requestConfig.headers).length },
   { label: '请求体', value: 'body' },
   { label: 'Params', value: 'params', count: enabledRows(activeEditor.value?.detail.requestConfig.queryParams).length },
+  { label: 'Cookie', value: 'cookies', count: enabledRows(activeEditor.value?.detail.requestConfig.cookies).length },
   { label: 'Auth', value: 'auth' },
   { label: '前置处理', value: 'pre' },
   { label: '后置处理', value: 'post' },
+  { label: '提取器', value: 'extractors', count: activeEditor.value?.detail.extractors.length || undefined },
   { label: '断言', value: 'tests', count: activeEditor.value?.detail.assertions.length || undefined },
   { label: '设置', value: 'settings' },
   { label: '用例', value: 'cases', count: activeDefinitionCases.value.length || undefined },
@@ -180,6 +341,27 @@ const activeDefinitionCases = computed(() => {
   const id = activeEditor.value?.definitionId
   return id ? cases.value.filter(item => item.definitionId === id) : []
 })
+const aiCaseAvailableProviders = computed(() =>
+  aiCaseProviders.value.filter(item => item.status !== 0 && Boolean(item.modelName)),
+)
+const aiCaseSelectedProvider = computed(() =>
+  aiCaseAvailableProviders.value.find(item => item.id === aiCaseSelectedProviderId.value) || null,
+)
+const aiCaseCanGenerate = computed(() =>
+  Boolean(activeEditor.value?.definitionId)
+  && Boolean(aiCaseSelectedProvider.value)
+  && aiCaseSelectedOptionKeys.value.length > 0
+  && aiCaseGenerationStatus.value !== 'running',
+)
+const aiCaseGenerationStatusText = computed(() => {
+  if (aiCaseGenerationStatus.value === 'running') return '生成中'
+  if (aiCaseGenerationStatus.value === 'done') return '已完成'
+  if (aiCaseGenerationStatus.value === 'failed') return '失败'
+  return '待生成'
+})
+const aiCasePendingResults = computed(() =>
+  aiCaseGeneratedResults.value.filter(item => item.status === 'pending'),
+)
 
 const filteredDefinitions = computed(() => {
   const keyword = directoryKeyword.value.trim().toLowerCase()
@@ -290,9 +472,15 @@ const responseConsole = computed(() => {
   if (!currentStep.value) {
     return ''
   }
-  return currentStep.value.errorMessage || activeEditor.value?.runResult?.failureSummary || '请求执行完成'
+  const lines = [currentStep.value.errorMessage || activeEditor.value?.runResult?.failureSummary || '请求执行完成']
+  const extractionText = formatExtractionResults(currentStep.value.extractionResults ?? [])
+  if (extractionText) {
+    lines.push('', extractionText)
+  }
+  return lines.join('\n')
 })
 const assertionRows = computed(() => currentStep.value?.assertionResults ?? [])
+const extractionRows = computed(() => currentStep.value?.extractionResults ?? [])
 const responseSize = computed(() => {
   const text = responseBody.value || ''
   if (!text) {
@@ -302,6 +490,24 @@ const responseSize = computed(() => {
   return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
 })
 const showResponseEmpty = computed(() => !currentStep.value && !activeEditor.value?.runError)
+const batchAddTitle = computed(() => {
+  if (batchAddTarget.value === 'assertion') return '批量添加断言'
+  if (batchAddTarget.value === 'extractor') return '批量添加提取器'
+  if (batchAddTarget.value === 'cookie') return '批量添加 Cookie'
+  if (batchAddTarget.value === 'header') return '批量添加请求头'
+  if (batchAddTarget.value === 'body-form') return '批量添加表单项'
+  return '批量添加 Query 参数'
+})
+const batchAddHint = computed(() => {
+  if (batchAddTarget.value === 'extractor') return '每行一条，左侧为变量名，右侧为表达式，例如 token=$.data.token。'
+  if (batchAddTarget.value === 'assertion') return '每行一条，左侧为断言名称，右侧为期望值，例如 status=200。'
+  return '每行一条，支持 key=value、key: value 或 tab 分隔。'
+})
+const batchAddPlaceholder = computed(() => {
+  if (batchAddTarget.value === 'extractor') return 'token=$.data.token\ntraceId=$.headers.traceId'
+  if (batchAddTarget.value === 'assertion') return '状态码=200\n响应包含=success'
+  return 'token=abc\nContent-Type: application/json'
+})
 
 function mapModuleNode(item: ApiDefinitionModuleItem): DirectoryNode {
   return {
@@ -331,6 +537,10 @@ function emptyKeyValue(extra: Partial<ApiKeyValueInput> = {}): ApiKeyValueInput 
     encode: true,
     minLength: null,
     maxLength: null,
+    fileName: null,
+    fileSize: null,
+    contentType: null,
+    fileBase64: null,
     ...extra,
   }
 }
@@ -349,6 +559,7 @@ function emptyRequestConfig(method = 'GET'): ApiRequestConfigInput {
       formItems: [emptyKeyValue()],
       contentType: null,
       fileName: null,
+      fileSize: null,
       binaryBase64: null,
     },
     authConfig: {
@@ -409,47 +620,461 @@ function statusTone(status: number | null) {
   return 'warning'
 }
 
+function formatFileSize(size?: number | null) {
+  if (!size) return '-'
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(2)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${size} B`
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatDuration(value?: number | null) {
+  if (value == null) return '-'
+  return `${value} ms`
+}
+
+function formatResponseSize(value?: number | null) {
+  return formatFileSize(value)
+}
+
+function runResultLabel(result?: string | null) {
+  if (!result) return '-'
+  const normalized = String(result).toUpperCase()
+  if (['PASSED', 'SUCCESS', 'DONE'].includes(normalized)) return '通过'
+  if (['FAILED', 'FAILURE', 'ERROR'].includes(normalized)) return '失败'
+  if (['RUNNING', 'PENDING'].includes(normalized)) return '执行中'
+  if (normalized === 'NO_ASSERTION') return '无断言'
+  return result
+}
+
+function runResultClass(result?: string | null) {
+  const normalized = String(result || '').toUpperCase()
+  if (['PASSED', 'SUCCESS', 'DONE'].includes(normalized)) return 'is-passed'
+  if (['FAILED', 'FAILURE', 'ERROR'].includes(normalized)) return 'is-failed'
+  return 'is-neutral'
+}
+
+function toPrettyJson(value: unknown) {
+  if (value == null || value === '') return '-'
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2)
+    } catch {
+      return value
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function readFileBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.split(',')[1] : result)
+    }
+    reader.onerror = () => reject(reader.error || new Error('文件读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function readDebugFile(file: File) {
+  if (file.size > maxDebugFileBytes) {
+    ElMessage.warning(`文件过大，请选择 ${formatFileSize(maxDebugFileBytes)} 以内的文件`)
+    return null
+  }
+  return {
+    fileName: file.name,
+    fileSize: file.size,
+    contentType: file.type || 'application/octet-stream',
+    base64: await readFileBase64(file),
+  }
+}
+
+async function handleFormFileChange(row: ApiKeyValueInput, event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const payload = await readDebugFile(file)
+    if (!payload) return
+    row.fileName = payload.fileName
+    row.fileSize = payload.fileSize
+    row.contentType = payload.contentType
+    row.fileBase64 = payload.base64
+    row.value = payload.fileName
+    markDirty()
+  } catch {
+    ElMessage.error('文件读取失败')
+  }
+}
+
+function clearFormFile(row: ApiKeyValueInput) {
+  row.fileName = null
+  row.fileSize = null
+  row.contentType = null
+  row.fileBase64 = null
+  row.value = ''
+  markDirty()
+}
+
+async function handleBinaryFileChange(event: Event) {
+  if (!activeEditor.value) return
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const payload = await readDebugFile(file)
+    if (!payload) return
+    const body = activeEditor.value.detail.requestConfig.body
+    body.fileName = payload.fileName
+    body.fileSize = payload.fileSize
+    body.contentType = payload.contentType
+    body.binaryBase64 = payload.base64
+    markDirty()
+  } catch {
+    ElMessage.error('文件读取失败')
+  }
+}
+
+function clearBinaryFile() {
+  if (!activeEditor.value) return
+  const body = activeEditor.value.detail.requestConfig.body
+  body.fileName = null
+  body.fileSize = null
+  body.contentType = null
+  body.binaryBase64 = null
+  markDirty()
+}
+
 function assertionRowsFor(detail: ApiDefinitionDetail): ApiAssertionConfig[] {
-  return detail.assertions as ApiAssertionConfig[]
+  const rows = detail.assertions as ApiAssertionConfig[]
+  rows.forEach(normalizeAssertion)
+  return rows
+}
+
+function normalizeAssertion(assertion: ApiAssertionConfig) {
+  assertion.id = assertion.id || `assertion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  assertion.enabled = assertion.enabled !== false
+  assertion.assertionType = assertion.assertionType || assertion.type || 'RESPONSE_CODE'
+  assertion.type = assertion.type || assertion.assertionType
+  assertion.name = assertion.name || '状态码断言'
+  assertion.condition = assertion.condition || assertion.operator || 'EQUALS'
+  assertion.operator = assertion.operator || assertion.condition
+  assertion.expressionType = assertion.expressionType || (assertion.assertionType === 'RESPONSE_HEADER' ? 'HEADER' : 'JSON_PATH')
+  assertion.expression = assertion.expression || ''
+  assertion.expectedValue = assertion.expectedValue || ''
+}
+
+function activeAssertionRows() {
+  return activeEditor.value ? assertionRowsFor(activeEditor.value.detail) : []
+}
+
+const activeAssertion = computed(() => {
+  const rows = activeAssertionRows()
+  if (!rows.length) return null
+  return rows.find(item => item.id === activeAssertionId.value) || rows[0]
+})
+
+function extractorRowsFor(detail: ApiDefinitionDetail): ApiExtractorConfig[] {
+  const rows = detail.extractors as ApiExtractorConfig[]
+  rows.forEach(normalizeExtractor)
+  return rows
+}
+
+function normalizeExtractor(extractor: ApiExtractorConfig) {
+  extractor.enabled = extractor.enabled !== false
+  extractor.source = extractor.source || extractor.sourceType || 'RESPONSE_BODY'
+  extractor.sourceType = extractor.sourceType || extractor.source
+  extractor.extractType = extractor.extractType || extractor.expressionType || 'JSON_PATH'
+  extractor.expressionType = extractor.expressionType || extractor.extractType
+  extractor.name = extractor.name || extractor.variableName || '响应提取'
+  extractor.variableName = extractor.variableName || extractor.name
+  extractor.expression = extractor.expression || '$.data'
 }
 
 function processorRowsFor(detail: ApiDefinitionDetail, stage: 'pre' | 'post'): ApiProcessorConfig[] {
-  return (stage === 'pre' ? detail.preProcessors : detail.postProcessors) as ApiProcessorConfig[]
+  const rows = (stage === 'pre' ? detail.preProcessors : detail.postProcessors) as ApiProcessorConfig[]
+  rows.forEach(row => normalizeProcessorDefaults(row, stage))
+  return rows
+}
+
+function normalizeProcessorDefaults(processor: ApiProcessorConfig, stage: 'pre' | 'post') {
+  const type = processor.processorType || 'SCRIPT'
+  processor.id = processor.id || `${stage}-${type.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  processor.enabled = processor.enabled !== false
+  processor.name = processor.name || processorDefaultName(stage, type)
+  if (type === 'TIME_WAITING') {
+    processor.delayMs = processor.delayMs || 1000
+  }
+  if (type === 'SCRIPT') {
+    processor.script = processor.script ?? ''
+  }
+  if (type === 'SQL') {
+    processor.sql = processor.sql ?? processor.script ?? ''
+    processor.script = processor.sql
+    processor.dataSourceName = processor.dataSourceName ?? ''
+  }
+  if (type === 'EXTRACT') {
+    processor.sourceType = processor.sourceType || 'RESPONSE_BODY'
+    processor.extractType = processor.extractType || 'JSON_PATH'
+    processor.expression = processor.expression ?? processor.script ?? ''
+    processor.variableName = processor.variableName ?? ''
+    processor.script = processor.expression
+  }
 }
 
 function createAssertion(name = '状态码断言', expectedValue = '200'): ApiAssertionConfig {
   return {
     id: `assertion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     assertionType: 'RESPONSE_CODE',
+    type: 'RESPONSE_CODE',
     name,
     enabled: true,
     subject: '',
+    expressionType: 'JSON_PATH',
+    expression: '',
     condition: 'EQUALS',
+    operator: 'EQUALS',
     expectedValue,
+    script: null,
   }
 }
 
 function addAssertion() {
   if (!activeEditor.value) return
-  assertionRowsFor(activeEditor.value.detail).push(createAssertion())
+  const assertion = createAssertion()
+  assertionRowsFor(activeEditor.value.detail).push(assertion)
+  activeAssertionId.value = assertion.id || ''
   markDirty()
 }
 
 function removeAssertion(index: number) {
   if (!activeEditor.value) return
-  assertionRowsFor(activeEditor.value.detail).splice(index, 1)
+  const rows = assertionRowsFor(activeEditor.value.detail)
+  const removed = rows.splice(index, 1)
+  if (removed.some(item => item.id === activeAssertionId.value)) {
+    activeAssertionId.value = rows[Math.min(index, rows.length - 1)]?.id || ''
+  }
+  markDirty()
+}
+
+function selectAssertion(assertion: ApiAssertionConfig) {
+  activeAssertionId.value = assertion.id || ''
+}
+
+function copyAssertion(index: number) {
+  if (!activeEditor.value) return
+  const rows = assertionRowsFor(activeEditor.value.detail)
+  const source = rows[index]
+  if (!source) return
+  const copied = {
+    ...clone(source),
+    id: `assertion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: `${source.name || '断言'} 副本`,
+  }
+  rows.splice(index + 1, 0, copied)
+  activeAssertionId.value = copied.id || ''
+  markDirty()
+}
+
+function moveAssertion(index: number, direction: -1 | 1) {
+  if (!activeEditor.value) return
+  const rows = assertionRowsFor(activeEditor.value.detail)
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= rows.length) return
+  const [row] = rows.splice(index, 1)
+  rows.splice(targetIndex, 0, row)
+  markDirty()
+}
+
+function normalizeAssertionForType(assertion: ApiAssertionConfig) {
+  assertion.type = assertion.assertionType
+  if (assertion.assertionType === 'RESPONSE_HEADER') {
+    assertion.expressionType = 'HEADER'
+  } else if (assertion.assertionType === 'VARIABLE') {
+    assertion.expressionType = 'VARIABLE'
+  } else if (assertion.assertionType === 'SCRIPT') {
+    assertion.expressionType = 'SCRIPT'
+    assertion.script = assertion.script || ''
+  } else if (!assertion.expressionType || assertion.expressionType === 'HEADER' || assertion.expressionType === 'VARIABLE') {
+    assertion.expressionType = 'JSON_PATH'
+  }
+  markDirty()
+}
+
+function testAssertionExpression(assertion: ApiAssertionConfig) {
+  if (!currentStep.value) {
+    ElMessage.info('请先发送请求，再测试表达式')
+    return
+  }
+  if (assertion.assertionType === 'RESPONSE_CODE') {
+    ElMessage.success(`当前响应码：${currentStep.value.response?.statusCode ?? '-'}`)
+    return
+  }
+  if (assertion.assertionType === 'RESPONSE_HEADER') {
+    const key = assertion.expression || assertion.subject || ''
+    const value = key ? (currentStep.value.response?.headers as Record<string, unknown> | undefined)?.[key] : undefined
+    ElMessage.info(value == null ? '未在最近响应头中找到该字段' : `匹配值：${String(value)}`)
+    return
+  }
+  if (assertion.assertionType === 'RESPONSE_BODY' && assertion.expressionType === 'JSON_PATH') {
+    try {
+      const body = JSON.parse(String(currentStep.value.response?.body || '{}')) as Record<string, unknown>
+      const key = assertion.expression?.replace(/^\$\./, '')
+      const value = key ? key.split('.').reduce<unknown>((acc, part) => {
+        if (!acc || typeof acc !== 'object') return undefined
+        return (acc as Record<string, unknown>)[part]
+      }, body) : body
+      ElMessage.info(value == null ? '未在最近响应体中匹配到值' : `匹配值：${String(value)}`)
+    } catch {
+      ElMessage.warning('最近响应体不是可解析的 JSON')
+    }
+    return
+  }
+  ElMessage.info('当前表达式类型需要后端执行时验证')
+}
+
+function fillAssertionFromResponse(assertion: ApiAssertionConfig) {
+  if (!currentStep.value) {
+    ElMessage.info('请先发送请求，再从响应快速提取')
+    return
+  }
+  const bodyText = String(currentStep.value.response?.body || '')
+  try {
+    const body = JSON.parse(bodyText) as Record<string, unknown>
+    const firstKey = ['message', 'code', 'success', 'data'].find(key => key in body)
+    if (!firstKey) {
+      ElMessage.info('最近响应体没有可快速提取的常见字段')
+      return
+    }
+    assertion.assertionType = 'RESPONSE_BODY'
+    assertion.type = 'RESPONSE_BODY'
+    assertion.expressionType = 'JSON_PATH'
+    assertion.expression = `$.${firstKey}`
+    assertion.expectedValue = String(body[firstKey] ?? '')
+    markDirty()
+    ElMessage.success('已从最近响应填入表达式和期望值')
+  } catch {
+    ElMessage.warning('最近响应体不是可解析的 JSON')
+  }
+}
+
+function createExtractor(name = '响应提取', expression = '$.data', variableName?: string): ApiExtractorConfig {
+  const normalizedName = name.trim() || '响应提取'
+  return {
+    id: `extractor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: normalizedName,
+    enabled: true,
+    source: 'RESPONSE_BODY',
+    sourceType: 'RESPONSE_BODY',
+    extractType: 'JSON_PATH',
+    expressionType: 'JSON_PATH',
+    expression: expression.trim() || '$.data',
+    variableName: variableName?.trim() || normalizedName,
+    defaultValue: '',
+    required: false,
+    failOnMissing: false,
+    description: '',
+  }
+}
+
+function addExtractor() {
+  if (!activeEditor.value) return
+  extractorRowsFor(activeEditor.value.detail).push(createExtractor())
+  markDirty()
+}
+
+function removeExtractor(index: number) {
+  if (!activeEditor.value) return
+  extractorRowsFor(activeEditor.value.detail).splice(index, 1)
   markDirty()
 }
 
 function createProcessor(stage: 'pre' | 'post', type = 'SCRIPT'): ApiProcessorConfig {
-  return {
+  const processor: ApiProcessorConfig = {
     id: `${stage}-${type.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     processorType: type,
-    name: stage === 'pre' ? '前置处理器' : '后置处理器',
+    name: processorDefaultName(stage, type),
     enabled: true,
     script: type === 'TIME_WAITING' ? null : '',
+    sql: type === 'SQL' ? '' : null,
+    dataSourceName: type === 'SQL' ? '' : null,
     delayMs: type === 'TIME_WAITING' ? 1000 : null,
+    sourceType: type === 'EXTRACT' ? 'RESPONSE_BODY' : null,
+    extractType: type === 'EXTRACT' ? 'JSON_PATH' : null,
+    expression: type === 'EXTRACT' ? '' : null,
+    variableName: type === 'EXTRACT' ? '' : null,
   }
+  return processor
+}
+
+function processorDefaultName(stage: 'pre' | 'post', type?: string) {
+  if (type === 'SCRIPT') return stage === 'pre' ? '前置脚本' : '后置脚本'
+  if (type === 'SQL') return 'SQL 处理器'
+  if (type === 'TIME_WAITING') return '等待处理器'
+  if (type === 'EXTRACT') return '提取处理器'
+  return stage === 'pre' ? '前置处理器' : '后置处理器'
+}
+
+function processorConfigPlaceholder(type?: string) {
+  if (type === 'SCRIPT') return '请输入 JavaScript 脚本'
+  if (type === 'SQL') return '请输入 SQL 语句'
+  if (type === 'EXTRACT') return '请输入提取配置，例如 token = $.data.token'
+  return '请输入处理器配置'
+}
+
+function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' | 'post') {
+  const type = processor.processorType || 'SCRIPT'
+  const currentName = processor.name?.trim() || ''
+  const defaultNames = [
+    '前置处理器',
+    '后置处理器',
+    '前置脚本',
+    '后置脚本',
+    'SQL 处理器',
+    '等待处理器',
+    '提取处理器',
+  ]
+  processor.name = !currentName || defaultNames.includes(currentName)
+    ? processorDefaultName(stage, type)
+    : currentName
+  if (type === 'TIME_WAITING') {
+    processor.script = null
+    processor.sql = null
+    processor.expression = null
+    processor.delayMs = processor.delayMs || 1000
+  } else if (type === 'SQL') {
+    processor.sql = processor.sql ?? processor.script ?? ''
+    processor.script = processor.sql
+    processor.delayMs = null
+    processor.dataSourceName = processor.dataSourceName ?? ''
+  } else if (type === 'EXTRACT') {
+    processor.expression = processor.expression ?? processor.script ?? ''
+    processor.script = processor.expression
+    processor.sourceType = processor.sourceType || 'RESPONSE_BODY'
+    processor.extractType = processor.extractType || 'JSON_PATH'
+    processor.variableName = processor.variableName ?? ''
+    processor.delayMs = null
+  } else {
+    processor.script = processor.script ?? ''
+    processor.delayMs = null
+    processor.sql = null
+    processor.expression = null
+  }
+  markDirty()
 }
 
 function addProcessor(stage: 'pre' | 'post') {
@@ -461,6 +1086,39 @@ function addProcessor(stage: 'pre' | 'post') {
 function removeProcessor(stage: 'pre' | 'post', index: number) {
   if (!activeEditor.value) return
   processorRowsFor(activeEditor.value.detail, stage).splice(index, 1)
+  markDirty()
+}
+
+function copyProcessor(stage: 'pre' | 'post', index: number) {
+  if (!activeEditor.value) return
+  const rows = processorRowsFor(activeEditor.value.detail, stage)
+  const source = rows[index]
+  if (!source) return
+  const copied = {
+    ...clone(source),
+    id: `${stage}-${String(source.processorType || 'SCRIPT').toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: `${source.name || processorDefaultName(stage, source.processorType)} 副本`,
+  }
+  rows.splice(index + 1, 0, copied)
+  markDirty()
+}
+
+function moveProcessor(stage: 'pre' | 'post', index: number, direction: -1 | 1) {
+  if (!activeEditor.value) return
+  const rows = processorRowsFor(activeEditor.value.detail, stage)
+  const targetIndex = index + direction
+  if (targetIndex < 0 || targetIndex >= rows.length) return
+  const [row] = rows.splice(index, 1)
+  rows.splice(targetIndex, 0, row)
+  markDirty()
+}
+
+function syncProcessorScript(processor: ApiProcessorConfig) {
+  if (processor.processorType === 'SQL') {
+    processor.script = processor.sql ?? ''
+  } else if (processor.processorType === 'EXTRACT') {
+    processor.script = processor.expression ?? ''
+  }
   markDirty()
 }
 
@@ -484,6 +1142,38 @@ function buildPayload(detail: ApiDefinitionDetail): SaveApiDefinitionPayload {
   }
 }
 
+function runOptionStorageKey(kind: 'environment' | 'variableSet') {
+  return `api-interface:${props.workspaceCode}:${kind}`
+}
+
+function restoreRunOptions() {
+  const environmentId = Number(localStorage.getItem(runOptionStorageKey('environment')) || '')
+  const variableSetId = Number(localStorage.getItem(runOptionStorageKey('variableSet')) || '')
+  selectedEnvironmentId.value = environmentId && environments.value.some(item => item.id === environmentId) ? environmentId : null
+  selectedVariableSetId.value = variableSetId && variableSets.value.some(item => item.id === variableSetId) ? variableSetId : null
+}
+
+function persistRunOptions() {
+  if (selectedEnvironmentId.value) {
+    localStorage.setItem(runOptionStorageKey('environment'), String(selectedEnvironmentId.value))
+  } else {
+    localStorage.removeItem(runOptionStorageKey('environment'))
+  }
+  if (selectedVariableSetId.value) {
+    localStorage.setItem(runOptionStorageKey('variableSet'), String(selectedVariableSetId.value))
+  } else {
+    localStorage.removeItem(runOptionStorageKey('variableSet'))
+  }
+}
+
+function currentRunPayload() {
+  return {
+    workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+    environmentId: selectedEnvironmentId.value || null,
+    variableSetId: selectedVariableSetId.value || null,
+  }
+}
+
 async function loadWorkspaceData() {
   if (!props.workspaceReady) {
     return
@@ -492,16 +1182,23 @@ async function loadWorkspaceData() {
   loading.value = true
   moduleLoading.value = true
   definitionLoading.value = true
+  runOptionsLoading.value = true
   moduleErrorMessage.value = ''
   definitionErrorMessage.value = ''
+  runOptionsErrorMessage.value = ''
 
   try {
-    const [moduleItems, definitionPage] = await Promise.all([
+    const [moduleItems, definitionPage, environmentPage, variableSetPage] = await Promise.all([
       apiAutomationApi.getDefinitionModules(props.workspaceCode),
       apiAutomationApi.getDefinitions(props.workspaceCode, { pageNo: 1, pageSize: 500 }),
+      apiAutomationApi.getEnvironments(props.workspaceCode),
+      apiAutomationApi.getVariableSets(props.workspaceCode),
     ])
     modules.value = moduleItems
     definitions.value = definitionPage.items
+    environments.value = environmentPage.items
+    variableSets.value = variableSetPage.items
+    restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
     if (!tabs.value.length && definitions.value.length) {
       void openDefinition(definitions.value[0])
@@ -513,10 +1210,12 @@ async function loadWorkspaceData() {
     const message = getRequestErrorMessage(error)
     moduleErrorMessage.value = message
     definitionErrorMessage.value = message
+    runOptionsErrorMessage.value = message
   } finally {
     loading.value = false
     moduleLoading.value = false
     definitionLoading.value = false
+    runOptionsLoading.value = false
   }
 }
 
@@ -607,7 +1306,11 @@ async function closeEditorTab(key: string, force = false) {
   const index = tabs.value.findIndex(item => item.key === key)
   if (index < 0) return
   if (!force && tabs.value[index].dirty) {
-    await ElMessageBox.confirm('当前请求有未保存修改，关闭后会丢失，确认关闭吗？', '关闭标签', { type: 'warning' })
+    await ElMessageBox.confirm('当前请求有未保存修改，关闭后会丢失，确认关闭吗？', '关闭标签', {
+      type: 'warning',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+    })
   }
   tabs.value.splice(index, 1)
   if (activeEditorKey.value === key) {
@@ -619,7 +1322,11 @@ async function closeOtherTabs() {
   if (!activeEditor.value) return
   const removingDirtyTabs = tabs.value.some(item => item.key !== activeEditor.value?.key && item.dirty)
   if (removingDirtyTabs) {
-    await ElMessageBox.confirm('其他标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭其他标签', { type: 'warning' })
+    await ElMessageBox.confirm('其他标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭其他标签', {
+      type: 'warning',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+    })
   }
   tabs.value = [activeEditor.value]
 }
@@ -659,23 +1366,37 @@ function openBatchAdd(target: BatchAddTarget) {
 }
 
 function parseBatchRows(text: string) {
+  const seen = new Set<string>()
+
   return text
     .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const parts = line.includes('\t')
-        ? line.split('\t')
-        : line.includes(':')
-          ? line.split(/:(.*)/).filter(Boolean)
-          : line.split(/=(.*)/).filter(Boolean)
-      return {
+    .map((rawLine) => {
+      const line = rawLine.trim()
+      if (!line || /^[=:]/.test(line) || rawLine.startsWith('\t')) {
+        return null
+      }
+
+      const separatorIndex = rawLine.includes('\t')
+        ? rawLine.indexOf('\t')
+        : rawLine.includes(':')
+          ? rawLine.indexOf(':')
+          : rawLine.indexOf('=')
+      const parts = separatorIndex >= 0
+        ? [rawLine.slice(0, separatorIndex), rawLine.slice(separatorIndex + 1)]
+        : [rawLine, '']
+      const row = {
         key: (parts[0] || '').trim(),
         value: (parts[1] || '').trim(),
-        description: (parts[2] || '').trim(),
+        description: '',
       }
+      const signature = `${row.key}\u0000${row.value}`
+      if (!row.key || seen.has(signature)) {
+        return null
+      }
+      seen.add(signature)
+      return row
     })
-    .filter(row => row.key)
+    .filter((row): row is { key: string; value: string; description: string } => Boolean(row))
 }
 
 function applyBatchAdd() {
@@ -689,12 +1410,17 @@ function applyBatchAdd() {
   if (batchAddTarget.value === 'assertion') {
     const assertions = assertionRowsFor(activeEditor.value.detail)
     assertions.push(...rows.map(row => createAssertion(row.key, row.value)))
+  } else if (batchAddTarget.value === 'extractor') {
+    const extractors = extractorRowsFor(activeEditor.value.detail)
+    extractors.push(...rows.map(row => createExtractor(row.key, row.value, row.key)))
   } else {
     const targetRows = batchAddTarget.value === 'query'
       ? activeEditor.value.detail.requestConfig.queryParams
       : batchAddTarget.value === 'header'
         ? activeEditor.value.detail.requestConfig.headers
-        : activeEditor.value.detail.requestConfig.body.formItems
+        : batchAddTarget.value === 'cookie'
+          ? activeEditor.value.detail.requestConfig.cookies
+          : activeEditor.value.detail.requestConfig.body.formItems
 
     targetRows.push(...rows.map(row => emptyKeyValue(row)))
   }
@@ -707,6 +1433,8 @@ async function createModule(parentId: number | null = null) {
   const { value } = await ElMessageBox.prompt('请输入模块名称', '新建模块', {
     inputPattern: /\S+/,
     inputErrorMessage: '模块名称不能为空',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
   })
   await apiAutomationApi.createDefinitionModule(props.workspaceCode, {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
@@ -723,6 +1451,8 @@ async function renameModule(node: DirectoryNode) {
     inputValue: node.label.split('/').pop() || node.label,
     inputPattern: /\S+/,
     inputErrorMessage: '模块名称不能为空',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
   })
   await apiAutomationApi.updateDefinitionModule(props.workspaceCode, node.moduleId, {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
@@ -738,7 +1468,11 @@ async function deleteModule(node: DirectoryNode) {
     ElMessage.warning('请先移除模块下的请求或子模块')
     return
   }
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该模块吗？', '删除模块', { type: 'warning' })
+  await ElMessageBox.confirm('删除后不可恢复，确认删除该模块吗？', '删除模块', {
+    type: 'warning',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+  })
   await apiAutomationApi.deleteDefinitionModule(props.workspaceCode, node.moduleId)
   await loadWorkspaceData()
   ElMessage.success('模块已删除')
@@ -750,6 +1484,8 @@ async function renameRequest(node: DirectoryNode) {
     inputValue: node.definition.name,
     inputPattern: /\S+/,
     inputErrorMessage: '请求名称不能为空',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
   })
   const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, node.definitionId)
   const saved = await apiAutomationApi.updateDefinition(props.workspaceCode, node.definitionId, {
@@ -769,7 +1505,11 @@ async function renameRequest(node: DirectoryNode) {
 
 async function deleteRequest(node: DirectoryNode) {
   if (!node.definitionId) return
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该请求吗？', '删除请求', { type: 'warning' })
+  await ElMessageBox.confirm('删除后不可恢复，确认删除该请求吗？', '删除请求', {
+    type: 'warning',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+  })
   await apiAutomationApi.deleteDefinition(props.workspaceCode, node.definitionId)
   const opened = tabs.value.find(tab => tab.definitionId === node.definitionId)
   if (opened) {
@@ -781,7 +1521,8 @@ async function deleteRequest(node: DirectoryNode) {
 
 async function saveActiveEditor() {
   if (!activeEditor.value) return
-  const detail = activeEditor.value.detail
+  const editor = activeEditor.value
+  const detail = editor.detail
   if (!detail.requestConfig.path.trim()) {
     ElMessage.warning('请输入请求 URL 或接口路径')
     return
@@ -790,17 +1531,17 @@ async function saveActiveEditor() {
   saving.value = true
   try {
     const payload = buildPayload(detail)
-    const saved = activeEditor.value.definitionId
-      ? await apiAutomationApi.updateDefinition(props.workspaceCode, activeEditor.value.definitionId, payload)
+    const saved = editor.definitionId
+      ? await apiAutomationApi.updateDefinition(props.workspaceCode, editor.definitionId, payload)
       : await apiAutomationApi.createDefinition(props.workspaceCode, payload)
 
-    activeEditor.value.definitionId = saved.id
-    activeEditor.value.key = `definition:${saved.id}`
-    activeEditor.value.detail = clone(saved)
-    activeEditor.value.title = editorTitle(saved)
-    activeEditor.value.method = saved.requestConfig.method || saved.method
-    activeEditor.value.dirty = false
-    activeEditorKey.value = activeEditor.value.key
+    editor.definitionId = saved.id
+    editor.key = `definition:${saved.id}`
+    editor.detail = clone(saved)
+    editor.title = editorTitle(saved)
+    editor.method = saved.requestConfig.method || saved.method
+    editor.dirty = false
+    activeEditorKey.value = editor.key
     selectedDirectoryKey.value = `request:${saved.id}`
     await loadWorkspaceData()
     ElMessage.success('接口已保存')
@@ -825,10 +1566,10 @@ async function sendActiveEditor() {
   editor.runResult = null
   try {
     editor.runResult = editor.definitionId && !editor.dirty
-      ? await apiAutomationApi.debugRunDefinition(props.workspaceCode, editor.definitionId, { workspaceCode: props.workspaceCode })
+      ? await apiAutomationApi.debugRunDefinition(props.workspaceCode, editor.definitionId, currentRunPayload())
       : await apiAutomationApi.debugRunDefinitionDraft(props.workspaceCode, {
         ...buildPayload(detail),
-        workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+        ...currentRunPayload(),
       })
     editor.responseTab = 'body'
     ElMessage.success('请求已发送')
@@ -849,7 +1590,11 @@ async function deleteActiveEditor() {
     return
   }
 
-  await ElMessageBox.confirm('删除后不可恢复，确认删除当前接口吗？', '删除接口', { type: 'warning' })
+  await ElMessageBox.confirm('删除后不可恢复，确认删除当前接口吗？', '删除接口', {
+    type: 'warning',
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+  })
   try {
     await apiAutomationApi.deleteDefinition(props.workspaceCode, editor.definitionId)
     void closeEditorTab(editor.key, true)
@@ -879,6 +1624,8 @@ async function promptImportCurl() {
   const { value } = await ElMessageBox.prompt('粘贴 curl 命令，支持 method、URL、Headers、Body 的最小解析', 'Curl 导入', {
     inputType: 'textarea',
     inputPlaceholder: `curl -X POST "https://example.com/api" -H "Content-Type: application/json" -d '{"name":"demo"}'`,
+    confirmButtonText: '导入',
+    cancelButtonText: '取消',
   })
   try {
     applyCurlToActiveEditor(value)
@@ -889,7 +1636,12 @@ async function promptImportCurl() {
 }
 
 function openImportDialog() {
-  ElMessage.info('当前后端未提供 Swagger/Postman/HAR 导入接口，本轮不伪造普通导入成功')
+  importDialogVisible.value = true
+}
+
+function openCurlFromImportDialog() {
+  importDialogVisible.value = false
+  void promptImportCurl()
 }
 
 function tokenizeCurl(input: string) {
@@ -969,6 +1721,192 @@ function currentDefinitionSummary(): ApiDefinitionItem | null {
   }
 }
 
+function aiCaseLog(message: string) {
+  aiCaseGenerationLogs.value.push(`${new Date().toLocaleTimeString('zh-CN', { hour12: false })} ${message}`)
+}
+
+async function loadAiCaseProviders() {
+  aiCaseProvidersLoading.value = true
+  aiCaseProviderErrorMessage.value = ''
+  try {
+    aiCaseProviders.value = await aiProviderApi.getProviderConnections(props.workspaceCode)
+    if (!aiCaseSelectedProvider.value && aiCaseAvailableProviders.value.length) {
+      aiCaseSelectedProviderId.value = aiCaseAvailableProviders.value[0].id
+    }
+  } catch (error) {
+    aiCaseProviderErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    aiCaseProvidersLoading.value = false
+  }
+}
+
+function openAiCaseDrawer() {
+  if (!activeEditor.value?.definitionId) {
+    ElMessage.warning('请先保存接口，再使用 AI 生成接口用例')
+    return
+  }
+  aiCaseDrawerVisible.value = true
+  aiCaseProviderErrorMessage.value = ''
+  aiCaseGenerationMessage.value = ''
+  if (!aiCaseProviders.value.length) {
+    void loadAiCaseProviders()
+  }
+}
+
+function selectedAiCaseOptions() {
+  const selected = aiCaseGenerationOptions.filter(item => aiCaseSelectedOptionKeys.value.includes(item.key))
+  return selected.length ? selected : aiCaseGenerationOptions.slice(0, 1)
+}
+
+function generatedResultId(event: ApiAiCaseGenerationEvent, index: number) {
+  return event.itemId || event.item?.typeKey || event.outline?.typeKey || `ai-case-${Date.now()}-${index}`
+}
+
+function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent) {
+  const draft = event.item || {
+    name: event.outline?.name || `AI 生成用例 ${aiCaseGeneratedResults.value.length + 1}`,
+    description: event.outline?.description || event.message || '',
+    tags: event.outline?.tags || [],
+    group: event.outline?.group || event.group || null,
+    groupKey: event.outline?.groupKey || null,
+    type: event.outline?.type || event.type || null,
+    typeKey: event.outline?.typeKey || null,
+    expected: event.outline?.expected || null,
+    requestConfig: clone(activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
+    assertions: [],
+    preProcessors: [],
+    postProcessors: [],
+  }
+  const id = generatedResultId(event, aiCaseGeneratedResults.value.length)
+  const existed = aiCaseGeneratedResults.value.find(item => item.id === id)
+  const next: ApiAiGeneratedCaseResult = {
+    id,
+    status: event.event === 'item_failed' ? 'failed' : existed?.status || 'pending',
+    draft,
+    message: event.message || null,
+  }
+  if (existed) {
+    Object.assign(existed, next)
+  } else {
+    aiCaseGeneratedResults.value.push(next)
+  }
+}
+
+function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent) {
+  if (event.event === 'started') {
+    aiCaseLog(`开始生成，预计 ${event.total || selectedAiCaseOptions().length} 条`)
+  } else if (event.event === 'item_outline') {
+    aiCaseLog(`生成大纲：${event.outline?.name || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event)
+  } else if (event.event === 'item_completed') {
+    aiCaseLog(`生成完成：${event.item?.name || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event)
+  } else if (event.event === 'item_failed') {
+    aiCaseLog(`单条失败：${event.message || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event)
+  } else if (event.event === 'completed') {
+    aiCaseGenerationStatus.value = 'done'
+    aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例完成'
+    aiCaseLog(aiCaseGenerationMessage.value)
+  } else if (event.event === 'failed') {
+    aiCaseGenerationStatus.value = 'failed'
+    aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例失败'
+    aiCaseLog(aiCaseGenerationMessage.value)
+  } else {
+    aiCaseLog(event.message || event.event)
+  }
+}
+
+async function submitAiCaseGeneration() {
+  if (!activeEditor.value?.definitionId) {
+    ElMessage.warning('请先保存接口，再使用 AI 生成接口用例')
+    return
+  }
+  if (!aiCaseSelectedProvider.value) {
+    ElMessage.warning('暂无可用 AI 模型，请先到 AI 连接池配置')
+    return
+  }
+  if (!aiCaseSelectedOptionKeys.value.length) {
+    ElMessage.warning('请至少选择一种生成场景')
+    return
+  }
+
+  const editor = activeEditor.value
+  const definitionId = editor.definitionId
+  if (!definitionId) return
+  const detail = editor.detail
+  aiCaseGenerationStatus.value = 'running'
+  aiCaseGenerationMessage.value = ''
+  aiCaseGenerationLogs.value = []
+  aiCaseGeneratedResults.value = []
+
+  try {
+    await apiAutomationApi.streamAiCaseGeneration(props.workspaceCode, {
+      workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+      definitionId,
+      definitionName: detail.name,
+      name: detail.name,
+      method: detail.requestConfig.method || detail.method,
+      path: detail.requestConfig.path || detail.path,
+      description: detail.description,
+      providerConnectionId: aiCaseSelectedProvider.value.id,
+      modelName: aiCaseSelectedProvider.value.modelName || '',
+      caseCount: aiCaseCount.value,
+      noDuplicate: aiCaseNoDuplicate.value,
+      prompt: aiCasePrompt.value || null,
+      options: selectedAiCaseOptions(),
+      requestConfig: clone(detail.requestConfig),
+      assertions: clone(detail.assertions || []),
+      preProcessors: clone(detail.preProcessors || []),
+      postProcessors: clone(detail.postProcessors || []),
+      existingCases: activeDefinitionCases.value.map(item => ({
+        id: item.id,
+        name: item.name,
+        tags: item.tags || [],
+      })),
+    }, handleAiCaseGenerationEvent)
+
+    if (aiCaseGenerationStatus.value === 'running') {
+      aiCaseGenerationStatus.value = 'done'
+      aiCaseGenerationMessage.value = 'AI 生成接口用例完成'
+    }
+  } catch (error) {
+    aiCaseGenerationStatus.value = 'failed'
+    aiCaseGenerationMessage.value = getRequestErrorMessage(error)
+    aiCaseLog(aiCaseGenerationMessage.value)
+  }
+}
+
+async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
+  if (!activeEditor.value?.definitionId) return
+  aiCaseSavingId.value = result.id
+  try {
+    const draft = result.draft
+    await apiAutomationApi.createCase(props.workspaceCode, {
+      workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+      definitionId: activeEditor.value.definitionId,
+      name: draft.name?.trim() || 'AI 生成接口用例',
+      description: draft.description || draft.expected || null,
+      tags: Array.isArray(draft.tags) ? draft.tags : [],
+      requestConfig: clone(draft.requestConfig || activeEditor.value.detail.requestConfig),
+      assertions: clone(draft.assertions || activeEditor.value.detail.assertions || []),
+      preProcessors: clone(draft.preProcessors || activeEditor.value.detail.preProcessors || []),
+      postProcessors: clone(draft.postProcessors || activeEditor.value.detail.postProcessors || []),
+    })
+    result.status = 'accepted'
+    await loadCasesForDefinition(activeEditor.value.definitionId)
+    ElMessage.success('AI 生成用例已保存')
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    aiCaseSavingId.value = ''
+  }
+}
+
+function discardAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
+  result.status = 'discarded'
+}
+
 function openCreateCaseDialog() {
   if (!activeEditor.value?.definitionId) {
     ElMessage.warning('请先保存接口，再新建用例')
@@ -994,6 +1932,62 @@ async function openEditCaseDialog(item: ApiDefinitionCaseItem) {
     caseDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     caseDetailLoading.value = false
+  }
+}
+
+async function openCaseDetailDrawer(item: ApiDefinitionCaseItem) {
+  viewingCaseItem.value = item
+  viewingCaseDetail.value = null
+  viewingCaseDetailErrorMessage.value = ''
+  caseRunHistories.value = []
+  caseRunHistoryErrorMessage.value = ''
+  selectedCaseRunHistoryId.value = null
+  selectedCaseRunHistoryDetail.value = null
+  caseRunHistoryDetailErrorMessage.value = ''
+  caseDetailDrawerTab.value = 'detail'
+  caseDetailDrawerVisible.value = true
+  await Promise.all([loadViewingCaseDetail(item.id), loadCaseRunHistories(item.id)])
+}
+
+async function loadViewingCaseDetail(caseId: number) {
+  viewingCaseDetailLoading.value = true
+  viewingCaseDetailErrorMessage.value = ''
+  try {
+    viewingCaseDetail.value = await apiAutomationApi.getCaseDetail(props.workspaceCode, caseId)
+  } catch (error) {
+    viewingCaseDetailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    viewingCaseDetailLoading.value = false
+  }
+}
+
+async function loadCaseRunHistories(caseId: number) {
+  caseRunHistoryLoading.value = true
+  caseRunHistoryErrorMessage.value = ''
+  try {
+    const page = await apiAutomationApi.getCaseRunHistory(props.workspaceCode, caseId)
+    caseRunHistories.value = page.items
+    if (page.items.length) {
+      await openCaseRunHistoryDetail(page.items[0])
+    }
+  } catch (error) {
+    caseRunHistoryErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    caseRunHistoryLoading.value = false
+  }
+}
+
+async function openCaseRunHistoryDetail(item: ApiRunHistoryItem) {
+  selectedCaseRunHistoryId.value = item.id
+  selectedCaseRunHistoryDetail.value = null
+  caseRunHistoryDetailErrorMessage.value = ''
+  caseRunHistoryDetailLoading.value = true
+  try {
+    selectedCaseRunHistoryDetail.value = await apiAutomationApi.getCaseRunHistoryDetail(props.workspaceCode, item.id)
+  } catch (error) {
+    caseRunHistoryDetailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    caseRunHistoryDetailLoading.value = false
   }
 }
 
@@ -1035,7 +2029,11 @@ async function duplicateCase(item: ApiDefinitionCaseItem) {
 }
 
 async function deleteCase(item: ApiDefinitionCaseItem) {
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该用例吗？', '删除用例', { type: 'warning' })
+  await ElMessageBox.confirm('删除后不可恢复，确认删除该用例吗？', '删除用例', {
+    type: 'warning',
+    confirmButtonText: '确认',
+    cancelButtonText: '取消',
+  })
   await apiAutomationApi.deleteCase(props.workspaceCode, item.id)
   await loadCasesForDefinition(item.definitionId)
   ElMessage.success('用例已删除')
@@ -1044,8 +2042,11 @@ async function deleteCase(item: ApiDefinitionCaseItem) {
 async function runCase(item: ApiDefinitionCaseItem) {
   caseRunningId.value = item.id
   try {
-    await apiAutomationApi.runCase(props.workspaceCode, item.id, { workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode })
+    await apiAutomationApi.runCase(props.workspaceCode, item.id, currentRunPayload())
     await loadCasesForDefinition(item.definitionId)
+    if (caseDetailDrawerVisible.value && viewingCaseItem.value?.id === item.id) {
+      await loadCaseRunHistories(item.id)
+    }
     ElMessage.success('用例执行完成')
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1223,6 +2224,31 @@ onMounted(() => {
               />
               <button type="button" class="api-curl-button" @click="promptImportCurl">Curl</button>
             </div>
+            <div class="api-run-options" v-loading="runOptionsLoading">
+              <el-select
+                v-model="selectedEnvironmentId"
+                clearable
+                placeholder="环境"
+                :disabled="Boolean(runOptionsErrorMessage)"
+                @change="persistRunOptions"
+              >
+                <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id">
+                  <span>{{ item.name }}</span>
+                  <small v-if="item.baseUrl">{{ item.baseUrl }}</small>
+                </el-option>
+              </el-select>
+              <el-select
+                v-model="selectedVariableSetId"
+                clearable
+                placeholder="变量集"
+                :disabled="Boolean(runOptionsErrorMessage)"
+                @change="persistRunOptions"
+              >
+                <el-option v-for="item in variableSets" :key="item.id" :label="item.name" :value="item.id" />
+              </el-select>
+              <span v-if="runOptionsErrorMessage" class="api-run-options__hint">运行选项加载失败</span>
+              <span v-else-if="!environments.length && !variableSets.length" class="api-run-options__hint">暂无环境或变量集</span>
+            </div>
             <button type="button" class="api-send-button" :disabled="sending" @click="sendActiveEditor">
               <el-icon><VideoPlay /></el-icon>
               发送
@@ -1310,6 +2336,27 @@ onMounted(() => {
                 </div>
               </template>
 
+              <template v-else-if="activeEditor.activeTab === 'cookies'">
+                <div class="api-param-table is-cookie">
+                  <div class="api-param-toolbar">
+                    <span>Cookie</span>
+                    <button type="button" @click="openBatchAdd('cookie')">批量添加</button>
+                  </div>
+                  <div class="api-param-header">
+                    <span></span><span>Cookie 名称</span><span>Cookie 值</span><span>必填</span><span>描述</span><span></span>
+                  </div>
+                  <div v-for="(row, index) in activeEditor.detail.requestConfig.cookies" :key="`cookie-${index}`" class="api-param-row">
+                    <el-checkbox v-model="row.enabled" @change="markDirty" />
+                    <el-input v-model="row.key" placeholder="Cookie 名称" @input="markDirty" />
+                    <el-input v-model="row.value" placeholder="Cookie 值 / {{variable}}" @input="markDirty" />
+                    <el-checkbox v-model="row.required" @change="markDirty" />
+                    <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
+                    <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.cookies, index)">删除</button>
+                  </div>
+                  <button type="button" class="api-add-row" @click="addRow(activeEditor.detail.requestConfig.cookies)">+ 添加一行</button>
+                </div>
+              </template>
+
               <template v-else-if="activeEditor.activeTab === 'body'">
                 <div class="api-body-section">
                   <div class="api-body-modes">
@@ -1353,7 +2400,15 @@ onMounted(() => {
                             :value="type"
                           />
                         </el-select>
-                        <el-input v-if="row.paramType === 'file'" v-model="row.fileName" placeholder="文件名（暂不上传文件）" @input="markDirty" />
+                        <div v-if="row.paramType === 'file'" class="api-file-picker">
+                          <label class="api-file-picker__button">
+                            选择文件
+                            <input type="file" @change="handleFormFileChange(row, $event)" />
+                          </label>
+                          <span :title="row.fileName || ''">{{ row.fileName || '未选择文件' }}</span>
+                          <small>{{ formatFileSize(row.fileSize) }}</small>
+                          <button v-if="row.fileName" type="button" class="api-row-remove" @click="clearFormFile(row)">清除</button>
+                        </div>
                         <el-input v-else v-model="row.value" placeholder="参数值" @input="markDirty" />
                         <div class="api-length-range">
                           <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="min" @change="markDirty" />
@@ -1366,8 +2421,18 @@ onMounted(() => {
                     </div>
                     <div v-else class="api-binary-panel">
                       <span>File</span>
-                      <el-input v-model="activeEditor.detail.requestConfig.body.fileName" placeholder="文件名" @input="markDirty" />
-                      <span class="api-binary-hint">二进制内容上传能力后续按旧项目补齐</span>
+                      <div class="api-binary-file">
+                        <label class="api-file-picker__button">
+                          选择文件
+                          <input type="file" @change="handleBinaryFileChange" />
+                        </label>
+                        <div>
+                          <strong>{{ activeEditor.detail.requestConfig.body.fileName || '未选择文件' }}</strong>
+                          <span>{{ activeEditor.detail.requestConfig.body.contentType || 'application/octet-stream' }} · {{ formatFileSize(activeEditor.detail.requestConfig.body.fileSize) }}</span>
+                        </div>
+                        <button v-if="activeEditor.detail.requestConfig.body.fileName" type="button" class="api-row-remove" @click="clearBinaryFile">清除</button>
+                      </div>
+                      <span class="api-binary-hint">调试发送会带入 Base64 内容；若后端未持久化完整内容，刷新后仅保留接口返回的元信息。</span>
                     </div>
                   </div>
                 </div>
@@ -1417,6 +2482,10 @@ onMounted(() => {
                     <button type="button" class="api-sidebar-primary" :disabled="!activeEditor.definitionId" @click="openCreateCaseDialog">新建用例</button>
                     <span>当前接口下 {{ activeDefinitionCases.length }} 条用例</span>
                   </div>
+                  <div class="api-cases-ai-entry">
+                    <button type="button" class="api-sidebar-secondary" :disabled="!activeEditor.definitionId" @click="openAiCaseDrawer">AI 生成用例</button>
+                    <span>基于当前接口定义生成接口用例，生成结果需采纳后才会保存。</span>
+                  </div>
                   <el-table v-if="activeDefinitionCases.length" :data="activeDefinitionCases" size="small" height="300">
                     <el-table-column prop="name" label="用例名称" min-width="180" show-overflow-tooltip />
                     <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
@@ -1426,9 +2495,10 @@ onMounted(() => {
                       </template>
                     </el-table-column>
                     <el-table-column prop="lastRunResult" label="最近结果" width="100" />
-                    <el-table-column label="操作" width="220" fixed="right">
+                    <el-table-column label="操作" width="280" fixed="right">
                       <template #default="{ row }">
                         <div class="api-case-actions">
+                          <button type="button" @click="openCaseDetailDrawer(row)">查看详情</button>
                           <button type="button" @click="openEditCaseDialog(row)">编辑</button>
                           <button type="button" :disabled="caseRunningId === row.id" @click="runCase(row)">执行</button>
                           <button type="button" @click="duplicateCase(row)">复制</button>
@@ -1442,7 +2512,43 @@ onMounted(() => {
               </template>
 
               <template v-else>
-                <div v-if="activeEditor.activeTab === 'tests'" class="api-assertion-panel">
+                <div v-if="activeEditor.activeTab === 'extractors'" class="api-extractor-panel">
+                  <div class="api-advanced-toolbar">
+                    <div>
+                      <strong>提取器</strong>
+                      <span>从响应中提取变量，供后续步骤或用例复用</span>
+                    </div>
+                    <div class="api-advanced-actions">
+                      <button type="button" @click="openBatchAdd('extractor')">批量添加</button>
+                      <button type="button" class="api-sidebar-primary" @click="addExtractor">添加提取器</button>
+                    </div>
+                  </div>
+                  <div class="api-extractor-table">
+                    <div class="api-extractor-header">
+                      <span>启用</span><span>名称</span><span>来源</span><span>表达式类型</span><span>表达式</span><span>变量名</span><span>默认值</span><span>必填</span><span>失败中断</span><span>说明</span><span></span>
+                    </div>
+                    <div v-for="(extractor, index) in extractorRowsFor(activeEditor.detail)" :key="extractor.id || index" class="api-extractor-row">
+                      <el-switch v-model="extractor.enabled" size="small" @change="markDirty" />
+                      <el-input v-model="extractor.name" placeholder="提取器名称" @input="markDirty" />
+                      <el-select v-model="extractor.source" @change="extractor.sourceType = extractor.source; markDirty()">
+                        <el-option v-for="item in extractorSourceOptions" :key="item.value" :label="item.label" :value="item.value" />
+                      </el-select>
+                      <el-select v-model="extractor.extractType" @change="extractor.expressionType = extractor.extractType; markDirty()">
+                        <el-option v-for="item in extractorExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                      </el-select>
+                      <el-input v-model="extractor.expression" placeholder="$.data.id / token / 正则" @input="markDirty" />
+                      <el-input v-model="extractor.variableName" placeholder="变量名" @input="markDirty" />
+                      <el-input v-model="extractor.defaultValue" placeholder="默认值" @input="markDirty" />
+                      <el-switch v-model="extractor.required" size="small" @change="markDirty" />
+                      <el-switch v-model="extractor.failOnMissing" size="small" @change="markDirty" />
+                      <el-input v-model="extractor.description" placeholder="说明" @input="markDirty" />
+                      <button type="button" class="api-row-remove" @click="removeExtractor(index)">删除</button>
+                    </div>
+                    <div v-if="!extractorRowsFor(activeEditor.detail).length" class="api-empty-body">当前请求未配置提取器</div>
+                  </div>
+                </div>
+
+                <div v-else-if="activeEditor.activeTab === 'tests'" class="api-assertion-panel">
                   <div class="api-advanced-toolbar">
                     <div>
                       <strong>断言</strong>
@@ -1453,25 +2559,68 @@ onMounted(() => {
                       <button type="button" class="api-sidebar-primary" @click="addAssertion">添加断言</button>
                     </div>
                   </div>
-                  <div class="api-assertion-table">
-                    <div class="api-assertion-header">
-                      <span>启用</span><span>名称</span><span>断言对象</span><span>条件</span><span>期望值</span><span>说明</span><span></span>
-                    </div>
-                    <div v-for="(assertion, index) in assertionRowsFor(activeEditor.detail)" :key="assertion.id || index" class="api-assertion-row">
-                      <el-switch v-model="assertion.enabled" size="small" @change="markDirty" />
-                      <el-input v-model="assertion.name" placeholder="断言名称" @input="markDirty" />
-                      <el-select v-model="assertion.assertionType" @change="markDirty">
-                        <el-option v-for="item in assertionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                      </el-select>
-                      <el-select v-model="assertion.condition" @change="markDirty">
-                        <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
-                      </el-select>
-                      <el-input v-model="assertion.expectedValue" placeholder="期望值" @input="markDirty" />
-                      <el-input v-model="assertion.description" placeholder="说明" @input="markDirty" />
-                      <button type="button" class="api-row-remove" @click="removeAssertion(index)">删除</button>
-                    </div>
-                    <div v-if="!assertionRowsFor(activeEditor.detail).length" class="api-empty-body">当前请求未配置断言</div>
+                  <div v-if="assertionRowsFor(activeEditor.detail).length" class="api-assertion-editor">
+                    <aside class="api-assertion-list">
+                      <button
+                        v-for="(assertion, index) in assertionRowsFor(activeEditor.detail)"
+                        :key="assertion.id || index"
+                        type="button"
+                        :class="['api-assertion-list-item', { 'is-active': activeAssertion?.id === assertion.id }]"
+                        @click="selectAssertion(assertion)"
+                      >
+                        <span class="api-assertion-list-item__main">
+                          <el-switch v-model="assertion.enabled" size="small" @click.stop @change="markDirty" />
+                          <span>{{ assertion.name || `断言 ${index + 1}` }}</span>
+                        </span>
+                        <small>{{ assertion.assertionType || assertion.type || 'RESPONSE_CODE' }}</small>
+                      </button>
+                    </aside>
+                    <section v-if="activeAssertion" class="api-assertion-detail">
+                      <div class="api-assertion-detail__actions">
+                        <button type="button" @click="copyAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">复制</button>
+                        <button type="button" @click="moveAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion), -1)">上移</button>
+                        <button type="button" @click="moveAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion), 1)">下移</button>
+                        <button type="button" @click="testAssertionExpression(activeAssertion)">测试表达式</button>
+                        <button type="button" @click="fillAssertionFromResponse(activeAssertion)">从最近响应提取</button>
+                        <button type="button" class="api-row-remove" @click="removeAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">删除</button>
+                      </div>
+                      <div class="api-assertion-form-grid">
+                        <label>名称</label>
+                        <el-input v-model="activeAssertion.name" placeholder="断言名称" @input="markDirty" />
+                        <label>启用</label>
+                        <el-switch v-model="activeAssertion.enabled" size="small" @change="markDirty" />
+                        <label>断言类型</label>
+                        <el-select v-model="activeAssertion.assertionType" @change="normalizeAssertionForType(activeAssertion)">
+                          <el-option v-for="item in assertionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                        </el-select>
+                        <label>表达式类型</label>
+                        <el-select v-model="activeAssertion.expressionType" @change="markDirty">
+                          <el-option v-for="item in assertionExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                        </el-select>
+                        <label>表达式</label>
+                        <el-input v-model="activeAssertion.expression" placeholder="$.data.id / Header name / Regex" @input="markDirty" />
+                        <label>条件</label>
+                        <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
+                          <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
+                        </el-select>
+                        <label>期望值</label>
+                        <el-input v-model="activeAssertion.expectedValue" placeholder="期望值" @input="markDirty" />
+                        <label>说明</label>
+                        <el-input v-model="activeAssertion.description" placeholder="说明" @input="markDirty" />
+                        <label v-if="activeAssertion.assertionType === 'SCRIPT'">脚本</label>
+                        <el-input
+                          v-if="activeAssertion.assertionType === 'SCRIPT'"
+                          v-model="activeAssertion.script"
+                          type="textarea"
+                          :rows="5"
+                          resize="none"
+                          placeholder="return response.statusCode === 200"
+                          @input="markDirty"
+                        />
+                      </div>
+                    </section>
                   </div>
+                  <div v-else class="api-empty-body">当前请求未配置断言</div>
                 </div>
 
                 <div v-else class="api-processor-panel">
@@ -1491,24 +2640,60 @@ onMounted(() => {
                       <div class="api-processor-card__head">
                         <el-switch v-model="processor.enabled" size="small" @change="markDirty" />
                         <el-input v-model="processor.name" placeholder="处理器名称" @input="markDirty" />
-                        <el-select v-model="processor.processorType" @change="markDirty">
+                        <el-select
+                          v-model="processor.processorType"
+                          @change="normalizeProcessorForType(processor, activeEditor.activeTab === 'pre' ? 'pre' : 'post')"
+                        >
                           <el-option v-for="item in processorTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
                         </el-select>
-                        <button type="button" class="api-row-remove" @click="removeProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index)">删除</button>
+                        <div class="api-processor-card__actions">
+                          <button type="button" @click="copyProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index)">复制</button>
+                          <button type="button" @click="moveProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index, -1)">上移</button>
+                          <button type="button" @click="moveProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index, 1)">下移</button>
+                          <button type="button" class="api-row-remove" @click="removeProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index)">删除</button>
+                        </div>
                       </div>
                       <el-input
-                        v-if="processor.processorType !== 'TIME_WAITING'"
+                        v-if="processor.processorType === 'SCRIPT'"
                         v-model="processor.script"
                         type="textarea"
                         :rows="5"
                         resize="none"
-                        placeholder="脚本 / SQL / 提取配置"
+                        :placeholder="processorConfigPlaceholder(processor.processorType)"
                         @input="markDirty"
                       />
+                      <div v-else-if="processor.processorType === 'SQL'" class="api-processor-config-grid">
+                        <label>数据源/说明</label>
+                        <el-input v-model="processor.dataSourceName" placeholder="后端无数据源契约时可留空" @input="markDirty" />
+                        <label>SQL</label>
+                        <el-input
+                          v-model="processor.sql"
+                          type="textarea"
+                          :rows="5"
+                          resize="none"
+                          placeholder="请输入 SQL 语句"
+                          @input="syncProcessorScript(processor)"
+                        />
+                      </div>
+                      <div v-else-if="processor.processorType === 'EXTRACT'" class="api-processor-config-grid">
+                        <label>来源</label>
+                        <el-select v-model="processor.sourceType" @change="markDirty">
+                          <el-option v-for="item in extractorSourceOptions" :key="item.value" :label="item.label" :value="item.value" />
+                        </el-select>
+                        <label>表达式类型</label>
+                        <el-select v-model="processor.extractType" @change="markDirty">
+                          <el-option v-for="item in extractorExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                        </el-select>
+                        <label>表达式</label>
+                        <el-input v-model="processor.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)" />
+                        <label>变量名</label>
+                        <el-input v-model="processor.variableName" placeholder="保存到变量名" @input="markDirty" />
+                      </div>
                       <div v-else class="api-wait-row">
                         <span>等待时长 ms</span>
                         <el-input-number v-model="processor.delayMs" :min="1" :max="600000" :step="100" controls-position="right" @change="markDirty" />
                       </div>
+                      <el-input v-model="processor.description" placeholder="说明" @input="markDirty" />
                     </div>
                     <div v-if="!processorRowsFor(activeEditor.detail, activeEditor.activeTab === 'pre' ? 'pre' : 'post').length" class="api-empty-body">
                       暂无{{ activeEditor.activeTab === 'pre' ? '前置' : '后置' }}处理器
@@ -1536,7 +2721,7 @@ onMounted(() => {
                   <div class="api-response-tabs">
                     <button :class="{ 'is-active': activeEditor.responseTab === 'body' }" @click="activeEditor.responseTab = 'body'">Body</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'header' }" @click="activeEditor.responseTab = 'header'">Header</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台</button>
+                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台{{ extractionRows.length ? ` · 提取${extractionRows.length}` : '' }}</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'actualRequest' }" @click="activeEditor.responseTab = 'actualRequest'">实际请求</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'assertions' }" @click="activeEditor.responseTab = 'assertions'">断言</button>
                   </div>
@@ -1546,11 +2731,17 @@ onMounted(() => {
                   <pre v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-pre">{{ actualRequest }}</pre>
                   <el-table v-else-if="assertionRows.length" :data="assertionRows" size="small">
                     <el-table-column prop="name" label="断言名称" min-width="140" />
-                    <el-table-column prop="condition" label="条件" width="100" />
+                    <el-table-column label="条件" width="100">
+                      <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
+                    </el-table-column>
                     <el-table-column prop="expectedValue" label="期望值" min-width="120" />
                     <el-table-column prop="actualValue" label="实际值" min-width="120" />
                     <el-table-column label="结果" width="90">
-                      <template #default="{ row }">{{ row.success ? '通过' : '失败' }}</template>
+                      <template #default="{ row }">
+                        <span :class="['api-assertion-result-pill', assertionResultClass(row.success)]">
+                          {{ assertionResultLabel(row.success) }}
+                        </span>
+                      </template>
                     </el-table-column>
                     <el-table-column prop="message" label="失败原因" min-width="160" />
                   </el-table>
@@ -1563,15 +2754,43 @@ onMounted(() => {
       </section>
     </div>
 
-    <el-dialog v-model="batchAddVisible" title="批量添加" width="560px" append-to-body>
+    <el-dialog v-model="importDialogVisible" title="导入接口" width="560px" append-to-body>
+      <div class="api-import-dialog">
+        <div class="api-import-notice">
+          <strong>普通导入暂未接入</strong>
+          <span>当前后端未提供 Swagger / OpenAPI、Postman Collection、HAR 文件导入接口，本轮不伪造导入成功。</span>
+        </div>
+        <div class="api-import-capabilities">
+          <div v-for="item in importCapabilityItems" :key="item.name" class="api-import-capability">
+            <div>
+              <strong>{{ item.name }}</strong>
+              <span>{{ item.description }}</span>
+            </div>
+            <em>{{ item.status }}</em>
+          </div>
+        </div>
+        <div class="api-import-curl">
+          <div>
+            <strong>Curl 导入当前请求</strong>
+            <span>已支持 method、URL、Headers、Body 的最小解析，会填充到当前打开的请求 tab。</span>
+          </div>
+          <button type="button" class="api-sidebar-primary" @click="openCurlFromImportDialog">使用 Curl</button>
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="api-dialog-cancel" @click="importDialogVisible = false">关闭</button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="batchAddVisible" :title="batchAddTitle" width="560px" append-to-body>
       <div class="api-batch-dialog">
-        <p>每行一条，支持 <code>key=value</code>、<code>key: value</code> 或 tab 分隔。</p>
+        <p>{{ batchAddHint }}</p>
         <el-input
           v-model="batchAddText"
           type="textarea"
           :rows="10"
           resize="none"
-          placeholder="token=abc&#10;Content-Type: application/json"
+          :placeholder="batchAddPlaceholder"
         />
       </div>
       <template #footer>
@@ -1581,6 +2800,223 @@ onMounted(() => {
         </div>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="caseDetailDrawerVisible" size="760px" class="api-case-detail-drawer" append-to-body>
+      <template #header>
+        <div class="api-case-drawer-header">
+          <strong>{{ viewingCaseItem?.name || '用例详情' }}</strong>
+          <span v-if="viewingCaseItem">{{ viewingCaseItem.method }} {{ viewingCaseItem.path }}</span>
+        </div>
+      </template>
+
+      <div class="api-case-drawer-body">
+        <div class="api-case-drawer-tabs">
+          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'detail' }" @click="caseDetailDrawerTab = 'detail'">详情</button>
+          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'history' }" @click="caseDetailDrawerTab = 'history'">运行历史</button>
+          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'changes' }" @click="caseDetailDrawerTab = 'changes'">变更历史</button>
+        </div>
+
+        <div v-if="caseDetailDrawerTab === 'detail'" class="api-case-detail-panel" v-loading="viewingCaseDetailLoading">
+          <div v-if="viewingCaseDetailErrorMessage" class="api-empty-body">{{ viewingCaseDetailErrorMessage }}</div>
+          <template v-else-if="viewingCaseDetail">
+            <div class="api-case-summary-grid">
+              <div><span>用例名称</span><strong>{{ viewingCaseDetail.name }}</strong></div>
+              <div><span>接口</span><strong>{{ viewingCaseDetail.definitionName }}</strong></div>
+              <div><span>方法</span><strong>{{ viewingCaseDetail.method }}</strong></div>
+              <div><span>路径</span><strong>{{ viewingCaseDetail.path }}</strong></div>
+              <div><span>最近结果</span><strong :class="['api-run-result-pill', runResultClass(viewingCaseDetail.lastRunResult)]">{{ runResultLabel(viewingCaseDetail.lastRunResult) }}</strong></div>
+              <div><span>最近执行</span><strong>{{ formatDateTime(viewingCaseDetail.lastRunAt) }}</strong></div>
+            </div>
+            <div class="api-case-detail-section">
+              <strong>请求配置快照</strong>
+              <pre>{{ toPrettyJson(viewingCaseDetail.requestConfig) }}</pre>
+            </div>
+            <div class="api-case-detail-section">
+              <strong>断言 / 提取器 / 处理器</strong>
+              <pre>{{ toPrettyJson({
+                assertions: viewingCaseDetail.assertions,
+                extractors: viewingCaseDetail.extractors,
+                preProcessors: viewingCaseDetail.preProcessors,
+                postProcessors: viewingCaseDetail.postProcessors,
+              }) }}</pre>
+            </div>
+          </template>
+          <div v-else class="api-empty-body">暂无用例详情</div>
+        </div>
+
+        <div v-else-if="caseDetailDrawerTab === 'history'" class="api-case-history-panel">
+          <div class="api-case-history-list" v-loading="caseRunHistoryLoading">
+            <div v-if="caseRunHistoryErrorMessage" class="api-empty-body">{{ caseRunHistoryErrorMessage }}</div>
+            <template v-else>
+              <button
+                v-for="item in caseRunHistories"
+                :key="item.id"
+                type="button"
+                :class="['api-case-history-item', { 'is-active': selectedCaseRunHistoryId === item.id }]"
+                @click="openCaseRunHistoryDetail(item)"
+              >
+                <span :class="['api-run-result-pill', runResultClass(item.result)]">{{ runResultLabel(item.result) }}</span>
+                <strong>{{ formatDateTime(item.createdAt) }}</strong>
+                <small>{{ item.statusCode ?? '-' }} / {{ formatDuration(item.durationMs) }} / {{ formatResponseSize(item.responseSize) }}</small>
+              </button>
+            </template>
+            <div v-if="!caseRunHistoryLoading && !caseRunHistoryErrorMessage && !caseRunHistories.length" class="api-empty-body">暂无运行历史</div>
+          </div>
+
+          <div class="api-case-history-detail" v-loading="caseRunHistoryDetailLoading">
+            <div v-if="caseRunHistoryDetailErrorMessage" class="api-empty-body">{{ caseRunHistoryDetailErrorMessage }}</div>
+            <template v-else-if="selectedCaseRunHistoryDetail">
+              <div class="api-case-summary-grid">
+                <div><span>执行结果</span><strong :class="['api-run-result-pill', runResultClass(selectedCaseRunHistoryDetail.result)]">{{ runResultLabel(selectedCaseRunHistoryDetail.result) }}</strong></div>
+                <div><span>状态码</span><strong>{{ selectedCaseRunHistoryDetail.statusCode ?? '-' }}</strong></div>
+                <div><span>耗时</span><strong>{{ formatDuration(selectedCaseRunHistoryDetail.durationMs) }}</strong></div>
+                <div><span>响应大小</span><strong>{{ formatResponseSize(selectedCaseRunHistoryDetail.responseSize) }}</strong></div>
+                <div><span>环境</span><strong>{{ selectedCaseRunHistoryDetail.environmentName || '-' }}</strong></div>
+                <div><span>变量集</span><strong>{{ selectedCaseRunHistoryDetail.variableSetName || '-' }}</strong></div>
+              </div>
+              <div v-if="selectedCaseRunHistoryDetail.failureSummary" class="api-case-failure-box">{{ selectedCaseRunHistoryDetail.failureSummary }}</div>
+              <div v-for="(step, index) in selectedCaseRunHistoryDetail.stepResults" :key="step.id || index" class="api-case-detail-section">
+                <strong>{{ step.stepName || `步骤 ${index + 1}` }}</strong>
+                <div class="api-case-step-meta">
+                  <span>状态码 {{ step.response?.statusCode ?? '-' }}</span>
+                  <span>耗时 {{ formatDuration(step.durationMs) }}</span>
+                  <span v-if="step.errorMessage">失败原因：{{ step.errorMessage }}</span>
+                </div>
+                <div class="api-case-history-snapshots">
+                  <div>
+                    <span>请求快照</span>
+                    <pre>{{ toPrettyJson(step.request) }}</pre>
+                  </div>
+                  <div>
+                    <span>响应快照</span>
+                    <pre>{{ toPrettyJson(step.response) }}</pre>
+                  </div>
+                </div>
+                <div class="api-case-history-snapshots">
+                  <div>
+                    <span>断言结果</span>
+                    <pre>{{ toPrettyJson(step.assertionResults) }}</pre>
+                  </div>
+                  <div>
+                    <span>处理器 / 提取结果</span>
+                    <pre>{{ toPrettyJson({ extractionResults: step.extractionResults, processorResults: step.processorResults }) }}</pre>
+                  </div>
+                </div>
+              </div>
+              <div v-if="!selectedCaseRunHistoryDetail.stepResults.length" class="api-empty-body">该历史暂无步骤详情</div>
+            </template>
+            <div v-else class="api-empty-body">请选择一条运行历史</div>
+          </div>
+        </div>
+
+        <div v-else class="api-case-detail-panel">
+          <div class="api-empty-body">
+            当前后端暂未提供接口用例变更历史接口，本轮不伪造变更记录。
+          </div>
+        </div>
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="aiCaseDrawerVisible" size="820px" class="api-ai-case-drawer" append-to-body>
+      <template #header>
+        <div class="api-case-drawer-header">
+          <strong>AI 生成接口用例</strong>
+          <span>{{ activeEditor?.detail.name || '-' }} · {{ activeEditor?.detail.requestConfig.method || '-' }} {{ activeEditor?.detail.requestConfig.path || '-' }}</span>
+        </div>
+      </template>
+
+      <div class="api-ai-case-body">
+        <section class="api-ai-case-section">
+          <div class="api-ai-case-section__header">
+            <strong>生成配置</strong>
+            <span :class="['api-ai-status-pill', `is-${aiCaseGenerationStatus}`]">{{ aiCaseGenerationStatusText }}</span>
+          </div>
+          <div v-if="aiCaseProviderErrorMessage" class="api-case-failure-box">{{ aiCaseProviderErrorMessage }}</div>
+          <div v-else-if="!aiCaseProvidersLoading && !aiCaseAvailableProviders.length" class="api-empty-body">
+            暂无可用 AI 模型，请先到 AI 连接池配置个人模型。
+          </div>
+          <div class="api-ai-case-config-grid">
+            <label>模型</label>
+            <el-select v-model="aiCaseSelectedProviderId" :loading="aiCaseProvidersLoading" placeholder="选择 AI 模型">
+              <el-option
+                v-for="item in aiCaseAvailableProviders"
+                :key="item.id"
+                :label="`${item.connectionName} / ${item.modelName || '-'}`"
+                :value="item.id"
+              />
+            </el-select>
+            <label>数量</label>
+            <el-select v-model="aiCaseCount">
+              <el-option v-for="item in aiCaseCountOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+            <label>去重</label>
+            <el-switch v-model="aiCaseNoDuplicate" />
+            <label>补充要求</label>
+            <el-input v-model="aiCasePrompt" type="textarea" :rows="3" resize="none" placeholder="可补充业务规则、边界条件或特殊断言要求" />
+          </div>
+          <div class="api-ai-case-options">
+            <el-checkbox-group v-model="aiCaseSelectedOptionKeys">
+              <el-checkbox v-for="item in aiCaseGenerationOptions" :key="item.key" :label="item.key">
+                {{ item.groupLabel }} · {{ item.label }}
+              </el-checkbox>
+            </el-checkbox-group>
+          </div>
+          <div class="api-ai-case-actions">
+            <button type="button" class="api-sidebar-primary" :disabled="!aiCaseCanGenerate" @click="submitAiCaseGeneration">
+              {{ aiCaseGenerationStatus === 'running' ? '生成中...' : '开始生成' }}
+            </button>
+            <button type="button" class="api-sidebar-secondary" @click="loadAiCaseProviders">刷新模型</button>
+          </div>
+          <div v-if="aiCaseGenerationMessage" class="api-ai-case-message">{{ aiCaseGenerationMessage }}</div>
+        </section>
+
+        <section class="api-ai-case-section">
+          <div class="api-ai-case-section__header">
+            <strong>生成过程</strong>
+            <span>{{ aiCaseGenerationLogs.length }} 条事件</span>
+          </div>
+          <pre v-if="aiCaseGenerationLogs.length" class="api-ai-case-log">{{ aiCaseGenerationLogs.join('\n') }}</pre>
+          <div v-else class="api-empty-body">点击开始生成后，这里展示真实生成过程。</div>
+        </section>
+
+        <section class="api-ai-case-section">
+          <div class="api-ai-case-section__header">
+            <strong>生成结果</strong>
+            <span>待采纳 {{ aiCasePendingResults.length }} 条</span>
+          </div>
+          <div v-if="aiCaseGeneratedResults.length" class="api-ai-result-list">
+            <article v-for="item in aiCaseGeneratedResults" :key="item.id" class="api-ai-result-card">
+              <div class="api-ai-result-card__head">
+                <div>
+                  <strong>{{ item.draft.name || 'AI 生成接口用例' }}</strong>
+                  <span>{{ item.draft.type || item.draft.group || '接口用例' }}</span>
+                </div>
+                <span :class="['api-ai-result-status', `is-${item.status}`]">{{ item.status === 'accepted' ? '已采纳' : item.status === 'discarded' ? '已弃用' : item.status === 'failed' ? '失败' : '待处理' }}</span>
+              </div>
+              <p v-if="item.draft.description">{{ item.draft.description }}</p>
+              <p v-if="item.draft.expected">预期：{{ item.draft.expected }}</p>
+              <div class="api-ai-result-card__meta">
+                <span>{{ item.draft.requestConfig?.method || activeEditor?.detail.requestConfig.method || '-' }}</span>
+                <span>{{ item.draft.requestConfig?.path || activeEditor?.detail.requestConfig.path || '-' }}</span>
+              </div>
+              <div v-if="item.message" class="api-case-failure-box">{{ item.message }}</div>
+              <div class="api-ai-result-card__actions">
+                <button
+                  type="button"
+                  class="api-sidebar-primary"
+                  :disabled="item.status !== 'pending' || aiCaseSavingId === item.id"
+                  @click="saveAiGeneratedCase(item)"
+                >
+                  {{ aiCaseSavingId === item.id ? '保存中...' : '采纳保存' }}
+                </button>
+                <button type="button" class="api-sidebar-secondary" :disabled="item.status !== 'pending'" @click="discardAiGeneratedCase(item)">弃用</button>
+              </div>
+            </article>
+          </div>
+          <div v-else class="api-empty-body">暂无生成结果</div>
+        </section>
+      </div>
+    </el-drawer>
 
     <ApiCaseCreateEditDialog
       v-model="caseDialogVisible"
@@ -1944,6 +3380,8 @@ onMounted(() => {
 
 .api-request-line {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 12px 16px 10px;
   border-bottom: 1px solid var(--app-border);
@@ -1951,9 +3389,37 @@ onMounted(() => {
 
 .api-url-compose {
   display: grid;
-  min-width: 0;
-  flex: 1;
+  min-width: 360px;
+  flex: 1 1 460px;
   grid-template-columns: 104px minmax(0, 1fr) 68px;
+}
+
+.api-run-options {
+  order: 3;
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 114px;
+}
+
+.api-run-options .el-select {
+  width: 160px;
+}
+
+.api-run-options small {
+  margin-left: 8px;
+  color: var(--app-text-subtle);
+}
+
+.api-run-options__hint {
+  max-width: 120px;
+  overflow: hidden;
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .api-method-select :deep(.el-select__wrapper),
@@ -2060,7 +3526,7 @@ onMounted(() => {
 
 .api-param-toolbar {
   display: flex;
-  min-width: 820px;
+  min-width: 0;
   height: 38px;
   align-items: center;
   justify-content: space-between;
@@ -2218,6 +3684,7 @@ onMounted(() => {
 .api-json-panel,
 .api-cases-panel,
 .api-assertion-panel,
+.api-extractor-panel,
 .api-processor-panel {
   display: grid;
   gap: 12px;
@@ -2245,6 +3712,78 @@ onMounted(() => {
   font-size: var(--app-font-size-sm);
 }
 
+.api-file-picker,
+.api-binary-file {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-file-picker > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-file-picker small {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-file-picker__button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-file-picker__button:hover {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+}
+
+.api-file-picker__button input {
+  display: none;
+}
+
+.api-binary-file {
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+}
+
+.api-binary-file > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.api-binary-file strong,
+.api-binary-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-binary-file span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
 .api-cases-toolbar {
   display: flex;
   align-items: center;
@@ -2252,15 +3791,425 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
+.api-cases-ai-entry,
+.api-cases-toolbar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-cases-ai-entry {
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
 .api-case-actions {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   white-space: nowrap;
 }
 
 .api-case-actions button.is-danger {
   color: var(--app-danger);
+}
+
+.api-case-detail-drawer :deep(.el-drawer__header) {
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.api-case-drawer-header {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.api-case-drawer-header strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-lg);
+}
+
+.api-case-drawer-header span {
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-case-drawer-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px 20px;
+}
+
+.api-case-drawer-tabs {
+  display: inline-flex;
+  width: fit-content;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.api-case-drawer-tabs button {
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-right: 1px solid var(--app-border);
+  background: transparent;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+}
+
+.api-case-drawer-tabs button:last-child {
+  border-right: 0;
+}
+
+.api-case-drawer-tabs button.is-active {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  font-weight: 600;
+}
+
+.api-case-detail-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.api-case-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.api-case-summary-grid > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-case-summary-grid span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-case-summary-grid strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-run-result-pill {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+}
+
+.api-run-result-pill.is-passed {
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.api-run-result-pill.is-failed {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
+.api-run-result-pill.is-neutral {
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+}
+
+.api-case-detail-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.api-case-detail-section > strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-case-detail-section pre,
+.api-case-history-snapshots pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.api-case-history-panel {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 14px;
+  min-height: 460px;
+}
+
+.api-case-history-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.api-case-history-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.api-case-history-item:hover,
+.api-case-history-item.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+}
+
+.api-case-history-item strong,
+.api-case-history-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-case-history-item small {
+  color: var(--app-text-muted);
+}
+
+.api-case-history-detail {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.api-case-failure-box {
+  padding: 10px 12px;
+  border: 1px solid var(--app-danger-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-ai-case-drawer :deep(.el-drawer__header) {
+  margin-bottom: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.api-ai-case-drawer :deep(.el-drawer__body) {
+  padding: 0;
+}
+
+.api-ai-case-body {
+  display: grid;
+  gap: 14px;
+  padding: 16px 20px 20px;
+}
+
+.api-ai-case-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+}
+
+.api-ai-case-section__header,
+.api-ai-case-actions,
+.api-ai-result-card__head,
+.api-ai-result-card__actions,
+.api-ai-result-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-ai-case-section__header,
+.api-ai-result-card__head {
+  justify-content: space-between;
+}
+
+.api-ai-case-section__header strong,
+.api-ai-result-card__head strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-ai-case-section__header span,
+.api-ai-result-card__head span,
+.api-ai-result-card__meta {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-ai-case-config-grid {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.api-ai-case-config-grid label {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-ai-case-options :deep(.el-checkbox-group) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+}
+
+.api-ai-case-message {
+  padding: 8px 10px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-ai-case-log {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--app-radius-md);
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+}
+
+.api-ai-result-list {
+  display: grid;
+  gap: 10px;
+}
+
+.api-ai-result-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-ai-result-card p {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
+.api-ai-result-card__head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.api-ai-result-status,
+.api-ai-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-ai-result-status.is-accepted,
+.api-ai-status-pill.is-done {
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.api-ai-result-status.is-failed,
+.api-ai-status-pill.is-failed {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
+.api-ai-status-pill.is-running {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.api-ai-result-status.is-discarded {
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+}
+
+.api-case-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-case-history-snapshots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.api-case-history-snapshots > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-case-history-snapshots span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
 }
 
 .api-advanced-toolbar {
@@ -2297,6 +4246,7 @@ onMounted(() => {
 }
 
 .api-assertion-table,
+.api-extractor-table,
 .api-processor-list {
   overflow: auto;
   border: 1px solid var(--app-border);
@@ -2324,6 +4274,137 @@ onMounted(() => {
   border-top: 1px solid var(--app-border-soft);
 }
 
+.api-assertion-editor {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  min-height: 320px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+}
+
+.api-assertion-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  overflow: auto;
+  border-right: 1px solid var(--app-border-soft);
+  background: var(--app-bg-page);
+}
+
+.api-assertion-list-item {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--app-text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.api-assertion-list-item:hover,
+.api-assertion-list-item.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-bg-subtle);
+}
+
+.api-assertion-list-item__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--app-font-size-sm);
+  font-weight: 700;
+}
+
+.api-assertion-list-item__main span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-assertion-list-item small {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-assertion-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.api-assertion-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-assertion-form-grid {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.api-assertion-form-grid label {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-extractor-header,
+.api-extractor-row {
+  display: grid;
+  min-width: 1280px;
+  grid-template-columns: 56px 150px 130px 130px minmax(180px, 1.2fr) 140px 120px 72px 88px minmax(140px, 1fr) 64px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+}
+
+.api-extractor-header {
+  background: var(--app-bg-page);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-extractor-row {
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.api-assertion-result-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-assertion-result-pill.is-passed {
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.api-assertion-result-pill.is-failed {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
 .api-processor-card {
   display: grid;
   gap: 8px;
@@ -2337,9 +4418,29 @@ onMounted(() => {
 
 .api-processor-card__head {
   display: grid;
-  grid-template-columns: 56px minmax(160px, 1fr) 160px 64px;
+  grid-template-columns: 56px minmax(160px, 1fr) 160px auto;
   gap: 8px;
   align-items: center;
+}
+
+.api-processor-card__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.api-processor-config-grid {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.api-processor-config-grid label {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
 }
 
 .api-wait-row {
@@ -2462,6 +4563,83 @@ onMounted(() => {
 }
 
 .api-directory-empty,
+.api-import-dialog {
+  display: grid;
+  gap: 14px;
+}
+
+.api-import-notice {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-warning-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-warning-soft);
+}
+
+.api-import-notice strong,
+.api-import-curl strong,
+.api-import-capability strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-import-notice span,
+.api-import-curl span,
+.api-import-capability span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
+.api-import-capabilities {
+  display: grid;
+  gap: 8px;
+}
+
+.api-import-capability,
+.api-import-curl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-import-capability > div,
+.api-import-curl > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.api-import-capability em {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-style: normal;
+}
+
+.api-dialog-cancel {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+}
+
+.api-dialog-cancel:hover {
+  background: var(--app-bg-muted);
+}
+
 .api-batch-dialog p {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);

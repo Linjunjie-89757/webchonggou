@@ -32,6 +32,7 @@ export interface ApiKeyValueInput {
   minLength?: number | null
   maxLength?: number | null
   fileName?: string | null
+  fileSize?: number | null
   contentType?: string | null
   fileBase64?: string | null
 }
@@ -53,6 +54,7 @@ export interface ApiRequestBodyInput {
   formItems: ApiKeyValueInput[]
   contentType?: string | null
   fileName?: string | null
+  fileSize?: number | null
   binaryBase64?: string | null
 }
 
@@ -65,6 +67,23 @@ export interface ApiRequestConfigInput {
   cookies: ApiKeyValueInput[]
   body: ApiRequestBodyInput
   authConfig: ApiAuthConfigInput
+}
+
+export interface ApiAutomationEnvironmentItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  name: string
+  baseUrl: string | null
+  status: number | null
+}
+
+export interface ApiAutomationVariableSetItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  name: string
+  status: number | null
 }
 
 export interface ApiDefinitionDetail extends ApiDefinitionItem {
@@ -142,6 +161,78 @@ export interface SaveApiDefinitionCasePayload {
   assertions: unknown[]
   preProcessors: unknown[]
   postProcessors: unknown[]
+}
+
+export interface ApiAiCaseGenerationOptionPayload {
+  id: string
+  key: string
+  group: string
+  label: string
+  groupLabel: string
+}
+
+export interface ApiAiExistingCaseSummary {
+  id: number
+  name: string
+  tags: string[]
+}
+
+export interface ApiAiGeneratedCaseDraft {
+  name: string
+  description?: string | null
+  tags?: string[] | null
+  group?: string | null
+  groupKey?: string | null
+  type?: string | null
+  typeKey?: string | null
+  expected?: string | null
+  requestConfig?: ApiRequestConfigInput | null
+  assertions?: unknown[] | null
+  preProcessors?: unknown[] | null
+  postProcessors?: unknown[] | null
+}
+
+export interface ApiAiGeneratedCaseOutline {
+  name?: string | null
+  description?: string | null
+  tags?: string[] | null
+  group?: string | null
+  groupKey?: string | null
+  type?: string | null
+  typeKey?: string | null
+  expected?: string | null
+}
+
+export interface ApiAiCaseGenerationPayload {
+  workspaceCode?: string
+  definitionId: number
+  definitionName: string
+  name: string
+  method: string
+  path: string
+  description?: string | null
+  providerConnectionId: number
+  modelName: string
+  caseCount: string
+  noDuplicate: boolean
+  prompt?: string | null
+  options: ApiAiCaseGenerationOptionPayload[]
+  requestConfig: ApiRequestConfigInput
+  assertions: unknown[]
+  preProcessors: unknown[]
+  postProcessors: unknown[]
+  existingCases: ApiAiExistingCaseSummary[]
+}
+
+export interface ApiAiCaseGenerationEvent {
+  event: 'started' | 'item_outline' | 'item_completed' | 'item_failed' | 'completed' | 'failed' | string
+  itemId?: string | null
+  group?: string | null
+  type?: string | null
+  total?: number | null
+  item?: ApiAiGeneratedCaseDraft | null
+  outline?: ApiAiGeneratedCaseOutline | null
+  message?: string | null
 }
 
 export interface ApiRunPayload {
@@ -232,7 +323,7 @@ export interface ApiRunHistoryItem {
 }
 
 export interface ApiRunHistoryDetail extends ApiRunHistoryItem {
-  stepResults: unknown[]
+  stepResults: ApiRunStepResult[]
 }
 
 export interface ApiDefinitionListQuery {

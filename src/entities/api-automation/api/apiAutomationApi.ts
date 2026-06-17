@@ -1,6 +1,9 @@
+import { env } from '@/shared/config/env'
 import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 
 import type {
+  ApiAiCaseGenerationEvent,
+  ApiAiCaseGenerationPayload,
   ApiCaseListQuery,
   ApiDefinitionCaseDetail,
   ApiDefinitionDetail,
@@ -8,6 +11,8 @@ import type {
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
+  ApiAutomationEnvironmentItem,
+  ApiAutomationVariableSetItem,
   ApiRunHistoryDetail,
   ApiRunHistoryItem,
   ApiRunPayload,
@@ -87,6 +92,7 @@ function normalizeRequestConfig(config: ApiDefinitionDetail['requestConfig']): A
       formItems: Array.isArray(config?.body?.formItems) ? config.body.formItems : [],
       contentType: config?.body?.contentType || null,
       fileName: config?.body?.fileName || null,
+      fileSize: config?.body?.fileSize ?? null,
       binaryBase64: config?.body?.binaryBase64 || null,
     },
     authConfig: {
@@ -193,7 +199,110 @@ function normalizeRunHistoryDetail(item: ApiRunHistoryDetail): ApiRunHistoryDeta
   }
 }
 
+async function streamJsonEvents<T>(
+  path: string,
+  payload: unknown,
+  headers: Record<string, string>,
+  onEvent: (event: T) => void,
+) {
+  const response = await fetch(`${env.apiBaseUrl}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const message = await response.text()
+    throw new Error(message || `Request failed with status ${response.status}`)
+  }
+  if (!response.body) {
+    throw new Error('Streaming response is not available')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const chunks = buffer.split(/\r?\n\r?\n/)
+    buffer = chunks.pop() || ''
+
+    chunks.forEach((chunk) => {
+      const data = chunk
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+        .join('\n')
+
+      if (!data || data === '[DONE]') {
+        return
+      }
+
+      onEvent(JSON.parse(data) as T)
+    })
+
+    if (done) {
+      break
+    }
+  }
+
+  const rest = buffer.trim()
+  if (rest.startsWith('data:')) {
+    const data = rest
+      .split(/\r?\n/)
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trim())
+      .join('\n')
+    if (data && data !== '[DONE]') {
+      onEvent(JSON.parse(data) as T)
+    }
+  }
+}
+
+function normalizeEnvironment(item: ApiAutomationEnvironmentItem): ApiAutomationEnvironmentItem {
+  return {
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode,
+    workspaceName: item.workspaceName || null,
+    name: item.name,
+    baseUrl: item.baseUrl || null,
+    status: item.status ?? null,
+  }
+}
+
+function normalizeVariableSet(item: ApiAutomationVariableSetItem): ApiAutomationVariableSetItem {
+  return {
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode,
+    workspaceName: item.workspaceName || null,
+    name: item.name,
+    status: item.status ?? null,
+  }
+}
+
 export const apiAutomationApi = {
+  async getEnvironments(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiAutomationEnvironmentItem>>>('/automation/api/environments', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeEnvironment)
+  },
+
+  async getVariableSets(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiAutomationVariableSetItem>>>('/automation/api/variable-sets', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeVariableSet)
+  },
+
   async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiDefinitionItem>>>('/automation/api/definitions', {
       headers: workspaceHeaders(workspaceCode),
@@ -401,5 +510,18 @@ export const apiAutomationApi = {
     )
 
     return normalizeRunHistoryDetail(unwrapApiResponse(payload))
+  },
+
+  async streamAiCaseGeneration(
+    workspaceCode = 'ALL',
+    data: ApiAiCaseGenerationPayload,
+    onEvent: (event: ApiAiCaseGenerationEvent) => void,
+  ) {
+    await streamJsonEvents<ApiAiCaseGenerationEvent>(
+      '/automation/api/ai-case-generation/stream',
+      data,
+      workspaceHeaders(workspaceCode),
+      onEvent,
+    )
   },
 }

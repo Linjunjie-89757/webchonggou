@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import type {
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
   ApiDefinitionModuleItem,
 } from '@/entities/api-automation'
-import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { ApiInterfaceWorkspace } from '@/widgets/api-interface-workspace'
@@ -17,6 +17,7 @@ const workspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceReady = ref(false)
 const workspaceErrorMessage = ref('')
+const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 
 const workspaceOptions = computed(() => {
   const options = workspaces.value.map((item) => ({
@@ -31,7 +32,15 @@ const workspaceOptions = computed(() => {
   return options
 })
 
+function isKnownWorkspaceCode(workspaceCode: string, items: WorkspaceItem[]) {
+  return workspaceCode === 'ALL' || items.some(item => item.workspaceCode === workspaceCode)
+}
+
 function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
+  if (selectedWorkspaceCode.value && isKnownWorkspaceCode(selectedWorkspaceCode.value, items)) {
+    return selectedWorkspaceCode.value
+  }
+
   const selected = items.find((item) => item.current || item.isCurrent || item.default || item.isDefault)
   return selected?.workspaceCode || items[0]?.workspaceCode || 'ALL'
 }
@@ -45,6 +54,7 @@ async function loadWorkspaces() {
     workspaces.value = items
     workspaceCode.value = resolveDefaultWorkspaceCode(items)
     workspaceSelectorCode.value = workspaceCode.value
+    setSelectedWorkspaceCode(workspaceCode.value)
   } catch (error) {
     workspaceCode.value = 'ALL'
     workspaceSelectorCode.value = 'ALL'
@@ -57,6 +67,7 @@ async function loadWorkspaces() {
 
 function handleWorkspaceChange(value: string) {
   workspaceCode.value = value
+  setSelectedWorkspaceCode(value)
 }
 
 function handleWorkspaceDataLoaded(
@@ -65,6 +76,15 @@ function handleWorkspaceDataLoaded(
 
 onMounted(() => {
   void loadWorkspaces()
+})
+
+watch(selectedWorkspaceCode, (value) => {
+  if (!workspaceReady.value || !value || value === workspaceCode.value || !isKnownWorkspaceCode(value, workspaces.value)) {
+    return
+  }
+
+  workspaceCode.value = value
+  workspaceSelectorCode.value = value
 })
 </script>
 

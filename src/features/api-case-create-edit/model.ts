@@ -86,7 +86,10 @@ export function createApiCaseFormFromSummary(
     description: item.description || '',
     tagsText: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     timeoutMs: '10000',
-    baseRequestConfig: createDefaultRequestConfig(item.method || definition?.method || 'GET', item.path || definition?.path || ''),
+    baseRequestConfig: createDefaultRequestConfig(
+      item.method || definition?.method || 'GET',
+      item.path || definition?.path || '',
+    ),
     assertions: [],
     extractors: [],
     preProcessors: [],
