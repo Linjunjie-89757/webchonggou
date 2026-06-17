@@ -117,12 +117,13 @@ onMounted(() => {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  gap: var(--app-space-3);
+  gap: var(--app-space-2);
 }
 
 .api-automation-page__header {
   display: flex;
   min-width: 0;
+  min-height: 36px;
   align-items: center;
   justify-content: space-between;
   gap: var(--app-space-4);
