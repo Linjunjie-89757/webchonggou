@@ -27,6 +27,7 @@ const props = withDefaults(
     definition: ApiDefinitionItem | null
     caseItem?: ApiDefinitionCaseItem | null
     caseDetail?: ApiDefinitionCaseDetail | null
+    caseDraftDetail?: ApiDefinitionCaseDetail | null
     saving?: boolean
     loadingDetail?: boolean
     detailErrorMessage?: string
@@ -35,6 +36,7 @@ const props = withDefaults(
   {
     caseItem: null,
     caseDetail: null,
+    caseDraftDetail: null,
     detailErrorMessage: '',
     defaultWorkspaceCode: 'ALL',
   },
@@ -57,6 +59,8 @@ function resetForm() {
       ? createApiCaseFormFromDetail(props.caseDetail)
       : props.mode === 'edit' && props.caseItem
         ? createApiCaseFormFromSummary(props.caseItem, props.definition, props.defaultWorkspaceCode)
+        : props.mode === 'create' && props.caseDraftDetail
+          ? createApiCaseFormFromDetail(props.caseDraftDetail)
         : createDefaultApiCaseForm(props.definition, props.defaultWorkspaceCode)
 
   Object.assign(form, nextForm)
@@ -84,7 +88,7 @@ watch(
 )
 
 watch(
-  () => [props.definition, props.caseItem, props.caseDetail, props.defaultWorkspaceCode],
+  () => [props.definition, props.caseItem, props.caseDetail, props.caseDraftDetail, props.defaultWorkspaceCode],
   () => {
     if (props.modelValue) {
       resetForm()

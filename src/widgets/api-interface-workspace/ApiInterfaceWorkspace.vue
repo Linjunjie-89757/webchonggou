@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Close,
   Delete,
@@ -50,6 +50,7 @@ type ApiCaseDialogMode = 'create' | 'edit'
 type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
 type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
+type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -72,6 +73,31 @@ interface ApiAssertionConfig {
   expectedValue?: string
   script?: string | null
   description?: string | null
+  assertionBodyType?: ApiAssertionExpressionType
+  scriptLanguage?: string | null
+  assertions?: ApiAssertionItemConfig[]
+  jsonPathAssertion?: ApiAssertionGroupConfig
+  xpathAssertion?: ApiAssertionGroupConfig
+  regexAssertion?: ApiAssertionGroupConfig
+  variableAssertionItems?: ApiAssertionItemConfig[]
+}
+
+type ApiAssertionExpressionType = 'JSON_PATH' | 'X_PATH' | 'REGEX' | 'HEADER' | 'VARIABLE' | 'SCRIPT'
+
+interface ApiAssertionItemConfig {
+  enabled?: boolean
+  header?: string | null
+  variableName?: string | null
+  expression?: string | null
+  condition?: string | null
+  operator?: string | null
+  expectedValue?: string | null
+  description?: string | null
+}
+
+interface ApiAssertionGroupConfig {
+  assertions: ApiAssertionItemConfig[]
+  responseFormat?: string | null
 }
 
 interface ApiExtractorConfig {
@@ -104,6 +130,19 @@ interface ApiProcessorConfig {
   sourceType?: string | null
   extractType?: string | null
   description?: string | null
+  extractors?: ApiProcessorExtractItem[]
+}
+
+interface ApiProcessorExtractItem {
+  id?: string
+  enabled?: boolean
+  name?: string | null
+  variableName?: string | null
+  description?: string | null
+  variableType?: string | null
+  sourceType?: string | null
+  extractType?: string | null
+  expression?: string | null
 }
 
 interface DirectoryNode {
@@ -162,6 +201,7 @@ const selectedDirectoryKey = ref('definition-root')
 const expandedKeys = ref<string[]>(['definition-root'])
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
+const urlInputRef = ref<{ focus: () => void } | null>(null)
 const saving = ref(false)
 const sending = ref(false)
 const batchAddVisible = ref(false)
@@ -205,6 +245,19 @@ const aiCaseGenerationMessage = ref('')
 const aiCaseGenerationLogs = ref<string[]>([])
 const aiCaseGeneratedResults = ref<ApiAiGeneratedCaseResult[]>([])
 const aiCaseSavingId = ref('')
+const aiCaseResultFilter = ref<ApiAiCaseResultFilter>('pending')
+const aiCaseResultKeyword = ref('')
+const aiCaseResultGroup = ref('')
+const aiCaseResultType = ref('')
+const aiCaseSelectedResultIds = ref<string[]>([])
+const aiCaseDetailVisible = ref(false)
+const aiCaseDetailResult = ref<ApiAiGeneratedCaseResult | null>(null)
+const responsePanelHeight = ref(250)
+const responsePanelMinHeight = 220
+const responsePanelMaxHeight = 520
+const responsePanelHeightStorageKey = 'api-interface-response-panel-height'
+let responseResizeStartY = 0
+let responseResizeStartHeight = 0
 
 const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'none', value: 'NONE' },
@@ -215,6 +268,10 @@ const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'raw', value: 'RAW_TEXT' },
   { label: 'binary', value: 'BINARY' },
 ]
+
+function bodyModeLabel(type?: string | null) {
+  return bodyModes.find(item => item.value === type)?.label || type || 'none'
+}
 
 const aiCaseGenerationOptions: ApiAiCaseGenerationOptionPayload[] = [
   { id: 'positive-basic', key: 'positive-basic', group: 'positive', groupLabel: '正向场景', label: '基础成功路径' },
@@ -247,13 +304,6 @@ const assertionTypeOptions = [
   { label: '变量', value: 'VARIABLE' },
   { label: '脚本', value: 'SCRIPT' },
 ]
-const assertionExpressionTypeOptions = [
-  { label: 'JSONPath', value: 'JSON_PATH' },
-  { label: 'XPath', value: 'X_PATH' },
-  { label: 'Regex', value: 'REGEX' },
-  { label: 'Header name', value: 'HEADER' },
-  { label: '变量名', value: 'VARIABLE' },
-]
 const assertionConditionOptions = [
   { label: '等于', value: 'EQUALS' },
   { label: '不等于', value: 'NOT_EQUALS' },
@@ -261,8 +311,14 @@ const assertionConditionOptions = [
   { label: '不包含', value: 'NOT_CONTAINS' },
   { label: '为空', value: 'EMPTY' },
   { label: '不为空', value: 'NOT_EMPTY' },
+  { label: '开头是', value: 'START_WITH' },
+  { label: '结尾是', value: 'END_WITH' },
+  { label: '正则匹配', value: 'REGEX' },
   { label: '大于', value: 'GT' },
+  { label: '大于等于', value: 'GT_OR_EQUALS' },
   { label: '小于', value: 'LT' },
+  { label: '小于等于', value: 'LT_OR_EQUALS' },
+  { label: '不校验', value: 'UNCHECKED' },
 ]
 
 const extractorSourceOptions = [
@@ -314,11 +370,30 @@ function formatExtractionResults(rows: unknown[]) {
   return lines.join('\n')
 }
 
+function formatProcessorResults(rows: unknown[]) {
+  if (!rows.length) return ''
+  const lines = ['处理器结果']
+  rows.forEach((row, index) => {
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'processorName') ?? `处理器 ${index + 1}`)
+    const type = extractionResultText(extractionResultValue(row, 'type') ?? extractionResultValue(row, 'processorType'))
+    const success = extractionResultValue(row, 'success')
+    const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage') ?? extractionResultValue(row, 'result'))
+    lines.push(`[${index + 1}] ${name}${type !== '-' ? ` / ${type}` : ''} / ${success === false ? '失败' : '成功'}${message !== '-' ? ` / ${message}` : ''}`)
+  })
+  return lines.join('\n')
+}
+
 const processorTypeOptions = [
   { label: '脚本', value: 'SCRIPT' },
   { label: 'SQL', value: 'SQL' },
   { label: '等待', value: 'TIME_WAITING' },
   { label: '提取', value: 'EXTRACT' },
+]
+
+const processorExtractVariableTypeOptions = [
+  { label: '临时变量', value: 'TEMPORARY' },
+  { label: '全局变量', value: 'GLOBAL' },
+  { label: '环境变量', value: 'ENVIRONMENT' },
 ]
 
 const contentTabs = computed<Array<{ label: string; value: RequestContentTab; count?: number }>>(() => [
@@ -361,6 +436,54 @@ const aiCaseGenerationStatusText = computed(() => {
 })
 const aiCasePendingResults = computed(() =>
   aiCaseGeneratedResults.value.filter(item => item.status === 'pending'),
+)
+const aiCaseAcceptedResults = computed(() =>
+  aiCaseGeneratedResults.value.filter(item => item.status === 'accepted'),
+)
+const aiCaseDiscardedResults = computed(() =>
+  aiCaseGeneratedResults.value.filter(item => item.status === 'discarded'),
+)
+const aiCaseFilteredResults = computed(() => {
+  const keyword = aiCaseResultKeyword.value.trim().toLowerCase()
+  return aiCaseGeneratedResults.value.filter((item) => {
+    if (aiCaseResultFilter.value !== 'all' && item.status !== aiCaseResultFilter.value) return false
+    if (aiCaseResultGroup.value && (item.draft.groupKey || item.draft.group || '') !== aiCaseResultGroup.value) return false
+    if (aiCaseResultType.value && (item.draft.typeKey || item.draft.type || '') !== aiCaseResultType.value) return false
+    if (!keyword) return true
+    return [
+      item.draft.name,
+      item.draft.description,
+      item.draft.expected,
+      item.draft.group,
+      item.draft.type,
+      item.message,
+    ].some(value => String(value || '').toLowerCase().includes(keyword))
+  })
+})
+const aiCaseResultFilterOptions = computed<Array<{ label: string; value: ApiAiCaseResultFilter; count: number }>>(() => [
+  { label: '全部', value: 'all', count: aiCaseGeneratedResults.value.length },
+  { label: '待处理', value: 'pending', count: aiCasePendingResults.value.length },
+  { label: '已采纳', value: 'accepted', count: aiCaseAcceptedResults.value.length },
+  { label: '已弃用', value: 'discarded', count: aiCaseDiscardedResults.value.length },
+])
+const aiCaseResultGroupOptions = computed(() => {
+  const options = new Map<string, string>()
+  aiCaseGeneratedResults.value.forEach((item) => {
+    const value = item.draft.groupKey || item.draft.group || ''
+    if (value) options.set(value, item.draft.group || value)
+  })
+  return Array.from(options, ([value, label]) => ({ value, label }))
+})
+const aiCaseResultTypeOptions = computed(() => {
+  const options = new Map<string, string>()
+  aiCaseGeneratedResults.value.forEach((item) => {
+    const value = item.draft.typeKey || item.draft.type || ''
+    if (value) options.set(value, item.draft.type || value)
+  })
+  return Array.from(options, ([value, label]) => ({ value, label }))
+})
+const selectedPendingAiCaseResults = computed(() =>
+  aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id)),
 )
 
 const filteredDefinitions = computed(() => {
@@ -459,12 +582,50 @@ const directoryTree = computed<DirectoryNode[]>(() => {
   }]
 })
 
+function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
+  const keys: string[] = []
+  function walk(node: DirectoryNode) {
+    if (node.children.length) {
+      keys.push(node.key)
+      node.children.forEach(walk)
+    }
+  }
+  nodes.forEach(walk)
+  return keys
+}
+
+watch(
+  () => [directoryKeyword.value, directoryTree.value],
+  () => {
+    if (directoryKeyword.value.trim()) {
+      expandedKeys.value = Array.from(new Set(collectExpandableDirectoryKeys(directoryTree.value)))
+    }
+  },
+)
+
 const currentStep = computed<ApiRunStepResult | null>(() => activeEditor.value?.runResult?.stepResults?.[0] || null)
+const caseDetailPreviewStep = computed<ApiRunStepResult | null>(() => selectedCaseRunHistoryDetail.value?.stepResults?.[0] || null)
+const selectedEnvironment = computed(() => environments.value.find(item => item.id === selectedEnvironmentId.value) || null)
+const selectedVariableSet = computed(() => variableSets.value.find(item => item.id === selectedVariableSetId.value) || null)
 const responseStatus = computed(() => currentStep.value?.response?.statusCode ?? null)
 const responseDuration = computed(() => currentStep.value?.durationMs ?? null)
 const responseBody = computed(() => currentStep.value?.response?.body ?? '')
+const responseBodyPretty = computed(() => {
+  if (!currentStep.value && activeEditor.value?.runError) {
+    return activeEditor.value.runError
+  }
+  return toPrettyJson(responseBody.value)
+})
 const responseHeaders = computed(() => JSON.stringify(currentStep.value?.response?.headers ?? {}, null, 2))
-const actualRequest = computed(() => JSON.stringify(currentStep.value?.request ?? {}, null, 2))
+const actualRequest = computed(() => JSON.stringify({
+  request: currentStep.value?.request ?? null,
+  runOptions: {
+    environmentId: selectedEnvironmentId.value,
+    environmentName: selectedEnvironment.value?.name ?? null,
+    variableSetId: selectedVariableSetId.value,
+    variableSetName: selectedVariableSet.value?.name ?? null,
+  },
+}, null, 2))
 const responseConsole = computed(() => {
   if (activeEditor.value?.runError) {
     return activeEditor.value.runError
@@ -477,10 +638,15 @@ const responseConsole = computed(() => {
   if (extractionText) {
     lines.push('', extractionText)
   }
+  const processorText = formatProcessorResults(currentStep.value.processorResults ?? [])
+  if (processorText) {
+    lines.push('', processorText)
+  }
   return lines.join('\n')
 })
 const assertionRows = computed(() => currentStep.value?.assertionResults ?? [])
 const extractionRows = computed(() => currentStep.value?.extractionResults ?? [])
+const processorRows = computed(() => currentStep.value?.processorResults ?? [])
 const responseSize = computed(() => {
   const text = responseBody.value || ''
   if (!text) {
@@ -766,16 +932,127 @@ function assertionRowsFor(detail: ApiDefinitionDetail): ApiAssertionConfig[] {
 }
 
 function normalizeAssertion(assertion: ApiAssertionConfig) {
-  assertion.id = assertion.id || `assertion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const type = normalizeAssertionType(assertion.assertionType || assertion.type)
+  assertion.id = assertion.id || `assertion-${type.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   assertion.enabled = assertion.enabled !== false
-  assertion.assertionType = assertion.assertionType || assertion.type || 'RESPONSE_CODE'
-  assertion.type = assertion.type || assertion.assertionType
-  assertion.name = assertion.name || '状态码断言'
-  assertion.condition = assertion.condition || assertion.operator || 'EQUALS'
+  assertion.assertionType = type
+  assertion.type = type
+  assertion.name = assertion.name || defaultAssertionName(type)
+  assertion.condition = normalizeAssertionCondition(assertion.condition || assertion.operator)
   assertion.operator = assertion.operator || assertion.condition
-  assertion.expressionType = assertion.expressionType || (assertion.assertionType === 'RESPONSE_HEADER' ? 'HEADER' : 'JSON_PATH')
+  assertion.expressionType = assertion.expressionType || defaultAssertionExpressionType(type)
   assertion.expression = assertion.expression || ''
   assertion.expectedValue = assertion.expectedValue || ''
+  if (type === 'RESPONSE_CODE') {
+    assertion.expectedValue = assertion.expectedValue || '200'
+  }
+  if (type === 'RESPONSE_HEADER') {
+    assertion.expressionType = 'HEADER'
+    assertion.assertions = normalizeAssertionItems(assertion.assertions, {
+      header: assertion.subject || assertion.expression || '',
+      condition: assertion.condition,
+      expectedValue: assertion.expectedValue,
+    })
+  }
+  if (type === 'RESPONSE_BODY') {
+    assertion.assertionBodyType = normalizeAssertionExpressionType(assertion.assertionBodyType || assertion.expressionType)
+    assertion.expressionType = assertion.assertionBodyType
+    assertion.jsonPathAssertion = normalizeAssertionGroup(assertion.jsonPathAssertion, assertion, 'JSON_PATH')
+    assertion.xpathAssertion = normalizeAssertionGroup(assertion.xpathAssertion, assertion, 'X_PATH')
+    assertion.regexAssertion = normalizeAssertionGroup(assertion.regexAssertion, assertion, 'REGEX')
+  }
+  if (type === 'RESPONSE_TIME') {
+    assertion.condition = normalizeAssertionCondition(assertion.condition || 'LT_OR_EQUALS')
+    assertion.expectedValue = assertion.expectedValue || '1000'
+  }
+  if (type === 'VARIABLE') {
+    assertion.expressionType = 'VARIABLE'
+    assertion.variableAssertionItems = normalizeAssertionItems(assertion.variableAssertionItems, {
+      variableName: assertion.subject || assertion.expression || '',
+      condition: assertion.condition,
+      expectedValue: assertion.expectedValue,
+    })
+  }
+  if (type === 'SCRIPT') {
+    assertion.expressionType = 'SCRIPT'
+    assertion.scriptLanguage = assertion.scriptLanguage || 'JavaScript'
+    assertion.script = assertion.script ?? ''
+  }
+}
+
+function normalizeAssertionType(type?: string | null) {
+  const value = (type || 'RESPONSE_CODE').toUpperCase()
+  if (value === 'STATUS_CODE') return 'RESPONSE_CODE'
+  if (value === 'HEADER_EQUALS' || value === 'HEADER_CONTAINS') return 'RESPONSE_HEADER'
+  if (value === 'BODY_JSONPATH_EQUALS' || value === 'BODY_JSONPATH_CONTAINS') return 'RESPONSE_BODY'
+  if (value === 'RESPONSE_TIME_LE') return 'RESPONSE_TIME'
+  return assertionTypeOptions.some(item => item.value === value) ? value : 'RESPONSE_CODE'
+}
+
+function normalizeAssertionCondition(condition?: string | null) {
+  const value = (condition || 'EQUALS').toUpperCase()
+  if (value === 'HEADER_CONTAINS' || value === 'BODY_JSONPATH_CONTAINS') return 'CONTAINS'
+  if (value === 'RESPONSE_TIME_LE') return 'LT_OR_EQUALS'
+  return assertionConditionOptions.some(item => item.value === value) ? value : 'EQUALS'
+}
+
+function normalizeAssertionExpressionType(type?: string | null): ApiAssertionExpressionType {
+  const value = (type || 'JSON_PATH').toUpperCase()
+  if (value === 'XPATH') return 'X_PATH'
+  if (value === 'X_PATH' || value === 'REGEX') return value
+  return 'JSON_PATH'
+}
+
+function defaultAssertionName(type?: string | null) {
+  return assertionTypeLabel(type) || '断言'
+}
+
+function assertionTypeLabel(type?: string | null) {
+  return assertionTypeOptions.find(item => item.value === normalizeAssertionType(type))?.label || '断言'
+}
+
+function defaultAssertionExpressionType(type?: string | null): ApiAssertionExpressionType {
+  const normalizedType = normalizeAssertionType(type)
+  if (normalizedType === 'RESPONSE_HEADER') return 'HEADER'
+  if (normalizedType === 'VARIABLE') return 'VARIABLE'
+  if (normalizedType === 'SCRIPT') return 'SCRIPT'
+  return 'JSON_PATH'
+}
+
+function defaultAssertionExpression(type?: ApiAssertionExpressionType | string | null) {
+  if (type === 'X_PATH') return '/root'
+  if (type === 'REGEX') return '.+'
+  return '$.data'
+}
+
+function normalizeAssertionItem(item: ApiAssertionItemConfig): ApiAssertionItemConfig {
+  Object.assign(item, {
+    enabled: item.enabled !== false,
+    condition: normalizeAssertionCondition(item.condition || item.operator),
+    operator: normalizeAssertionCondition(item.condition || item.operator),
+    expectedValue: item.expectedValue ?? '',
+  })
+  return item
+}
+
+function normalizeAssertionItems(items: ApiAssertionItemConfig[] | undefined, fallback: ApiAssertionItemConfig): ApiAssertionItemConfig[] {
+  const source = items?.length ? items : [fallback]
+  source.forEach(normalizeAssertionItem)
+  return source
+}
+
+function normalizeAssertionGroup(group: ApiAssertionGroupConfig | undefined, assertion: ApiAssertionConfig, type: ApiAssertionExpressionType): ApiAssertionGroupConfig {
+  const fallbackExpression = type === 'JSON_PATH'
+    ? assertion.expression || defaultAssertionExpression(type)
+    : defaultAssertionExpression(type)
+  const next = group || { assertions: [] }
+  next.responseFormat = next.responseFormat || 'XML'
+  next.assertions = normalizeAssertionItems(next.assertions, {
+    expression: fallbackExpression,
+    condition: assertion.condition,
+    expectedValue: type === 'JSON_PATH' ? assertion.expectedValue : '',
+  })
+  return next
 }
 
 function activeAssertionRows() {
@@ -833,32 +1110,40 @@ function normalizeProcessorDefaults(processor: ApiProcessorConfig, stage: 'pre' 
     processor.expression = processor.expression ?? processor.script ?? ''
     processor.variableName = processor.variableName ?? ''
     processor.script = processor.expression
+    processor.extractors = normalizeProcessorExtractItems(processor.extractors, processor)
   }
 }
 
-function createAssertion(name = '状态码断言', expectedValue = '200'): ApiAssertionConfig {
-  return {
-    id: `assertion-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    assertionType: 'RESPONSE_CODE',
-    type: 'RESPONSE_CODE',
-    name,
+function createAssertion(type = 'RESPONSE_CODE', name?: string, expectedValue?: string): ApiAssertionConfig {
+  const normalizedType = normalizeAssertionType(type)
+  const assertion: ApiAssertionConfig = {
+    id: `assertion-${normalizedType.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    assertionType: normalizedType,
+    type: normalizedType,
+    name: name || defaultAssertionName(normalizedType),
     enabled: true,
     subject: '',
-    expressionType: 'JSON_PATH',
+    expressionType: defaultAssertionExpressionType(normalizedType),
     expression: '',
-    condition: 'EQUALS',
-    operator: 'EQUALS',
-    expectedValue,
+    condition: normalizedType === 'RESPONSE_TIME' ? 'LT_OR_EQUALS' : 'EQUALS',
+    operator: normalizedType === 'RESPONSE_TIME' ? 'LT_OR_EQUALS' : 'EQUALS',
+    expectedValue: expectedValue || (normalizedType === 'RESPONSE_CODE' ? '200' : normalizedType === 'RESPONSE_TIME' ? '1000' : ''),
     script: null,
   }
+  normalizeAssertion(assertion)
+  return assertion
 }
 
-function addAssertion() {
+function addAssertion(type = 'RESPONSE_CODE') {
   if (!activeEditor.value) return
-  const assertion = createAssertion()
+  const assertion = createAssertion(type)
   assertionRowsFor(activeEditor.value.detail).push(assertion)
   activeAssertionId.value = assertion.id || ''
   markDirty()
+}
+
+function addAssertionFromCommand(command: string | number | object) {
+  addAssertion(String(command))
 }
 
 function removeAssertion(index: number) {
@@ -900,22 +1185,48 @@ function moveAssertion(index: number, direction: -1 | 1) {
   markDirty()
 }
 
-function normalizeAssertionForType(assertion: ApiAssertionConfig) {
-  assertion.type = assertion.assertionType
-  if (assertion.assertionType === 'RESPONSE_HEADER') {
-    assertion.expressionType = 'HEADER'
-  } else if (assertion.assertionType === 'VARIABLE') {
-    assertion.expressionType = 'VARIABLE'
-  } else if (assertion.assertionType === 'SCRIPT') {
-    assertion.expressionType = 'SCRIPT'
-    assertion.script = assertion.script || ''
-  } else if (!assertion.expressionType || assertion.expressionType === 'HEADER' || assertion.expressionType === 'VARIABLE') {
-    assertion.expressionType = 'JSON_PATH'
+function activeAssertionBodyGroup(assertion: ApiAssertionConfig): ApiAssertionGroupConfig {
+  normalizeAssertion(assertion)
+  if (assertion.assertionBodyType === 'X_PATH') return assertion.xpathAssertion!
+  if (assertion.assertionBodyType === 'REGEX') return assertion.regexAssertion!
+  return assertion.jsonPathAssertion!
+}
+
+function addAssertionItem(items: ApiAssertionItemConfig[], fallback: ApiAssertionItemConfig = {}) {
+  items.push(normalizeAssertionItem({
+    enabled: true,
+    condition: 'EQUALS',
+    expectedValue: '',
+    ...fallback,
+  }))
+  markDirty()
+}
+
+function copyAssertionItem(items: ApiAssertionItemConfig[], index: number) {
+  const source = items[index]
+  if (!source) return
+  items.splice(index + 1, 0, clone(source))
+  markDirty()
+}
+
+function removeAssertionItem(items: ApiAssertionItemConfig[], index: number, fallback: ApiAssertionItemConfig) {
+  items.splice(index, 1)
+  if (!items.length) {
+    items.push(normalizeAssertionItem(fallback))
   }
   markDirty()
 }
 
-function testAssertionExpression(assertion: ApiAssertionConfig) {
+function normalizeAssertionForType(assertion: ApiAssertionConfig) {
+  assertion.assertionType = normalizeAssertionType(assertion.assertionType)
+  assertion.type = assertion.assertionType
+  assertion.name = assertion.name || defaultAssertionName(assertion.assertionType)
+  assertion.expressionType = defaultAssertionExpressionType(assertion.assertionType)
+  normalizeAssertion(assertion)
+  markDirty()
+}
+
+function testAssertionExpression(assertion: ApiAssertionConfig, item?: ApiAssertionItemConfig) {
   if (!currentStep.value) {
     ElMessage.info('请先发送请求，再测试表达式')
     return
@@ -925,15 +1236,20 @@ function testAssertionExpression(assertion: ApiAssertionConfig) {
     return
   }
   if (assertion.assertionType === 'RESPONSE_HEADER') {
-    const key = assertion.expression || assertion.subject || ''
+    const key = item?.header || assertion.expression || assertion.subject || ''
     const value = key ? (currentStep.value.response?.headers as Record<string, unknown> | undefined)?.[key] : undefined
     ElMessage.info(value == null ? '未在最近响应头中找到该字段' : `匹配值：${String(value)}`)
     return
   }
-  if (assertion.assertionType === 'RESPONSE_BODY' && assertion.expressionType === 'JSON_PATH') {
+  if (assertion.assertionType === 'RESPONSE_TIME') {
+    ElMessage.info(`最近耗时：${currentStep.value.durationMs ?? '-'} ms`)
+    return
+  }
+  if (assertion.assertionType === 'RESPONSE_BODY' && (assertion.assertionBodyType || assertion.expressionType) === 'JSON_PATH') {
     try {
       const body = JSON.parse(String(currentStep.value.response?.body || '{}')) as Record<string, unknown>
-      const key = assertion.expression?.replace(/^\$\./, '')
+      const expression = item?.expression || assertion.expression || ''
+      const key = expression.replace(/^\$\./, '')
       const value = key ? key.split('.').reduce<unknown>((acc, part) => {
         if (!acc || typeof acc !== 'object') return undefined
         return (acc as Record<string, unknown>)[part]
@@ -947,7 +1263,7 @@ function testAssertionExpression(assertion: ApiAssertionConfig) {
   ElMessage.info('当前表达式类型需要后端执行时验证')
 }
 
-function fillAssertionFromResponse(assertion: ApiAssertionConfig) {
+function fillAssertionFromResponse(assertion: ApiAssertionConfig, item?: ApiAssertionItemConfig) {
   if (!currentStep.value) {
     ElMessage.info('请先发送请求，再从响应快速提取')
     return
@@ -963,12 +1279,128 @@ function fillAssertionFromResponse(assertion: ApiAssertionConfig) {
     assertion.assertionType = 'RESPONSE_BODY'
     assertion.type = 'RESPONSE_BODY'
     assertion.expressionType = 'JSON_PATH'
-    assertion.expression = `$.${firstKey}`
-    assertion.expectedValue = String(body[firstKey] ?? '')
+    assertion.assertionBodyType = 'JSON_PATH'
+    const target = item || activeAssertionBodyGroup(assertion).assertions[0]
+    target.expression = `$.${firstKey}`
+    target.expectedValue = String(body[firstKey] ?? '')
+    assertion.expression = target.expression
+    assertion.expectedValue = target.expectedValue
     markDirty()
     ElMessage.success('已从最近响应填入表达式和期望值')
   } catch {
     ElMessage.warning('最近响应体不是可解析的 JSON')
+  }
+}
+
+function firstJsonAssertionCandidate() {
+  const bodyText = String(currentStep.value?.response?.body || '')
+  try {
+    const body = JSON.parse(bodyText) as Record<string, unknown>
+    const firstKey = ['code', 'success', 'message', 'data'].find(key => key in body)
+    if (!firstKey) return null
+    return { expression: `$.${firstKey}`, value: String(body[firstKey] ?? '') }
+  } catch {
+    return null
+  }
+}
+
+function addAssertionFromLatestResponse(type: 'code' | 'header' | 'body') {
+  if (!activeEditor.value) return
+  if (!currentStep.value) {
+    ElMessage.info('请先发送请求，再从最近响应生成断言')
+    return
+  }
+  const rows = assertionRowsFor(activeEditor.value.detail)
+  if (type === 'code') {
+    const assertion = createAssertion('RESPONSE_CODE', '响应码等于当前值', String(currentStep.value.response?.statusCode ?? 200))
+    rows.push(assertion)
+    activeAssertionId.value = assertion.id || ''
+    markDirty()
+    ElMessage.success('已生成响应码断言')
+    return
+  }
+  if (type === 'header') {
+    const headers = currentStep.value.response?.headers as Record<string, unknown> | undefined
+    const key = Object.keys(headers || {})[0]
+    if (!key) {
+      ElMessage.info('最近响应没有可提取的响应头')
+      return
+    }
+    const assertion = createAssertion('RESPONSE_HEADER', `响应头 ${key}`, String(headers?.[key] ?? ''))
+    assertion.expression = key
+    assertion.subject = key
+    assertion.assertions = [{ header: key, condition: 'EQUALS', expectedValue: String(headers?.[key] ?? '') }]
+    normalizeAssertion(assertion)
+    rows.push(assertion)
+    activeAssertionId.value = assertion.id || ''
+    markDirty()
+    ElMessage.success('已生成响应头断言')
+    return
+  }
+  const candidate = firstJsonAssertionCandidate()
+  if (!candidate) {
+    ElMessage.info('最近响应体不是可快速提取的 JSON 字段')
+    return
+  }
+  const assertion = createAssertion('RESPONSE_BODY', '响应体 JSONPath 断言', candidate.value)
+  assertion.expressionType = 'JSON_PATH'
+  assertion.assertionBodyType = 'JSON_PATH'
+  assertion.expression = candidate.expression
+  assertion.jsonPathAssertion = {
+    assertions: [{
+      expression: candidate.expression,
+      condition: 'EQUALS',
+      expectedValue: candidate.value,
+    }],
+  }
+  normalizeAssertion(assertion)
+  rows.push(assertion)
+  activeAssertionId.value = assertion.id || ''
+  markDirty()
+  ElMessage.success('已生成响应体 JSONPath 断言')
+}
+
+function addAssertionFromLatestResponseCommand(command: string | number | object) {
+  const value = String(command)
+  if (value === 'code' || value === 'header' || value === 'body') {
+    addAssertionFromLatestResponse(value)
+  }
+}
+
+function clampResponsePanelHeight(value: number) {
+  return Math.min(responsePanelMaxHeight, Math.max(responsePanelMinHeight, Math.round(value)))
+}
+
+function persistResponsePanelHeight() {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(responsePanelHeightStorageKey, String(responsePanelHeight.value))
+}
+
+function handleResponseResizeMove(event: PointerEvent) {
+  const nextHeight = responseResizeStartHeight - (event.clientY - responseResizeStartY)
+  responsePanelHeight.value = clampResponsePanelHeight(nextHeight)
+}
+
+function stopResponseResize() {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('pointermove', handleResponseResizeMove)
+  window.removeEventListener('pointerup', stopResponseResize)
+  persistResponsePanelHeight()
+}
+
+function startResponseResize(event: PointerEvent) {
+  if (typeof window === 'undefined') return
+  responseResizeStartY = event.clientY
+  responseResizeStartHeight = responsePanelHeight.value
+  window.addEventListener('pointermove', handleResponseResizeMove)
+  window.addEventListener('pointerup', stopResponseResize, { once: true })
+}
+
+function restoreResponsePanelHeight() {
+  if (typeof window === 'undefined') return
+  const savedHeight = Number(window.localStorage.getItem(responsePanelHeightStorageKey))
+  if (Number.isFinite(savedHeight) && savedHeight > 0) {
+    responsePanelHeight.value = clampResponsePanelHeight(savedHeight)
   }
 }
 
@@ -1017,8 +1449,52 @@ function createProcessor(stage: 'pre' | 'post', type = 'SCRIPT'): ApiProcessorCo
     extractType: type === 'EXTRACT' ? 'JSON_PATH' : null,
     expression: type === 'EXTRACT' ? '' : null,
     variableName: type === 'EXTRACT' ? '' : null,
+    extractors: type === 'EXTRACT' ? [createProcessorExtractItem()] : [],
   }
   return processor
+}
+
+function createProcessorExtractItem(patch: Partial<ApiProcessorExtractItem> = {}): ApiProcessorExtractItem {
+  return {
+    id: `extract-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    enabled: true,
+    name: '',
+    variableName: '',
+    description: '',
+    variableType: 'TEMPORARY',
+    sourceType: 'RESPONSE_BODY',
+    extractType: 'JSON_PATH',
+    expression: '',
+    ...patch,
+  }
+}
+
+function normalizeProcessorExtractItem(item: ApiProcessorExtractItem): ApiProcessorExtractItem {
+  item.id = item.id || `extract-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  item.enabled = item.enabled !== false
+  item.name = item.name ?? ''
+  item.variableName = item.variableName ?? ''
+  item.description = item.description ?? ''
+  item.variableType = item.variableType || 'TEMPORARY'
+  item.sourceType = item.sourceType || 'RESPONSE_BODY'
+  item.extractType = item.extractType || 'JSON_PATH'
+  item.expression = item.expression ?? ''
+  return item
+}
+
+function normalizeProcessorExtractItems(items: ApiProcessorExtractItem[] | undefined, processor: ApiProcessorConfig) {
+  const source = items?.length
+    ? items
+    : [createProcessorExtractItem({
+        name: processor.name || '提取项',
+        variableName: processor.variableName || '',
+        sourceType: processor.sourceType || 'RESPONSE_BODY',
+        extractType: processor.extractType || 'JSON_PATH',
+        expression: processor.expression || '',
+        description: processor.description || '',
+      })]
+  source.forEach(normalizeProcessorExtractItem)
+  return source
 }
 
 function processorDefaultName(stage: 'pre' | 'post', type?: string) {
@@ -1067,6 +1543,7 @@ function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' |
     processor.sourceType = processor.sourceType || 'RESPONSE_BODY'
     processor.extractType = processor.extractType || 'JSON_PATH'
     processor.variableName = processor.variableName ?? ''
+    processor.extractors = normalizeProcessorExtractItems(processor.extractors, processor)
     processor.delayMs = null
   } else {
     processor.script = processor.script ?? ''
@@ -1077,10 +1554,14 @@ function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' |
   markDirty()
 }
 
-function addProcessor(stage: 'pre' | 'post') {
+function addProcessor(stage: 'pre' | 'post', type = 'SCRIPT') {
   if (!activeEditor.value) return
-  processorRowsFor(activeEditor.value.detail, stage).push(createProcessor(stage))
+  processorRowsFor(activeEditor.value.detail, stage).push(createProcessor(stage, type))
   markDirty()
+}
+
+function addProcessorFromCommand(stage: 'pre' | 'post', command: string | number | object) {
+  addProcessor(stage, String(command))
 }
 
 function removeProcessor(stage: 'pre' | 'post', index: number) {
@@ -1117,9 +1598,37 @@ function syncProcessorScript(processor: ApiProcessorConfig) {
   if (processor.processorType === 'SQL') {
     processor.script = processor.sql ?? ''
   } else if (processor.processorType === 'EXTRACT') {
+    const firstExtractor = processor.extractors?.[0]
+    processor.expression = firstExtractor?.expression ?? processor.expression ?? ''
+    processor.variableName = firstExtractor?.variableName ?? processor.variableName ?? ''
+    processor.sourceType = firstExtractor?.sourceType ?? processor.sourceType ?? 'RESPONSE_BODY'
+    processor.extractType = firstExtractor?.extractType ?? processor.extractType ?? 'JSON_PATH'
     processor.script = processor.expression ?? ''
   }
   markDirty()
+}
+
+function addProcessorExtractItem(processor: ApiProcessorConfig) {
+  processor.extractors = normalizeProcessorExtractItems(processor.extractors, processor)
+  processor.extractors.push(createProcessorExtractItem())
+  syncProcessorScript(processor)
+}
+
+function copyProcessorExtractItem(processor: ApiProcessorConfig, index: number) {
+  const rows = normalizeProcessorExtractItems(processor.extractors, processor)
+  const source = rows[index]
+  if (!source) return
+  rows.splice(index + 1, 0, { ...clone(source), id: `extract-item-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` })
+  processor.extractors = rows
+  syncProcessorScript(processor)
+}
+
+function removeProcessorExtractItem(processor: ApiProcessorConfig, index: number) {
+  const rows = normalizeProcessorExtractItems(processor.extractors, processor)
+  rows.splice(index, 1)
+  if (!rows.length) rows.push(createProcessorExtractItem())
+  processor.extractors = rows
+  syncProcessorScript(processor)
 }
 
 function buildPayload(detail: ApiDefinitionDetail): SaveApiDefinitionPayload {
@@ -1248,6 +1757,9 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
   }
   tabs.value.push(tab)
   activeEditorKey.value = key
+  void nextTick(() => {
+    urlInputRef.value?.focus()
+  })
 }
 
 async function openDefinition(item: ApiDefinitionItem) {
@@ -1329,6 +1841,41 @@ async function closeOtherTabs() {
     })
   }
   tabs.value = [activeEditor.value]
+}
+
+async function closeDraftTabs() {
+  const draftTabs = tabs.value.filter(item => !item.definitionId)
+  if (!draftTabs.length) {
+    ElMessage.info('当前没有草稿标签')
+    return
+  }
+  if (draftTabs.some(item => item.dirty)) {
+    await ElMessageBox.confirm('草稿标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭全部草稿', {
+      type: 'warning',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+    })
+  }
+  const activeWillClose = activeEditor.value ? draftTabs.some(item => item.key === activeEditor.value?.key) : false
+  tabs.value = tabs.value.filter(item => item.definitionId)
+  if (activeWillClose) {
+    activeEditorKey.value = tabs.value[0]?.key || ''
+  }
+}
+
+async function handleEditorTabMenu(command: string | number | object) {
+  try {
+    const action = String(command)
+    if (action === 'closeCurrent' && activeEditor.value) {
+      await closeEditorTab(activeEditor.value.key)
+    } else if (action === 'closeOthers') {
+      await closeOtherTabs()
+    } else if (action === 'closeDrafts') {
+      await closeDraftTabs()
+    }
+  } catch {
+    // User cancelled a tab-management confirmation.
+  }
 }
 
 function handleDirectorySelect(node: DirectoryNode) {
@@ -1615,12 +2162,28 @@ function duplicateActiveEditor() {
   openNewRequestTab(detail)
 }
 
-function saveAsCase() {
+async function saveAsCase() {
+  if (!activeEditor.value) return
+  if (!activeEditor.value.definitionId) {
+    try {
+      await ElMessageBox.confirm('当前请求还未保存为接口，请先保存接口，再保存为用例。是否现在保存接口？', '保存为用例', {
+        type: 'warning',
+        confirmButtonText: '先保存接口',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+    await saveActiveEditor()
+    if (!activeEditor.value?.definitionId) return
+  }
   openCreateCaseDialog()
 }
 
 async function promptImportCurl() {
-  if (!activeEditor.value) return
+  if (!activeEditor.value) {
+    openNewRequestTab()
+  }
   const { value } = await ElMessageBox.prompt('粘贴 curl 命令，支持 method、URL、Headers、Body 的最小解析', 'Curl 导入', {
     inputType: 'textarea',
     inputPlaceholder: `curl -X POST "https://example.com/api" -H "Content-Type: application/json" -d '{"name":"demo"}'`,
@@ -1718,6 +2281,32 @@ function currentDefinitionSummary(): ApiDefinitionItem | null {
     lastRunResult: detail.lastRunResult,
     lastRunAt: detail.lastRunAt,
     updatedAt: detail.updatedAt,
+  }
+}
+
+function currentCaseDraftDetail(): ApiDefinitionCaseDetail | null {
+  if (!activeEditor.value?.definitionId) return null
+  const detail = activeEditor.value.detail
+  return {
+    id: 0,
+    workspaceCode: detail.workspaceCode || props.workspaceCode,
+    workspaceName: detail.workspaceName,
+    definitionId: activeEditor.value.definitionId,
+    definitionName: detail.name || editorTitle(detail),
+    name: `${detail.name || editorTitle(detail)} 用例`,
+    method: detail.requestConfig.method || detail.method || 'GET',
+    path: detail.requestConfig.path || detail.path || '',
+    description: detail.description || null,
+    tags: detail.tags || [],
+    lastRunResult: detail.lastRunResult,
+    lastRunAt: detail.lastRunAt,
+    updatedAt: detail.updatedAt,
+    createdAt: null,
+    requestConfig: clone(detail.requestConfig),
+    assertions: clone(detail.assertions || []),
+    extractors: clone(detail.extractors || []),
+    preProcessors: clone(detail.preProcessors || []),
+    postProcessors: clone(detail.postProcessors || []),
   }
 }
 
@@ -1894,6 +2483,7 @@ async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
       postProcessors: clone(draft.postProcessors || activeEditor.value.detail.postProcessors || []),
     })
     result.status = 'accepted'
+    aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
     await loadCasesForDefinition(activeEditor.value.definitionId)
     ElMessage.success('AI 生成用例已保存')
   } catch (error) {
@@ -1905,6 +2495,72 @@ async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
 
 function discardAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
   result.status = 'discarded'
+  aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
+}
+
+function restoreAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
+  if (result.status === 'discarded') {
+    result.status = 'pending'
+  }
+}
+
+function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {
+  aiCaseDetailResult.value = result
+  aiCaseDetailVisible.value = true
+}
+
+function aiGeneratedDraftExtra(result: ApiAiGeneratedCaseResult | null, key: string) {
+  if (!result) return null
+  return (result.draft as unknown as Record<string, unknown>)[key] ?? null
+}
+
+async function batchAcceptAiGeneratedCases() {
+  let pending = selectedPendingAiCaseResults.value
+  if (!pending.length && aiCasePendingResults.value.length) {
+    try {
+      await ElMessageBox.confirm('当前未勾选生成结果，是否采纳全部待处理结果？', '批量采纳', {
+        type: 'warning',
+        confirmButtonText: '采纳全部',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+    pending = aiCasePendingResults.value
+  }
+  if (!pending.length) {
+    ElMessage.info('暂无待采纳的生成结果')
+    return
+  }
+  for (const item of pending) {
+    if (item.status === 'pending') {
+      await saveAiGeneratedCase(item)
+    }
+  }
+}
+
+async function batchDiscardAiGeneratedCases() {
+  let pending = selectedPendingAiCaseResults.value
+  if (!pending.length && aiCasePendingResults.value.length) {
+    try {
+      await ElMessageBox.confirm('当前未勾选生成结果，是否弃用全部待处理结果？', '批量弃用', {
+        type: 'warning',
+        confirmButtonText: '弃用全部',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+    pending = aiCasePendingResults.value
+  }
+  if (!pending.length) {
+    ElMessage.info('暂无待弃用的生成结果')
+    return
+  }
+  pending.forEach(item => {
+    item.status = 'discarded'
+  })
+  aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => !pending.some(item => item.id === id))
 }
 
 function openCreateCaseDialog() {
@@ -2067,7 +2723,12 @@ watch(
 )
 
 onMounted(() => {
+  restoreResponsePanelHeight()
   void loadWorkspaceData()
+})
+
+onBeforeUnmount(() => {
+  stopResponseResize()
 })
 </script>
 
@@ -2162,7 +2823,7 @@ onMounted(() => {
             </template>
           </el-tree>
           <div v-if="!filteredDefinitions.length && !definitionLoading" class="api-directory-empty">
-            暂无匹配的请求
+            {{ directoryKeyword.trim() ? '暂无匹配的模块或请求' : '暂无请求，请新建请求或使用 Curl 导入' }}
           </div>
         </div>
       </aside>
@@ -2175,6 +2836,7 @@ onMounted(() => {
               :key="item.key"
               :class="['api-editor-tab', { 'is-active': item.key === activeEditorKey }]"
               type="button"
+              :title="item.title"
               @click="activeEditorKey = item.key"
             >
               <span :class="['api-method', requestMethodClass(item.method)]">{{ item.method }}</span>
@@ -2187,13 +2849,15 @@ onMounted(() => {
             <button type="button" class="api-editor-tab-add" @click="openNewRequestTab()">
               <el-icon><Plus /></el-icon>
             </button>
-            <el-dropdown v-if="tabs.length > 1" trigger="click" @command="closeOtherTabs">
+            <el-dropdown v-if="tabs.length" trigger="click" @command="handleEditorTabMenu">
               <button type="button" class="api-editor-tab-more">
                 <el-icon><MoreFilled /></el-icon>
               </button>
               <template #dropdown>
                 <el-dropdown-menu>
+                  <el-dropdown-item command="closeCurrent" :disabled="!activeEditor">关闭当前标签</el-dropdown-item>
                   <el-dropdown-item command="closeOthers">关闭其他标签</el-dropdown-item>
+                  <el-dropdown-item command="closeDrafts">关闭全部草稿</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -2218,6 +2882,7 @@ onMounted(() => {
                 </el-option>
               </el-select>
               <el-input
+                ref="urlInputRef"
                 v-model="activeEditor.detail.requestConfig.path"
                 placeholder="请输入包含 http/https 的完整 URL 或接口路径"
                 @input="markDirty"
@@ -2257,7 +2922,7 @@ onMounted(() => {
               保存
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item :disabled="!activeEditor.definitionId" @click="saveAsCase">保存为用例</el-dropdown-item>
+                  <el-dropdown-item @click="saveAsCase">保存为用例</el-dropdown-item>
                   <el-dropdown-item @click="duplicateActiveEditor">
                     <el-icon><DocumentCopy /></el-icon>
                     复制接口
@@ -2556,7 +3221,24 @@ onMounted(() => {
                     </div>
                     <div class="api-advanced-actions">
                       <button type="button" @click="openBatchAdd('assertion')">批量添加</button>
-                      <button type="button" class="api-sidebar-primary" @click="addAssertion">添加断言</button>
+                      <el-dropdown trigger="click" @command="addAssertionFromLatestResponseCommand">
+                        <button type="button">从响应提取</button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item command="code">响应码断言</el-dropdown-item>
+                            <el-dropdown-item command="header">响应头断言</el-dropdown-item>
+                            <el-dropdown-item command="body">响应体 JSONPath 断言</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                      <el-dropdown trigger="click" @command="addAssertionFromCommand">
+                        <button type="button" class="api-sidebar-primary">添加断言</button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item v-for="item in assertionTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
                     </div>
                   </div>
                   <div v-if="assertionRowsFor(activeEditor.detail).length" class="api-assertion-editor">
@@ -2572,7 +3254,7 @@ onMounted(() => {
                           <el-switch v-model="assertion.enabled" size="small" @click.stop @change="markDirty" />
                           <span>{{ assertion.name || `断言 ${index + 1}` }}</span>
                         </span>
-                        <small>{{ assertion.assertionType || assertion.type || 'RESPONSE_CODE' }}</small>
+                        <small>{{ index + 1 }} · {{ assertionTypeLabel(assertion.assertionType || assertion.type) }}</small>
                       </button>
                     </aside>
                     <section v-if="activeAssertion" class="api-assertion-detail">
@@ -2593,30 +3275,118 @@ onMounted(() => {
                         <el-select v-model="activeAssertion.assertionType" @change="normalizeAssertionForType(activeAssertion)">
                           <el-option v-for="item in assertionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
                         </el-select>
-                        <label>表达式类型</label>
-                        <el-select v-model="activeAssertion.expressionType" @change="markDirty">
-                          <el-option v-for="item in assertionExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <label>表达式</label>
-                        <el-input v-model="activeAssertion.expression" placeholder="$.data.id / Header name / Regex" @input="markDirty" />
-                        <label>条件</label>
-                        <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
-                          <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <label>期望值</label>
-                        <el-input v-model="activeAssertion.expectedValue" placeholder="期望值" @input="markDirty" />
                         <label>说明</label>
                         <el-input v-model="activeAssertion.description" placeholder="说明" @input="markDirty" />
-                        <label v-if="activeAssertion.assertionType === 'SCRIPT'">脚本</label>
+                      </div>
+
+                      <div v-if="activeAssertion.assertionType === 'RESPONSE_CODE'" class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">响应码断言</div>
+                        <div class="api-assertion-form-grid">
+                          <label>条件</label>
+                          <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
+                            <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
+                          </el-select>
+                          <label>期望状态码</label>
+                          <el-input v-model="activeAssertion.expectedValue" placeholder="200" @input="markDirty" />
+                        </div>
+                      </div>
+
+                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_HEADER'" class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">
+                          <span>响应头断言</span>
+                          <button type="button" @click="addAssertionItem(activeAssertion.assertions || (activeAssertion.assertions = []), { header: '' })">+ 添加响应头</button>
+                        </div>
+                        <div class="api-assertion-item-list">
+                          <div v-for="(item, index) in activeAssertion.assertions" :key="`${activeAssertion.id}-header-${index}`" class="api-assertion-item-row is-header">
+                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-input v-model="item.header" placeholder="响应头名称" @input="activeAssertion.expression = item.header || ''; markDirty()" />
+                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
+                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
+                            <button type="button" @click="copyAssertionItem(activeAssertion.assertions || [], index)">复制</button>
+                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.assertions || [], index, { header: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_BODY'" class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">
+                          <span>响应体断言</span>
+                          <button type="button" @click="addAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType) })">+ 添加表达式</button>
+                        </div>
+                        <div class="api-assertion-mode-row">
+                          <el-radio-group v-model="activeAssertion.assertionBodyType" @change="activeAssertion.expressionType = activeAssertion.assertionBodyType; markDirty()">
+                            <el-radio-button value="JSON_PATH">JSONPath</el-radio-button>
+                            <el-radio-button value="X_PATH">XPath</el-radio-button>
+                            <el-radio-button value="REGEX">Regex</el-radio-button>
+                          </el-radio-group>
+                          <el-select v-if="activeAssertion.assertionBodyType === 'X_PATH'" v-model="activeAssertionBodyGroup(activeAssertion).responseFormat" class="api-assertion-format-select" @change="markDirty">
+                            <el-option label="XML" value="XML" />
+                            <el-option label="HTML" value="HTML" />
+                          </el-select>
+                        </div>
+                        <div class="api-assertion-item-list">
+                          <div v-for="(item, index) in activeAssertionBodyGroup(activeAssertion).assertions" :key="`${activeAssertion.id}-body-${activeAssertion.assertionBodyType}-${index}`" class="api-assertion-item-row is-body">
+                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-input v-model="item.expression" placeholder="$.data.id / /root/id / 正则" @input="activeAssertion.expression = item.expression || ''; markDirty()" />
+                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
+                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
+                            <button type="button" @click="fillAssertionFromResponse(activeAssertion, item)">提取</button>
+                            <button type="button" @click="copyAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index)">复制</button>
+                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType), condition: 'EQUALS', expectedValue: '' })">删除</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_TIME'" class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">响应时间断言</div>
+                        <div class="api-assertion-form-grid">
+                          <label>条件</label>
+                          <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
+                            <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
+                          </el-select>
+                          <label>耗时阈值</label>
+                          <el-input v-model="activeAssertion.expectedValue" placeholder="1000" @input="markDirty">
+                            <template #append>ms</template>
+                          </el-input>
+                        </div>
+                      </div>
+
+                      <div v-else-if="activeAssertion.assertionType === 'VARIABLE'" class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">
+                          <span>变量断言</span>
+                          <button type="button" @click="addAssertionItem(activeAssertion.variableAssertionItems || (activeAssertion.variableAssertionItems = []), { variableName: '' })">+ 添加变量</button>
+                        </div>
+                        <div class="api-assertion-item-list">
+                          <div v-for="(item, index) in activeAssertion.variableAssertionItems" :key="`${activeAssertion.id}-variable-${index}`" class="api-assertion-item-row is-variable">
+                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-input v-model="item.variableName" placeholder="变量名" @input="activeAssertion.expression = item.variableName || ''; markDirty()" />
+                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
+                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <button type="button" @click="copyAssertionItem(activeAssertion.variableAssertionItems || [], index)">复制</button>
+                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.variableAssertionItems || [], index, { variableName: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div v-else class="api-assertion-type-panel">
+                        <div class="api-assertion-subtitle">脚本断言</div>
                         <el-input
-                          v-if="activeAssertion.assertionType === 'SCRIPT'"
                           v-model="activeAssertion.script"
                           type="textarea"
-                          :rows="5"
+                          :rows="9"
                           resize="none"
-                          placeholder="return response.statusCode === 200"
+                          placeholder="if (response.statusCode !== 200) { throw new Error('状态码不正确') }"
                           @input="markDirty"
                         />
+                        <small class="api-assertion-hint">发送时由后端执行脚本断言；当前只保存真实脚本内容，不做前端伪执行。</small>
                       </div>
                     </section>
                   </div>
@@ -2629,7 +3399,14 @@ onMounted(() => {
                       <strong>{{ activeEditor.activeTab === 'pre' ? '前置处理' : '后置处理' }}</strong>
                       <span>{{ activeEditor.activeTab === 'pre' ? '请求发送前执行' : '响应返回后执行' }}</span>
                     </div>
-                    <button type="button" class="api-sidebar-primary" @click="addProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post')">添加处理器</button>
+                    <el-dropdown trigger="click" @command="(command: string | number | object) => addProcessorFromCommand(activeEditor?.activeTab === 'pre' ? 'pre' : 'post', command)">
+                      <button type="button" class="api-sidebar-primary">添加处理器</button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item v-for="item in processorTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
                   </div>
                   <div class="api-processor-list">
                     <div
@@ -2675,19 +3452,35 @@ onMounted(() => {
                           @input="syncProcessorScript(processor)"
                         />
                       </div>
-                      <div v-else-if="processor.processorType === 'EXTRACT'" class="api-processor-config-grid">
-                        <label>来源</label>
-                        <el-select v-model="processor.sourceType" @change="markDirty">
-                          <el-option v-for="item in extractorSourceOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <label>表达式类型</label>
-                        <el-select v-model="processor.extractType" @change="markDirty">
-                          <el-option v-for="item in extractorExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <label>表达式</label>
-                        <el-input v-model="processor.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)" />
-                        <label>变量名</label>
-                        <el-input v-model="processor.variableName" placeholder="保存到变量名" @input="markDirty" />
+                      <div v-else-if="processor.processorType === 'EXTRACT'" class="api-processor-extract-panel">
+                        <div class="api-processor-extract-toolbar">
+                          <span>提取项</span>
+                          <button type="button" @click="addProcessorExtractItem(processor)">+ 添加提取项</button>
+                        </div>
+                        <div class="api-processor-extract-list">
+                          <div
+                            v-for="(item, extractIndex) in normalizeProcessorExtractItems(processor.extractors, processor)"
+                            :key="item.id || extractIndex"
+                            class="api-processor-extract-row"
+                          >
+                            <el-switch v-model="item.enabled" size="small" @change="syncProcessorScript(processor)" />
+                            <el-input v-model="item.name" placeholder="名称" @input="syncProcessorScript(processor)" />
+                            <el-input v-model="item.variableName" placeholder="变量名" @input="syncProcessorScript(processor)" />
+                            <el-select v-model="item.variableType" @change="syncProcessorScript(processor)">
+                              <el-option v-for="option in processorExtractVariableTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-select v-model="item.sourceType" @change="syncProcessorScript(processor)">
+                              <el-option v-for="option in extractorSourceOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-select v-model="item.extractType" @change="syncProcessorScript(processor)">
+                              <el-option v-for="option in extractorExpressionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                            </el-select>
+                            <el-input v-model="item.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)" />
+                            <el-input v-model="item.description" placeholder="说明" @input="syncProcessorScript(processor)" />
+                            <button type="button" @click="copyProcessorExtractItem(processor, extractIndex)">复制</button>
+                            <button type="button" class="api-row-remove" @click="removeProcessorExtractItem(processor, extractIndex)">删除</button>
+                          </div>
+                        </div>
                       </div>
                       <div v-else class="api-wait-row">
                         <span>等待时长 ms</span>
@@ -2703,13 +3496,24 @@ onMounted(() => {
               </template>
             </div>
 
-            <div class="api-response-shell">
+            <div class="api-response-shell" :style="{ flexBasis: `${responsePanelHeight}px` }">
+              <div class="api-response-resizer" title="拖拽调整响应区高度" @pointerdown="startResponseResize"></div>
               <div class="api-response-header">
                 <strong>响应内容</strong>
-                <div v-if="!showResponseEmpty" class="api-response-metrics">
-                  <span :class="['api-response-pill', `is-${statusTone(responseStatus)}`]">状态 {{ responseStatus ?? '-' }}</span>
-                  <span>耗时 {{ responseDuration ?? '-' }}<template v-if="responseDuration !== null"> ms</template></span>
-                  <span>大小 {{ responseSize }}</span>
+                <div class="api-response-header__right">
+                  <div v-if="!showResponseEmpty" class="api-response-metrics">
+                    <span :class="['api-response-pill', `is-${statusTone(responseStatus)}`]">状态 {{ responseStatus ?? '-' }}</span>
+                    <span>耗时 {{ responseDuration ?? '-' }}<template v-if="responseDuration !== null"> ms</template></span>
+                    <span>大小 {{ responseSize }}</span>
+                  </div>
+                  <button
+                    v-if="!showResponseEmpty"
+                    type="button"
+                    class="api-response-case-button"
+                    @click="saveAsCase"
+                  >
+                    保存为用例
+                  </button>
                 </div>
               </div>
               <div class="api-response-content">
@@ -2721,11 +3525,11 @@ onMounted(() => {
                   <div class="api-response-tabs">
                     <button :class="{ 'is-active': activeEditor.responseTab === 'body' }" @click="activeEditor.responseTab = 'body'">Body</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'header' }" @click="activeEditor.responseTab = 'header'">Header</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台{{ extractionRows.length ? ` · 提取${extractionRows.length}` : '' }}</button>
+                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台{{ extractionRows.length ? ` · 提取${extractionRows.length}` : '' }}{{ processorRows.length ? ` · 处理${processorRows.length}` : '' }}</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'actualRequest' }" @click="activeEditor.responseTab = 'actualRequest'">实际请求</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'assertions' }" @click="activeEditor.responseTab = 'assertions'">断言</button>
                   </div>
-                  <pre v-if="activeEditor.responseTab === 'body'" class="api-response-pre">{{ responseBody }}</pre>
+                  <pre v-if="activeEditor.responseTab === 'body'" class="api-response-pre">{{ responseBodyPretty }}</pre>
                   <pre v-else-if="activeEditor.responseTab === 'header'" class="api-response-pre">{{ responseHeaders }}</pre>
                   <pre v-else-if="activeEditor.responseTab === 'console'" class="api-response-pre">{{ responseConsole }}</pre>
                   <pre v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-pre">{{ actualRequest }}</pre>
@@ -2828,17 +3632,106 @@ onMounted(() => {
               <div><span>最近执行</span><strong>{{ formatDateTime(viewingCaseDetail.lastRunAt) }}</strong></div>
             </div>
             <div class="api-case-detail-section">
-              <strong>请求配置快照</strong>
-              <pre>{{ toPrettyJson(viewingCaseDetail.requestConfig) }}</pre>
+              <strong>请求配置</strong>
+              <div class="api-case-config-blocks">
+                <section class="api-case-config-block">
+                  <div><strong>Params</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.queryParams).length }} 项</span></div>
+                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.queryParams).length" class="api-case-kv-list">
+                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.queryParams)" :key="`query-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
+                  </div>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>Header</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.headers).length }} 项</span></div>
+                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.headers).length" class="api-case-kv-list">
+                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.headers)" :key="`header-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
+                  </div>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>Cookie</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.cookies).length }} 项</span></div>
+                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.cookies).length" class="api-case-kv-list">
+                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.cookies)" :key="`cookie-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
+                  </div>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>Body</strong><span>{{ bodyModeLabel(viewingCaseDetail.requestConfig.body.type) }}</span></div>
+                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.body.formItems).length" class="api-case-kv-list">
+                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.body.formItems)" :key="`body-${row.key}`">{{ row.key }} = {{ row.fileName || row.value || '-' }}</span>
+                  </div>
+                  <pre v-else-if="viewingCaseDetail.requestConfig.body.rawText">{{ toPrettyJson(viewingCaseDetail.requestConfig.body.rawText) }}</pre>
+                  <div v-else-if="viewingCaseDetail.requestConfig.body.fileName" class="api-case-config-empty">{{ viewingCaseDetail.requestConfig.body.fileName }} · {{ formatFileSize(viewingCaseDetail.requestConfig.body.fileSize) }}</div>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>Auth</strong><span>{{ viewingCaseDetail.requestConfig.authConfig.authType || 'NONE' }}</span></div>
+                  <div v-if="viewingCaseDetail.requestConfig.authConfig.authType === 'BASIC'" class="api-case-kv-list">
+                    <span>用户名 = {{ viewingCaseDetail.requestConfig.authConfig.basicAuth?.userName || '-' }}</span>
+                    <span>密码 = {{ viewingCaseDetail.requestConfig.authConfig.basicAuth?.password ? '已配置' : '-' }}</span>
+                  </div>
+                  <div v-else-if="viewingCaseDetail.requestConfig.authConfig.authType === 'DIGEST'" class="api-case-kv-list">
+                    <span>用户名 = {{ viewingCaseDetail.requestConfig.authConfig.digestAuth?.userName || '-' }}</span>
+                    <span>密码 = {{ viewingCaseDetail.requestConfig.authConfig.digestAuth?.password ? '已配置' : '-' }}</span>
+                  </div>
+                  <div v-else class="api-case-config-empty">No Auth</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>前置处理</strong><span>{{ viewingCaseDetail.preProcessors.length }} 项</span></div>
+                  <pre v-if="viewingCaseDetail.preProcessors.length">{{ toPrettyJson(viewingCaseDetail.preProcessors) }}</pre>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>后置处理</strong><span>{{ viewingCaseDetail.postProcessors.length }} 项</span></div>
+                  <pre v-if="viewingCaseDetail.postProcessors.length">{{ toPrettyJson(viewingCaseDetail.postProcessors) }}</pre>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>断言</strong><span>{{ viewingCaseDetail.assertions.length }} 项</span></div>
+                  <pre v-if="viewingCaseDetail.assertions.length">{{ toPrettyJson(viewingCaseDetail.assertions) }}</pre>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+                <section class="api-case-config-block">
+                  <div><strong>提取器</strong><span>{{ viewingCaseDetail.extractors.length }} 项</span></div>
+                  <pre v-if="viewingCaseDetail.extractors.length">{{ toPrettyJson(viewingCaseDetail.extractors) }}</pre>
+                  <div v-else class="api-case-config-empty">未配置</div>
+                </section>
+              </div>
             </div>
             <div class="api-case-detail-section">
-              <strong>断言 / 提取器 / 处理器</strong>
-              <pre>{{ toPrettyJson({
-                assertions: viewingCaseDetail.assertions,
-                extractors: viewingCaseDetail.extractors,
-                preProcessors: viewingCaseDetail.preProcessors,
-                postProcessors: viewingCaseDetail.postProcessors,
-              }) }}</pre>
+              <strong>最近响应预览</strong>
+              <template v-if="caseDetailPreviewStep">
+                <div class="api-case-step-meta">
+                  <span>状态码 {{ caseDetailPreviewStep.response?.statusCode ?? '-' }}</span>
+                  <span>耗时 {{ formatDuration(caseDetailPreviewStep.durationMs) }}</span>
+                  <span v-if="caseDetailPreviewStep.errorMessage">失败原因：{{ caseDetailPreviewStep.errorMessage }}</span>
+                </div>
+                <div class="api-case-history-snapshots">
+                  <div>
+                    <span>Body</span>
+                    <pre>{{ toPrettyJson(caseDetailPreviewStep.response?.body) }}</pre>
+                  </div>
+                  <div>
+                    <span>Header</span>
+                    <pre>{{ toPrettyJson(caseDetailPreviewStep.response?.headers || {}) }}</pre>
+                  </div>
+                </div>
+                <div class="api-case-history-snapshots">
+                  <div>
+                    <span>实际请求</span>
+                    <pre>{{ toPrettyJson(caseDetailPreviewStep.request) }}</pre>
+                  </div>
+                  <div>
+                    <span>断言 / 提取 / 处理器</span>
+                    <pre>{{ toPrettyJson({
+                      assertionResults: caseDetailPreviewStep.assertionResults,
+                      extractionResults: caseDetailPreviewStep.extractionResults,
+                      processorResults: caseDetailPreviewStep.processorResults,
+                    }) }}</pre>
+                  </div>
+                </div>
+              </template>
+              <div v-else class="api-empty-body">暂无最近响应预览，执行一次用例后展示。</div>
             </div>
           </template>
           <div v-else class="api-empty-body">暂无用例详情</div>
@@ -2956,7 +3849,7 @@ onMounted(() => {
           </div>
           <div class="api-ai-case-options">
             <el-checkbox-group v-model="aiCaseSelectedOptionKeys">
-              <el-checkbox v-for="item in aiCaseGenerationOptions" :key="item.key" :label="item.key">
+              <el-checkbox v-for="item in aiCaseGenerationOptions" :key="item.key" :value="item.key">
                 {{ item.groupLabel }} · {{ item.label }}
               </el-checkbox>
             </el-checkbox-group>
@@ -2982,14 +3875,60 @@ onMounted(() => {
         <section class="api-ai-case-section">
           <div class="api-ai-case-section__header">
             <strong>生成结果</strong>
-            <span>待采纳 {{ aiCasePendingResults.length }} 条</span>
+            <span>共 {{ aiCaseGeneratedResults.length }} 条，待处理 {{ aiCasePendingResults.length }} 条</span>
+          </div>
+          <div class="api-ai-result-toolbar">
+            <div class="api-ai-result-filters">
+              <button
+                v-for="item in aiCaseResultFilterOptions"
+                :key="item.value"
+                type="button"
+                :class="{ 'is-active': aiCaseResultFilter === item.value }"
+                @click="aiCaseResultFilter = item.value"
+              >
+                {{ item.label }} {{ item.count }}
+              </button>
+            </div>
+            <div class="api-ai-result-search">
+              <el-input v-model="aiCaseResultKeyword" clearable placeholder="搜索名称、预期或失败原因" />
+              <el-select v-model="aiCaseResultGroup" clearable placeholder="场景组">
+                <el-option v-for="item in aiCaseResultGroupOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+              <el-select v-model="aiCaseResultType" clearable placeholder="类型">
+                <el-option v-for="item in aiCaseResultTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </div>
+            <div class="api-ai-result-actions">
+              <button
+                type="button"
+                class="api-sidebar-secondary"
+                :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)"
+                @click="batchDiscardAiGeneratedCases"
+              >
+                批量弃用
+              </button>
+              <button
+                type="button"
+                class="api-sidebar-primary"
+                :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)"
+                @click="batchAcceptAiGeneratedCases"
+              >
+                批量采纳
+              </button>
+            </div>
           </div>
           <div v-if="aiCaseGeneratedResults.length" class="api-ai-result-list">
-            <article v-for="item in aiCaseGeneratedResults" :key="item.id" class="api-ai-result-card">
+            <article v-for="item in aiCaseFilteredResults" :key="item.id" class="api-ai-result-card">
               <div class="api-ai-result-card__head">
+                <el-checkbox
+                  v-if="item.status === 'pending'"
+                  v-model="aiCaseSelectedResultIds"
+                  :value="item.id"
+                  class="api-ai-result-card__check"
+                />
                 <div>
                   <strong>{{ item.draft.name || 'AI 生成接口用例' }}</strong>
-                  <span>{{ item.draft.type || item.draft.group || '接口用例' }}</span>
+                  <span>{{ item.draft.group || '未分组' }} · {{ item.draft.type || '接口用例' }}</span>
                 </div>
                 <span :class="['api-ai-result-status', `is-${item.status}`]">{{ item.status === 'accepted' ? '已采纳' : item.status === 'discarded' ? '已弃用' : item.status === 'failed' ? '失败' : '待处理' }}</span>
               </div>
@@ -3001,22 +3940,113 @@ onMounted(() => {
               </div>
               <div v-if="item.message" class="api-case-failure-box">{{ item.message }}</div>
               <div class="api-ai-result-card__actions">
+                <button type="button" class="api-sidebar-secondary" @click="openAiGeneratedCaseDetail(item)">查看详情</button>
                 <button
+                  v-if="item.status === 'pending'"
                   type="button"
                   class="api-sidebar-primary"
-                  :disabled="item.status !== 'pending' || aiCaseSavingId === item.id"
+                  :disabled="aiCaseSavingId === item.id"
                   @click="saveAiGeneratedCase(item)"
                 >
                   {{ aiCaseSavingId === item.id ? '保存中...' : '采纳保存' }}
                 </button>
-                <button type="button" class="api-sidebar-secondary" :disabled="item.status !== 'pending'" @click="discardAiGeneratedCase(item)">弃用</button>
+                <button
+                  v-if="item.status === 'pending'"
+                  type="button"
+                  class="api-sidebar-secondary"
+                  @click="discardAiGeneratedCase(item)"
+                >
+                  弃用
+                </button>
+                <button
+                  v-else-if="item.status === 'discarded'"
+                  type="button"
+                  class="api-sidebar-secondary"
+                  @click="restoreAiGeneratedCase(item)"
+                >
+                  恢复
+                </button>
+                <button v-else type="button" class="api-sidebar-secondary" disabled>
+                  {{ item.status === 'accepted' ? '已保存' : '不可操作' }}
+                </button>
               </div>
             </article>
+            <div v-if="!aiCaseFilteredResults.length" class="api-empty-body">当前筛选暂无生成结果</div>
           </div>
           <div v-else class="api-empty-body">暂无生成结果</div>
         </section>
       </div>
     </el-drawer>
+
+    <el-dialog
+      v-model="aiCaseDetailVisible"
+      class="api-ai-case-detail-dialog"
+      title="生成用例详情"
+      width="720px"
+      append-to-body
+    >
+      <div v-if="aiCaseDetailResult" class="api-ai-case-detail">
+        <div class="api-ai-case-detail-summary">
+          <div>
+            <span>用例名称</span>
+            <strong>{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</strong>
+          </div>
+          <div>
+            <span>结果状态</span>
+            <strong>{{ aiCaseDetailResult.status === 'accepted' ? '已采纳' : aiCaseDetailResult.status === 'discarded' ? '已弃用' : aiCaseDetailResult.status === 'failed' ? '失败' : '待处理' }}</strong>
+          </div>
+          <div>
+            <span>请求方法</span>
+            <strong>{{ aiCaseDetailResult.draft.requestConfig?.method || activeEditor?.detail.requestConfig.method || '-' }}</strong>
+          </div>
+          <div>
+            <span>请求路径</span>
+            <strong>{{ aiCaseDetailResult.draft.requestConfig?.path || activeEditor?.detail.requestConfig.path || '-' }}</strong>
+          </div>
+        </div>
+        <section v-if="aiCaseDetailResult.draft.description" class="api-ai-case-detail-section">
+          <strong>描述</strong>
+          <p>{{ aiCaseDetailResult.draft.description }}</p>
+        </section>
+        <section v-if="aiCaseDetailResult.draft.expected" class="api-ai-case-detail-section">
+          <strong>预期结果</strong>
+          <p>{{ aiCaseDetailResult.draft.expected }}</p>
+        </section>
+        <section v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason')" class="api-ai-case-detail-section">
+          <strong>生成原因</strong>
+          <p>{{ aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason') }}</p>
+        </section>
+        <section v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')" class="api-ai-case-detail-section">
+          <strong>覆盖点</strong>
+          <pre>{{ toPrettyJson(aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')) }}</pre>
+        </section>
+        <section v-if="aiCaseDetailResult.draft.tags?.length" class="api-ai-case-detail-section">
+          <strong>标签</strong>
+          <div class="api-ai-case-detail-tags">
+            <span v-for="tag in aiCaseDetailResult.draft.tags" :key="tag">{{ tag }}</span>
+          </div>
+        </section>
+        <section v-if="aiCaseDetailResult.message" class="api-case-failure-box">{{ aiCaseDetailResult.message }}</section>
+        <section class="api-ai-case-detail-section">
+          <strong>请求配置</strong>
+          <pre>{{ toPrettyJson(aiCaseDetailResult.draft.requestConfig || {}) }}</pre>
+        </section>
+        <section class="api-ai-case-detail-grid">
+          <div>
+            <span>断言</span>
+            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.assertions || []) }}</pre>
+          </div>
+          <div>
+            <span>前置处理</span>
+            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.preProcessors || []) }}</pre>
+          </div>
+          <div>
+            <span>后置处理</span>
+            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.postProcessors || []) }}</pre>
+          </div>
+        </section>
+      </div>
+    </el-dialog>
 
     <ApiCaseCreateEditDialog
       v-model="caseDialogVisible"
@@ -3024,6 +4054,7 @@ onMounted(() => {
       :definition="currentDefinitionSummary()"
       :case-item="editingCaseItem"
       :case-detail="editingCaseDetail"
+      :case-draft-detail="caseDialogMode === 'create' ? currentCaseDraftDetail() : null"
       :saving="caseDialogSaving"
       :loading-detail="caseDetailLoading"
       :detail-error-message="caseDetailErrorMessage"
@@ -3244,8 +4275,8 @@ onMounted(() => {
 
 .api-directory-node__action {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -3254,11 +4285,13 @@ onMounted(() => {
   color: var(--app-text-subtle);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
 }
 
 .api-directory-tree :deep(.el-tree-node__content:hover) .api-directory-node__action,
 .api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__action {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .api-directory-node__action:hover {
@@ -3952,6 +4985,72 @@ onMounted(() => {
   font-size: var(--app-font-size-sm);
 }
 
+.api-case-config-blocks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.api-case-config-block {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-case-config-block > div:first-child {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.api-case-config-block > div:first-child strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-case-config-block > div:first-child span,
+.api-case-config-empty,
+.api-case-kv-list {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-case-kv-list {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.api-case-kv-list span {
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-case-config-block pre {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .api-case-detail-section pre,
 .api-case-history-snapshots pre {
   max-height: 220px;
@@ -4127,6 +5226,59 @@ onMounted(() => {
   gap: 10px;
 }
 
+.api-ai-result-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+}
+
+.api-ai-result-filters,
+.api-ai-result-search,
+.api-ai-result-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-ai-result-search {
+  flex: 1 1 260px;
+  justify-content: flex-end;
+}
+
+.api-ai-result-search .el-input {
+  width: 220px;
+}
+
+.api-ai-result-search .el-select {
+  width: 128px;
+}
+
+.api-ai-result-filters button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  cursor: pointer;
+}
+
+.api-ai-result-filters button:hover,
+.api-ai-result-filters button.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  font-weight: 700;
+}
+
 .api-ai-result-card {
   display: grid;
   gap: 8px;
@@ -4148,6 +5300,11 @@ onMounted(() => {
   display: grid;
   gap: 2px;
   min-width: 0;
+  flex: 1;
+}
+
+.api-ai-result-card__check {
+  flex: 0 0 auto;
 }
 
 .api-ai-result-status,
@@ -4184,6 +5341,109 @@ onMounted(() => {
 .api-ai-result-status.is-discarded {
   background: var(--app-bg-muted);
   color: var(--app-text-muted);
+}
+
+.api-ai-case-detail-dialog :deep(.el-dialog__body) {
+  padding: 14px 18px 18px;
+}
+
+.api-ai-case-detail {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.api-ai-case-detail-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-ai-case-detail-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-ai-case-detail-summary span,
+.api-ai-case-detail-grid span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-ai-case-detail-summary strong {
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-ai-case-detail-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-ai-case-detail-section > strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.api-ai-case-detail-section p {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
+.api-ai-case-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.api-ai-case-detail-tags span {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  line-height: 22px;
+}
+
+.api-ai-case-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.api-ai-case-detail-grid > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-ai-case-detail-section pre,
+.api-ai-case-detail-grid pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .api-case-step-meta {
@@ -4362,6 +5622,84 @@ onMounted(() => {
   font-weight: 700;
 }
 
+.api-assertion-type-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-assertion-subtitle,
+.api-assertion-mode-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.api-assertion-subtitle {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 700;
+}
+
+.api-assertion-subtitle button,
+.api-assertion-item-row button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.api-assertion-item-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.api-assertion-item-row {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.api-assertion-item-row.is-header {
+  grid-template-columns: 48px minmax(120px, 1fr) 132px minmax(120px, 1fr) repeat(3, auto);
+}
+
+.api-assertion-item-row.is-body {
+  grid-template-columns: 48px minmax(180px, 1.4fr) 132px minmax(120px, 1fr) repeat(4, auto);
+}
+
+.api-assertion-item-row.is-variable {
+  grid-template-columns: 48px minmax(140px, 1fr) 132px minmax(120px, 1fr) repeat(2, auto);
+}
+
+.api-assertion-item-row .api-row-remove {
+  color: var(--app-danger);
+}
+
+.api-assertion-format-select {
+  width: 120px;
+}
+
+.api-assertion-hint {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
 .api-extractor-header,
 .api-extractor-row {
   display: grid;
@@ -4443,6 +5781,56 @@ onMounted(() => {
   font-weight: 700;
 }
 
+.api-processor-extract-panel {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.api-processor-extract-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 700;
+}
+
+.api-processor-extract-toolbar button,
+.api-processor-extract-row button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.api-processor-extract-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow: auto;
+}
+
+.api-processor-extract-row {
+  display: grid;
+  min-width: 1180px;
+  grid-template-columns: 48px 130px 130px 118px 130px 128px minmax(180px, 1fr) minmax(140px, 0.8fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-processor-extract-row .api-row-remove {
+  color: var(--app-danger);
+}
+
 .api-wait-row {
   display: flex;
   align-items: center;
@@ -4465,11 +5853,33 @@ onMounted(() => {
   background: #fff;
 }
 
+.api-response-resizer {
+  position: relative;
+  height: 6px;
+  flex: 0 0 6px;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-bg-page);
+  cursor: row-resize;
+}
+
+.api-response-resizer::after {
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 42px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--app-border-strong);
+  content: "";
+  transform: translateX(-50%);
+}
+
 .api-response-header {
   display: flex;
   height: 40px;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 16px;
   border-bottom: 1px solid var(--app-border);
 }
@@ -4478,12 +5888,36 @@ onMounted(() => {
   font-size: var(--app-font-size-sm);
 }
 
+.api-response-header__right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
 .api-response-metrics {
   display: flex;
   align-items: center;
   gap: 10px;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
+}
+
+.api-response-case-button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: #fff;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  white-space: nowrap;
+}
+
+.api-response-case-button:hover {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
 }
 
 .api-response-pill {
