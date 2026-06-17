@@ -1,0 +1,341 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "AT Auto Test Hub 全功能自动化测试平台" [ref=e5] [cursor=pointer]:
+      - generic [ref=e6]: AT
+      - generic [ref=e7]:
+        - generic [ref=e8]: Auto Test Hub
+        - generic [ref=e9]: 全功能自动化测试平台
+      - img [ref=e10]
+    - navigation "主导航" [ref=e12]:
+      - button "工作台" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e18]: 工作台
+      - button "用例中心" [active] [ref=e20] [cursor=pointer]:
+        - img [ref=e21]
+        - generic [ref=e24]: 用例中心
+      - button "缺陷管理" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+        - generic [ref=e36]: 缺陷管理
+      - button "接口自动化" [ref=e38] [cursor=pointer]:
+        - img [ref=e39]
+        - generic [ref=e44]: 接口自动化
+      - button "Web UI 自动化" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - generic [ref=e49]: Web UI 自动化
+      - button "APP 自动化" [ref=e51] [cursor=pointer]:
+        - img [ref=e52]
+        - generic [ref=e54]: APP 自动化
+      - button "配置中心" [ref=e56] [cursor=pointer]:
+        - img [ref=e57]
+        - generic [ref=e58]: 配置中心
+      - button "系统设置" [ref=e61] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e65]: 系统设置
+    - generic [ref=e68] [cursor=pointer]:
+      - generic [ref=e69]: 超
+      - generic [ref=e70]:
+        - generic [ref=e71]: 超级管理员
+        - generic [ref=e72]: SUPER_ADMIN
+  - generic [ref=e73]:
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]: 用例中心
+        - button "全部" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e84]: 全部
+          - img [ref=e85]
+      - generic [ref=e87]:
+        - button [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+        - button "超 超级管理员" [ref=e95] [cursor=pointer]:
+          - generic [ref=e96]: 超
+          - generic [ref=e97]: 超级管理员
+          - img [ref=e98]
+    - main [ref=e100]:
+      - generic [ref=e108]:
+        - generic [ref=e110]:
+          - tablist [ref=e113]:
+            - tab "用例管理" [selected] [ref=e114]
+            - tab "AI 用例生成" [ref=e115]
+            - tab "AI 生成记录" [ref=e116]
+            - tab "AI 配置" [ref=e117]
+          - generic:
+            - tabpanel "用例管理"
+        - generic [ref=e120]:
+          - article [ref=e121]:
+            - tree [ref=e122]:
+              - treeitem "用例目录" [expanded] [ref=e123]:
+                - generic [ref=e124] [cursor=pointer]:
+                  - img [ref=e126]
+                  - generic [ref=e128]:
+                    - generic [ref=e130]: 用例目录
+                    - button "收起全部子模块" [ref=e132]:
+                      - img [ref=e135]
+                - group [ref=e137]:
+                  - treeitem "测试1" [ref=e138]:
+                    - generic [ref=e139] [cursor=pointer]:
+                      - img [ref=e141]
+                      - generic [ref=e143]:
+                        - generic [ref=e144]:
+                          - img [ref=e147]
+                          - generic [ref=e149]: 测试1
+                        - button [ref=e151]:
+                          - img [ref=e154]
+                  - treeitem "测试2" [ref=e156]:
+                    - generic [ref=e157] [cursor=pointer]:
+                      - img [ref=e159]
+                      - generic [ref=e161]:
+                        - generic [ref=e162]:
+                          - img [ref=e165]
+                          - generic [ref=e167]: 测试2
+                        - button [ref=e169]:
+                          - img [ref=e172]
+                  - treeitem "测试3" [ref=e174]:
+                    - generic [ref=e175] [cursor=pointer]:
+                      - img [ref=e177]
+                      - generic [ref=e179]:
+                        - generic [ref=e180]:
+                          - img [ref=e183]
+                          - generic [ref=e185]: 测试3
+                        - button [ref=e187]:
+                          - img [ref=e190]
+                  - treeitem "XMAN" [ref=e192]:
+                    - generic [ref=e194] [cursor=pointer]:
+                      - generic [ref=e195]:
+                        - img [ref=e198]
+                        - generic [ref=e200]: XMAN
+                      - button [ref=e202]:
+                        - img [ref=e205]
+                  - treeitem "333" [ref=e207]:
+                    - generic [ref=e209] [cursor=pointer]:
+                      - generic [ref=e210]:
+                        - img [ref=e213]
+                        - generic [ref=e215]: "333"
+                      - button [ref=e217]:
+                        - img [ref=e220]
+                  - treeitem "4444" [ref=e222]:
+                    - generic [ref=e224] [cursor=pointer]:
+                      - generic [ref=e225]:
+                        - img [ref=e228]
+                        - generic [ref=e230]: "4444"
+                      - button [ref=e232]:
+                        - img [ref=e235]
+                  - treeitem "555" [ref=e237]:
+                    - generic [ref=e239] [cursor=pointer]:
+                      - generic [ref=e240]:
+                        - img [ref=e243]
+                        - generic [ref=e245]: "555"
+                      - button [ref=e247]:
+                        - img [ref=e250]
+                  - treeitem "666" [ref=e252]:
+                    - generic [ref=e254] [cursor=pointer]:
+                      - generic [ref=e255]:
+                        - img [ref=e258]
+                        - generic [ref=e260]: "666"
+                      - button [ref=e262]:
+                        - img [ref=e265]
+                  - treeitem "1223" [ref=e267]:
+                    - generic [ref=e269] [cursor=pointer]:
+                      - generic [ref=e270]:
+                        - img [ref=e273]
+                        - generic [ref=e275]: "1223"
+                      - button [ref=e277]:
+                        - img [ref=e280]
+          - article [ref=e282]:
+            - generic [ref=e283]:
+              - generic [ref=e287]:
+                - textbox "搜索编号或名称" [ref=e290]
+                - generic [ref=e292] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e294]
+                    - generic [ref=e295]: 优先级
+                  - img [ref=e298]
+                - generic [ref=e301] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e303]
+                    - generic [ref=e304]: 评审状态
+                  - img [ref=e307]
+                - generic [ref=e310] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e312]
+                    - generic [ref=e313]: 执行状态
+                  - img [ref=e316]
+                - generic [ref=e319] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e321]
+                    - generic [ref=e322]: 执行人
+                  - img [ref=e325]
+                - generic [ref=e328] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e330]
+                    - generic [ref=e331]: 创建人
+                  - img [ref=e334]
+                - generic [ref=e337] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e339]
+                    - generic [ref=e340]: 所属空间
+                  - img [ref=e343]
+                - button "重置" [ref=e345] [cursor=pointer]:
+                  - generic [ref=e346]:
+                    - img [ref=e348]
+                    - text: 重置
+              - button "新建用例" [ref=e350] [cursor=pointer]:
+                - generic [ref=e351]:
+                  - img [ref=e353]
+                  - text: 新建用例
+            - generic [ref=e355]:
+              - generic [ref=e357]:
+                - generic [ref=e358]:
+                  - generic [ref=e361] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e363]: 用例编号
+                  - generic [ref=e364]: 用例名称
+                  - generic [ref=e365]: 优先级
+                  - generic [ref=e366]: 评审状态
+                  - generic [ref=e367]: 执行状态
+                  - generic [ref=e368]: 执行人
+                  - generic [ref=e369]: 所属模块
+                - generic [ref=e370]:
+                  - generic [ref=e373] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e375]: Case-00007
+                  - generic [ref=e377]: 热线咨询新增-主流程-正常添加成功
+                  - generic [ref=e379]: P0
+                  - generic [ref=e382]: 未评审
+                  - generic [ref=e385]: 未执行
+                  - generic [ref=e386]: "-"
+                  - generic [ref=e388]: 测试1 / Account Registration / Validation Rules / 热线咨询登记（钱坤版）
+                - generic [ref=e389]:
+                  - generic [ref=e392] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e394]: Case-00006
+                  - generic [ref=e396]: 目标37联调用例-已编辑
+                  - generic [ref=e398]: P2
+                  - generic [ref=e401]: 已通过
+                  - generic [ref=e404]: 已通过
+                  - generic [ref=e405]: Zhang Li
+                  - generic [ref=e407]: 测试1 / Account Registration
+                - generic [ref=e408]:
+                  - generic [ref=e411] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e413]: Case-00005
+                  - generic [ref=e415]: 三分大
+                  - generic [ref=e417]: P2
+                  - generic [ref=e420]: 未评审
+                  - generic [ref=e423]: 已通过
+                  - generic [ref=e424]: Zhang Li
+                  - generic [ref=e426]: 测试1
+                - generic [ref=e427]:
+                  - generic [ref=e430] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e432]: CASE-20260518-004
+                  - generic [ref=e434]: Review high-risk transfer with manual approval
+                  - generic [ref=e436]: P2
+                  - generic [ref=e439]: 已通过
+                  - generic [ref=e442]: 未执行
+                  - generic [ref=e443]: "-"
+                  - generic [ref=e445]: 测试3 / Risk Review
+                - generic [ref=e446]:
+                  - generic [ref=e449] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e451]: CASE-20260518-003
+                  - generic [ref=e453]: Retry payment after gateway timeout
+                  - generic [ref=e455]: P1
+                  - generic [ref=e458]: 未评审
+                  - generic [ref=e461]: 失败
+                  - generic [ref=e462]: Zhao Feng
+                  - generic [ref=e464]: 测试2 / Checkout / Settlement
+                - generic [ref=e465]:
+                  - generic [ref=e468] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e470]: CASE-20260518-002
+                  - generic [ref=e472]: Reject expired sms verification code
+                  - generic [ref=e474]: P0
+                  - generic [ref=e477]: 未评审
+                  - generic [ref=e480]: 失败
+                  - generic [ref=e481]: Li Ping
+                  - generic [ref=e483]: 测试1 / Account Registration / Validation Rules
+                - generic [ref=e484]:
+                  - generic [ref=e487] [cursor=pointer]:
+                    - checkbox
+                  - generic [ref=e489]: CASE-20260518-001
+                  - generic [ref=e491]: Open account with valid identity package
+                  - generic [ref=e493]: P0
+                  - generic [ref=e496]: 未评审
+                  - generic [ref=e499]: 已通过
+                  - generic [ref=e500]: Chen Nan
+                  - generic [ref=e502]: 测试1 / Account Registration
+              - generic [ref=e503]:
+                - generic [ref=e505]:
+                  - generic [ref=e506]: 操作
+                  - button [ref=e507] [cursor=pointer]:
+                    - img [ref=e510]
+                - generic [ref=e513]:
+                  - button "编辑" [ref=e514] [cursor=pointer]:
+                    - generic [ref=e515]: 编辑
+                  - button "执行" [ref=e516] [cursor=pointer]:
+                    - generic [ref=e517]: 执行
+                  - button [ref=e519] [cursor=pointer]:
+                    - img [ref=e522]
+                - generic [ref=e525]:
+                  - button "编辑" [ref=e526] [cursor=pointer]:
+                    - generic [ref=e527]: 编辑
+                  - button "执行" [ref=e528] [cursor=pointer]:
+                    - generic [ref=e529]: 执行
+                  - button [ref=e531] [cursor=pointer]:
+                    - img [ref=e534]
+                - generic [ref=e537]:
+                  - button "编辑" [ref=e538] [cursor=pointer]:
+                    - generic [ref=e539]: 编辑
+                  - button "执行" [ref=e540] [cursor=pointer]:
+                    - generic [ref=e541]: 执行
+                  - button [ref=e543] [cursor=pointer]:
+                    - img [ref=e546]
+                - generic [ref=e549]:
+                  - button "编辑" [ref=e550] [cursor=pointer]:
+                    - generic [ref=e551]: 编辑
+                  - button "执行" [ref=e552] [cursor=pointer]:
+                    - generic [ref=e553]: 执行
+                  - button [ref=e555] [cursor=pointer]:
+                    - img [ref=e558]
+                - generic [ref=e561]:
+                  - button "编辑" [ref=e562] [cursor=pointer]:
+                    - generic [ref=e563]: 编辑
+                  - button "执行" [ref=e564] [cursor=pointer]:
+                    - generic [ref=e565]: 执行
+                  - button [ref=e567] [cursor=pointer]:
+                    - img [ref=e570]
+                - generic [ref=e573]:
+                  - button "编辑" [ref=e574] [cursor=pointer]:
+                    - generic [ref=e575]: 编辑
+                  - button "执行" [ref=e576] [cursor=pointer]:
+                    - generic [ref=e577]: 执行
+                  - button [ref=e579] [cursor=pointer]:
+                    - img [ref=e582]
+                - generic [ref=e585]:
+                  - button "编辑" [ref=e586] [cursor=pointer]:
+                    - generic [ref=e587]: 编辑
+                  - button "执行" [ref=e588] [cursor=pointer]:
+                    - generic [ref=e589]: 执行
+                  - button [ref=e591] [cursor=pointer]:
+                    - img [ref=e594]
+            - generic [ref=e598]:
+              - generic [ref=e599]: 共 7 条 / 1 页
+              - generic [ref=e600]:
+                - generic [ref=e603] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e605]
+                    - generic [ref=e606]: 10条/页
+                  - img [ref=e609]
+                - button "上一页" [disabled] [ref=e611]:
+                  - generic:
+                    - img
+                - list [ref=e612]:
+                  - listitem "第 1 页" [ref=e613]: "1"
+                - button "下一页" [disabled] [ref=e614]:
+                  - generic:
+                    - img
+                - generic [ref=e615]:
+                  - generic [ref=e616]: 前往
+                  - spinbutton "页" [ref=e619]: "1"
+                  - generic [ref=e620]: 页

@@ -49,7 +49,6 @@ interface RoleFormState {
   topP: number
   maxCases: number
   supportsImageInput: boolean
-  status: number
 }
 
 const roleCards: RoleCardMeta[] = [
@@ -115,7 +114,6 @@ function createDefaultForm(roleType: RoleType): RoleFormState {
     topP: roleType === 'CASE_GENERATOR' ? 0.9 : 0.7,
     maxCases: 50,
     supportsImageInput: false,
-    status: 1,
   }
 }
 
@@ -143,7 +141,6 @@ function applyConfig(roleType: RoleType, config: AiCaseConfigItem | null) {
     topP: config.topP ?? (roleType === 'CASE_GENERATOR' ? 0.9 : 0.7),
     maxCases: config.maxCases ?? 50,
     supportsImageInput: config.supportsImageInput,
-    status: config.status ?? 1,
   })
 }
 
@@ -292,7 +289,7 @@ function buildSavePayload(roleType: RoleType): SaveAiCaseConfigPayload {
     topP: form.topP,
     maxCases: form.maxCases,
     supportsImageInput: form.supportsImageInput,
-    status: form.status,
+    status: 1,
     protocolType: provider?.protocolType ?? null,
     baseUrl: provider?.baseUrl ?? null,
     provider: provider?.providerType ?? null,

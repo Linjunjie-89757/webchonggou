@@ -27,6 +27,19 @@ VITE_API_BASE_URL=http://localhost:8080/api
 
 可参考 `.env.example` 创建本地环境配置。
 
+## 本地联调约定
+
+- 前端仓库：`D:\perfectproject\newautoweb\perfectprojectwebchonggou-main`
+- 后端仍使用旧项目：`D:\Project\auto\server`
+- 前端本地新建 `.env.local`：
+
+```text
+VITE_API_BASE_URL=http://localhost:8080/api
+```
+
+- 启动顺序：先启动旧后端，再在当前前端仓库执行 `npm run dev`
+- 联调时统一使用 `localhost`，不要混用 `127.0.0.1`
+
 开发登录联调时，推荐使用 `http://localhost:5174` 访问前端，并保持后端地址为
 `http://localhost:8080/api`。不要混用 `127.0.0.1` 和 `localhost`，否则浏览器可能因为
 cookie 域不同导致 `/auth/me` 无法识别登录态。

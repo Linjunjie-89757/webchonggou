@@ -2,6 +2,7 @@ import { httpDelete, httpGet, httpPost, httpPut, request, type ApiResponse } fro
 
 import type {
   AiCaseConfigResponse,
+  AiGenerationTaskEventItem,
   AiGenerationTaskItem,
   AiRequirementAssetItem,
   CreateAiGenerationTaskPayload,
@@ -173,6 +174,80 @@ export const caseAiApi = {
     })
 
     return unwrapApiResponse(payload)
+  },
+
+  async streamTaskEvents(
+    workspaceCode: string,
+    taskId: string,
+    handlers: {
+      signal?: AbortSignal
+      onEvent: (event: AiGenerationTaskEventItem) => void
+    },
+  ) {
+    const response = await fetch(`${request.defaults.baseURL}/cases/ai/tasks/${encodeURIComponent(taskId)}/events/stream`, {
+      method: 'GET',
+      credentials: 'include',
+      signal: handlers.signal,
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    if (!response.ok || !response.body) {
+      let message = '订阅 AI 生成任务事件失败'
+      try {
+        const errorPayload = await response.json() as ApiResponse<null>
+        message = errorPayload.message || message
+      } catch {
+        // ignore non-json streaming errors
+      }
+      throw new Error(message)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    const consumeStreamText = (chunk: string) => {
+      const blocks = chunk.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() ?? ''
+      for (const block of blocks) {
+        const dataLines = block
+          .split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trim())
+        if (!dataLines.length) {
+          continue
+        }
+        try {
+          handlers.onEvent(JSON.parse(dataLines.join('\n')) as AiGenerationTaskEventItem)
+        } catch {
+          // ignore malformed fragments and keep consuming later events
+        }
+      }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+      consumeStreamText(buffer + decoder.decode(value, { stream: true }))
+    }
+
+    consumeStreamText(buffer + decoder.decode())
+    if (buffer.trim()) {
+      try {
+        const data = buffer
+          .split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).trim())
+          .join('\n')
+        if (data) {
+          handlers.onEvent(JSON.parse(data) as AiGenerationTaskEventItem)
+        }
+      } catch {
+        // ignore malformed trailing stream content
+      }
+    }
   },
 
   async cancelTask(workspaceCode: string, taskId: string) {

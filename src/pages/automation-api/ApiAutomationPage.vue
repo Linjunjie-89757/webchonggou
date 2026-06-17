@@ -1,22 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Search } from '@element-plus/icons-vue'
 
-import {
-  apiAutomationApi,
-  buildApiAutomationStats,
-  type ApiAutomationClientFilter,
-  type ApiDefinitionCaseItem,
-  type ApiDefinitionItem,
-  type ApiDefinitionModuleItem,
+import type {
+  ApiDefinitionCaseItem,
+  ApiDefinitionItem,
+  ApiDefinitionModuleItem,
 } from '@/entities/api-automation'
 import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
-import { ApiAutomationSummaryPanel } from '@/widgets/api-automation-summary-panel'
-import { ApiCaseListPanel } from '@/widgets/api-case-list-panel'
-import { ApiDefinitionListPanel } from '@/widgets/api-definition-list-panel'
-import { ApiDefinitionTree } from '@/widgets/api-definition-tree'
+import { ApiInterfaceWorkspace } from '@/widgets/api-interface-workspace'
 
 const workspaceCode = ref('ALL')
 const workspaceSelectorCode = ref('ALL')
@@ -24,17 +17,6 @@ const workspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceReady = ref(false)
 const workspaceErrorMessage = ref('')
-const modules = ref<ApiDefinitionModuleItem[]>([])
-const modulesLoading = ref(false)
-const modulesErrorMessage = ref('')
-const definitions = ref<ApiDefinitionItem[]>([])
-const cases = ref<ApiDefinitionCaseItem[]>([])
-const selectedNodeId = ref('root')
-const selectedModuleId = ref<number | null>(null)
-const selectedDefinition = ref<ApiDefinitionItem | null>(null)
-const filter = ref<ApiAutomationClientFilter>({
-  keyword: '',
-})
 
 const workspaceOptions = computed(() => {
   const options = workspaces.value.map((item) => ({
@@ -48,12 +30,6 @@ const workspaceOptions = computed(() => {
 
   return options
 })
-
-const stats = computed(() => buildApiAutomationStats(definitions.value, cases.value, flattenModules(modules.value)))
-
-function flattenModules(items: ApiDefinitionModuleItem[]): ApiDefinitionModuleItem[] {
-  return items.flatMap((item) => [item, ...flattenModules(item.children)])
-}
 
 function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
   const selected = items.find((item) => item.current || item.isCurrent || item.default || item.isDefault)
@@ -79,44 +55,16 @@ async function loadWorkspaces() {
   }
 }
 
-async function loadModules() {
-  modulesLoading.value = true
-  modulesErrorMessage.value = ''
-  try {
-    modules.value = await apiAutomationApi.getDefinitionModules(workspaceCode.value)
-  } catch (error) {
-    modulesErrorMessage.value = getRequestErrorMessage(error)
-  } finally {
-    modulesLoading.value = false
-  }
-}
-
 function handleWorkspaceChange(value: string) {
   workspaceCode.value = value
-  selectedNodeId.value = 'root'
-  selectedModuleId.value = null
-  selectedDefinition.value = null
-  definitions.value = []
-  cases.value = []
-  void loadModules()
 }
 
-function handleModuleSelect(payload: { nodeId: string; moduleId: number | null }) {
-  selectedNodeId.value = payload.nodeId
-  selectedModuleId.value = payload.moduleId
-}
-
-function resetFilters() {
-  filter.value = {
-    keyword: '',
-  }
-}
+function handleWorkspaceDataLoaded(
+  _payload: { definitions: ApiDefinitionItem[]; modules: ApiDefinitionModuleItem[]; cases: ApiDefinitionCaseItem[] },
+) {}
 
 onMounted(() => {
-  void (async () => {
-    await loadWorkspaces()
-    await loadModules()
-  })()
+  void loadWorkspaces()
 })
 </script>
 
@@ -124,73 +72,40 @@ onMounted(() => {
   <AppPage
     title="接口自动化"
     description="先接入接口模块、接口定义和接口用例读取闭环，后续再补齐编辑、调试和场景编排。"
+    fill
   >
-    <template #actions>
-      <div class="api-automation-page__workspace-select">
-        <span class="api-automation-page__workspace-label">工作空间</span>
-        <el-select
-          v-model="workspaceSelectorCode"
-          class="api-automation-page__workspace-control"
-          :disabled="workspaceLoading"
-          :loading="workspaceLoading"
-          size="default"
-          @change="handleWorkspaceChange"
-        >
-          <el-option
-            v-for="item in workspaceOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-        <span v-if="workspaceErrorMessage" class="api-automation-page__workspace-error">
-          {{ workspaceErrorMessage }}
-        </span>
-      </div>
-    </template>
-
     <div class="api-automation-page">
-      <div class="api-automation-page__toolbar">
-        <el-input
-          v-model="filter.keyword"
-          class="api-automation-page__search"
-          clearable
-          :prefix-icon="Search"
-          placeholder="搜索接口名称 / 路径 / 标签"
-        />
-        <el-button @click="resetFilters">重置</el-button>
-      </div>
-
-      <ApiAutomationSummaryPanel :stats="stats" :loading="modulesLoading" />
-
-      <div v-if="workspaceReady" class="api-automation-page__content">
-        <ApiDefinitionTree
-          :modules="modules"
-          :loading="modulesLoading"
-          :error-message="modulesErrorMessage"
-          :selected-node-id="selectedNodeId"
-          :total-count="definitions.length"
-          @select="handleModuleSelect"
-          @retry="loadModules"
-        />
-        <div class="api-automation-page__main">
-          <ApiDefinitionListPanel
-            :workspace-code="workspaceCode"
-            :filter="filter"
-            :modules="modules"
-            :selected-module-id="selectedModuleId"
-            :selected-definition-id="selectedDefinition?.id"
-            @loaded="definitions = $event"
-            @select="selectedDefinition = $event"
-          />
-          <ApiCaseListPanel
-            :workspace-code="workspaceCode"
-            :definition="selectedDefinition"
-            :keyword="filter.keyword"
-            @loaded="cases = $event"
-          />
+      <div class="api-automation-page__header">
+        <div>
+          <h1>接口自动化</h1>
+        </div>
+        <div class="api-automation-page__workspace-select">
+          <span class="api-automation-page__workspace-label">工作空间</span>
+          <el-select
+            v-model="workspaceSelectorCode"
+            class="api-automation-page__workspace-control"
+            :disabled="workspaceLoading"
+            :loading="workspaceLoading"
+            size="default"
+            @change="handleWorkspaceChange"
+          >
+            <el-option
+              v-for="item in workspaceOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+          <span v-if="workspaceErrorMessage" class="api-automation-page__workspace-error">
+            {{ workspaceErrorMessage }}
+          </span>
         </div>
       </div>
+      <ApiInterfaceWorkspace
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
+        @loaded="handleWorkspaceDataLoaded"
+      />
     </div>
   </AppPage>
 </template>
@@ -199,8 +114,26 @@ onMounted(() => {
 .api-automation-page {
   display: flex;
   min-width: 0;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.api-automation-page__header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--app-space-4);
+}
+
+.api-automation-page__header h1 {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 28px;
 }
 
 .api-automation-page__workspace-select {
@@ -235,55 +168,15 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.api-automation-page__toolbar {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--app-space-2);
-  padding: var(--app-space-3);
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
-  background: var(--app-bg-panel);
-}
-
-.api-automation-page__search {
-  width: min(420px, 100%);
-}
-
-.api-automation-page__content {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  gap: var(--app-space-4);
-}
-
-.api-automation-page__main {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--app-space-4);
-}
-
-@media (max-width: 980px) {
-  .api-automation-page__content {
-    flex-direction: column;
-  }
-}
-
 @media (max-width: 720px) {
-  .api-automation-page__workspace-select,
-  .api-automation-page__toolbar {
+  .api-automation-page__header,
+  .api-automation-page__workspace-select {
     width: 100%;
     flex-wrap: wrap;
   }
 
   .api-automation-page__workspace-control {
     width: min(240px, 100%);
-  }
-
-  .api-automation-page__search {
-    width: 100%;
   }
 }
 </style>

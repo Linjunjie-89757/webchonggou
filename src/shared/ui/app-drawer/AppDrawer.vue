@@ -25,6 +25,9 @@ const emit = defineEmits<{
     append-to-body
     @update:model-value="emit('update:modelValue', $event)"
   >
+    <template v-if="$slots.header" #header>
+      <slot name="header" />
+    </template>
     <slot />
     <template v-if="$slots.footer" #footer>
       <div class="app-drawer__footer">

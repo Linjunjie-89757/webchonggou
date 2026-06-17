@@ -14,6 +14,7 @@ import type {
   ApiRunResult,
   PageResponse,
   SaveApiDefinitionCasePayload,
+  SaveApiDefinitionModulePayload,
   SaveApiDefinitionPayload,
 } from '../model/types'
 
@@ -211,6 +212,50 @@ export const apiAutomationApi = {
     return Array.isArray(modules) ? modules.map(normalizeDefinitionModule) : []
   },
 
+  async createDefinitionModule(workspaceCode = 'ALL', data: SaveApiDefinitionModulePayload) {
+    const payload = await httpPost<ApiResponse<ApiDefinitionModuleItem>, SaveApiDefinitionModulePayload>(
+      '/automation/api/definition-modules',
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeDefinitionModule(unwrapApiResponse(payload))
+  },
+
+  async updateDefinitionModule(workspaceCode = 'ALL', id: number, data: SaveApiDefinitionModulePayload) {
+    const payload = await httpPut<ApiResponse<ApiDefinitionModuleItem>, SaveApiDefinitionModulePayload>(
+      `/automation/api/definition-modules/${id}`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeDefinitionModule(unwrapApiResponse(payload))
+  },
+
+  async moveDefinitionModule(workspaceCode = 'ALL', id: number, data: SaveApiDefinitionModulePayload) {
+    const payload = await httpPut<ApiResponse<ApiDefinitionModuleItem>, SaveApiDefinitionModulePayload>(
+      `/automation/api/definition-modules/${id}/move`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeDefinitionModule(unwrapApiResponse(payload))
+  },
+
+  async deleteDefinitionModule(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/definition-modules/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
+  },
+
   async getDefinitionDetail(workspaceCode = 'ALL', id: number) {
     const payload = await httpGet<ApiResponse<ApiDefinitionDetail>>(`/automation/api/definitions/${id}`, {
       headers: workspaceHeaders(workspaceCode),
@@ -304,6 +349,18 @@ export const apiAutomationApi = {
     const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
       `/automation/api/definitions/${id}/debug-run`,
       data || {},
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunResult(unwrapApiResponse(payload))
+  },
+
+  async debugRunDefinitionDraft(workspaceCode = 'ALL', data: SaveApiDefinitionPayload & ApiRunPayload) {
+    const payload = await httpPost<ApiResponse<ApiRunResult>, SaveApiDefinitionPayload & ApiRunPayload>(
+      '/automation/api/definitions/debug-run',
+      data,
       {
         headers: workspaceHeaders(workspaceCode),
       },

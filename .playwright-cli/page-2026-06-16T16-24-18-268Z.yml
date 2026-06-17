@@ -1,0 +1,367 @@
+- generic [ref=e42]:
+  - complementary [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]: A
+      - generic [ref=e46]: 自动化测试平台
+    - navigation "主导航" [ref=e47]:
+      - link "工作台" [ref=e49] [cursor=pointer]:
+        - /url: /?workspace=ALL
+        - img [ref=e51]
+        - generic [ref=e53]: 工作台
+      - link "配置中心" [ref=e55] [cursor=pointer]:
+        - /url: /config-center?workspace=ALL
+        - img [ref=e57]
+        - generic [ref=e59]: 配置中心
+      - button "用例中心" [active] [ref=e61] [cursor=pointer]:
+        - img [ref=e63]
+        - generic [ref=e65]: 用例中心
+      - link "缺陷管理" [ref=e76] [cursor=pointer]:
+        - /url: /bugs?workspace=ALL
+        - img [ref=e78]
+        - generic [ref=e80]: 缺陷管理
+      - link "接口自动化" [ref=e82] [cursor=pointer]:
+        - /url: /automation/api?workspace=ALL
+        - img [ref=e84]
+        - generic [ref=e87]: 接口自动化
+      - link "Web UI 自动化" [ref=e89] [cursor=pointer]:
+        - /url: /automation/web?workspace=ALL
+        - img [ref=e91]
+        - generic [ref=e93]: Web UI 自动化
+      - link "APP 自动化" [ref=e95] [cursor=pointer]:
+        - /url: /automation/app?workspace=ALL
+        - img [ref=e97]
+        - generic [ref=e99]: APP 自动化
+      - link "系统设置" [ref=e101] [cursor=pointer]:
+        - /url: /settings?workspace=ALL
+        - img [ref=e103]
+        - generic [ref=e105]: 系统设置
+  - generic [ref=e106]:
+    - generic [ref=e107]:
+      - generic [ref=e108]:
+        - generic [ref=e109]: 用例中心
+        - button "全部" [ref=e112] [cursor=pointer]:
+          - img [ref=e113]
+          - generic [ref=e117]: 全部
+          - img [ref=e118]
+      - button "超 超级管理员 SUPER_ADMIN" [ref=e122] [cursor=pointer]:
+        - generic [ref=e123]: 超
+        - generic [ref=e124]:
+          - generic [ref=e125]: 超级管理员
+          - generic [ref=e126]: SUPER_ADMIN
+        - img [ref=e128]
+    - main [ref=e130]:
+      - generic [ref=e135]:
+        - complementary [ref=e136]:
+          - generic [ref=e139]:
+            - img [ref=e142]
+            - textbox "搜索模块" [ref=e144]
+          - generic [ref=e146]:
+            - strong [ref=e147]: 用例目录
+            - button "收起全部子模块" [ref=e148] [cursor=pointer]:
+              - img [ref=e151]
+          - tree [ref=e153]:
+            - treeitem "X-MAN 新建子目录" [ref=e154]:
+              - generic [ref=e155] [cursor=pointer]:
+                - img [ref=e157]
+                - generic [ref=e159]:
+                  - generic [ref=e160]:
+                    - img [ref=e162]
+                    - generic [ref=e164]: X-MAN
+                  - button "新建子目录" [ref=e166]:
+                    - img [ref=e169]
+            - treeitem "SCRM 新建子目录" [ref=e171]:
+              - generic [ref=e173] [cursor=pointer]:
+                - generic [ref=e174]:
+                  - img [ref=e176]
+                  - generic [ref=e178]: SCRM
+                - button "新建子目录" [ref=e180]:
+                  - img [ref=e183]
+            - treeitem "CMS&DDM 新建子目录" [ref=e185]:
+              - generic [ref=e187] [cursor=pointer]:
+                - generic [ref=e188]:
+                  - img [ref=e190]
+                  - generic [ref=e192]: CMS&DDM
+                - button "新建子目录" [ref=e194]:
+                  - img [ref=e197]
+            - treeitem "PC 新建子目录" [ref=e199]:
+              - generic [ref=e201] [cursor=pointer]:
+                - generic [ref=e202]:
+                  - img [ref=e204]
+                  - generic [ref=e206]: PC
+                - button "新建子目录" [ref=e208]:
+                  - img [ref=e211]
+            - treeitem "APP 新建子目录" [ref=e213]:
+              - generic [ref=e215] [cursor=pointer]:
+                - generic [ref=e216]:
+                  - img [ref=e218]
+                  - generic [ref=e220]: APP
+                - button "新建子目录" [ref=e222]:
+                  - img [ref=e225]
+            - treeitem "测试用 新建子目录" [ref=e227]:
+              - generic [ref=e228] [cursor=pointer]:
+                - img [ref=e230]
+                - generic [ref=e232]:
+                  - generic [ref=e233]:
+                    - img [ref=e235]
+                    - generic [ref=e237]: 测试用
+                  - button "新建子目录" [ref=e239]:
+                    - img [ref=e242]
+        - main [ref=e244]:
+          - generic [ref=e246]:
+            - generic [ref=e247]:
+              - generic [ref=e248]:
+                - generic [ref=e250]:
+                  - img [ref=e253]
+                  - textbox "搜索编号或名称" [ref=e255]
+                - generic [ref=e258] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e260]
+                    - generic [ref=e261]: 优先级
+                  - img [ref=e264]
+                - generic [ref=e267] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e269]
+                    - generic [ref=e270]: 评审状态
+                  - img [ref=e273]
+                - generic [ref=e276] [cursor=pointer]:
+                  - generic:
+                    - combobox [ref=e278]
+                    - generic [ref=e279]: 执行状态
+                  - img [ref=e282]
+                - generic [ref=e285]:
+                  - generic:
+                    - combobox [ref=e287]
+                    - generic [ref=e288]: 执行人
+                  - img [ref=e291] [cursor=pointer]
+                - generic [ref=e294]:
+                  - generic:
+                    - combobox [ref=e296]
+                    - generic [ref=e297]: 创建人
+                  - img [ref=e300] [cursor=pointer]
+                - generic [ref=e303]:
+                  - generic:
+                    - combobox [ref=e305]
+                    - generic [ref=e306]: 所属空间
+                  - img [ref=e309] [cursor=pointer]
+                - button "重置" [ref=e311] [cursor=pointer]:
+                  - img [ref=e313]
+                  - generic [ref=e315]: 重置
+              - button "新建用例" [ref=e316] [cursor=pointer]:
+                - img [ref=e318]
+                - generic [ref=e320]: 新建用例
+            - generic [ref=e322]:
+              - generic [ref=e323]:
+                - generic [ref=e325]:
+                  - generic [ref=e326]:
+                    - generic "选择当前页用例" [ref=e328] [cursor=pointer]:
+                      - generic [ref=e329]:
+                        - checkbox "选择当前页用例"
+                    - generic [ref=e331]: 用例编号
+                    - generic [ref=e332]: 用例名称
+                    - generic [ref=e333]: 优先级
+                    - generic [ref=e334]: 评审状态
+                    - generic [ref=e335]: 执行状态
+                    - generic [ref=e336]: 执行人
+                    - generic [ref=e337]: 所属模块
+                  - generic [ref=e338]:
+                    - generic "选择用例 Case-00012" [ref=e340] [cursor=pointer]:
+                      - generic [ref=e341]:
+                        - checkbox "选择用例 Case-00012"
+                    - generic [ref=e344]: Case-00012
+                    - generic [ref=e346]: Copy-异常流程：好人好股领航版无班级批次，点击确认给出提示，定时刷新后状态保持待确认
+                    - generic [ref=e348]: P0
+                    - generic [ref=e350]: 未评审
+                    - generic [ref=e352]: 未执行
+                    - generic [ref=e354]: "-"
+                    - generic [ref=e356]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e357]:
+                    - generic "选择用例 Case-00002" [ref=e359] [cursor=pointer]:
+                      - generic [ref=e360]:
+                        - checkbox "选择用例 Case-00002"
+                    - generic [ref=e363]: Case-00002
+                    - generic [ref=e365]: 异常流程：好人好股领航版无班级批次，点击确认给出提示，定时刷新后状态保持待确认
+                    - generic [ref=e367]: P0
+                    - generic [ref=e369]: 未评审
+                    - generic [ref=e371]: 阻塞中
+                    - generic [ref=e373]: 超级管理员
+                    - generic [ref=e375]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e376]:
+                    - generic "选择用例 Case-00011" [ref=e378] [cursor=pointer]:
+                      - generic [ref=e379]:
+                        - checkbox "选择用例 Case-00011"
+                    - generic [ref=e382]: Case-00011
+                    - generic [ref=e384]: DISPOSABLE-EXEC-DEFECT-20260615030828
+                    - generic [ref=e386]: P2
+                    - generic [ref=e388]: 未评审
+                    - generic [ref=e390]: 已通过
+                    - generic [ref=e392]: 超级管理员
+                    - generic [ref=e394]: 空间根目录
+                  - generic [ref=e395]:
+                    - generic "选择用例 Case-00007" [ref=e397] [cursor=pointer]:
+                      - generic [ref=e398]:
+                        - checkbox "选择用例 Case-00007"
+                    - generic [ref=e401]: Case-00007
+                    - generic [ref=e403]: 状态迁移：订单初始缺客户渠道或员工企微，陆续补齐后定时刷新状态变为已完成
+                    - generic [ref=e405]: P2
+                    - generic [ref=e407]: 未评审
+                    - generic [ref=e409]: 已通过
+                    - generic [ref=e411]: 超级管理员
+                    - generic [ref=e413]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e414]:
+                    - generic "选择用例 Case-00010" [ref=e416] [cursor=pointer]:
+                      - generic [ref=e417]:
+                        - checkbox "选择用例 Case-00010"
+                    - generic [ref=e420]: Case-00010
+                    - generic [ref=e422]: 异常：班级批次记录已软删除，系统应视为无班级批次
+                    - generic [ref=e424]: P2
+                    - generic [ref=e426]: 未评审
+                    - generic [ref=e428]: 已通过
+                    - generic [ref=e430]: 超级管理员
+                    - generic [ref=e432]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e433]:
+                    - generic "选择用例 Case-00008" [ref=e435] [cursor=pointer]:
+                      - generic [ref=e436]:
+                        - checkbox "选择用例 Case-00008"
+                    - generic [ref=e439]: Case-00008
+                    - generic [ref=e441]: 组合测试：三条件（班级批次、客户渠道、员工企微）所有存在组合对订单状态的影响
+                    - generic [ref=e443]: P0
+                    - generic [ref=e445]: 未评审
+                    - generic [ref=e447]: 失败
+                    - generic [ref=e449]: 超级管理员
+                    - generic [ref=e451]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e452]:
+                    - generic "选择用例 Case-00009" [ref=e454] [cursor=pointer]:
+                      - generic [ref=e455]:
+                        - checkbox "选择用例 Case-00009"
+                    - generic [ref=e458]: Case-00009
+                    - generic [ref=e460]: 边界：订单包含多个商品，其中一件为好人好股领航版，其他为非目标商品
+                    - generic [ref=e462]: P2
+                    - generic [ref=e464]: 未评审
+                    - generic [ref=e466]: 已通过
+                    - generic [ref=e468]: 超级管理员
+                    - generic [ref=e470]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e471]:
+                    - generic "选择用例 Case-00006" [ref=e473] [cursor=pointer]:
+                      - generic [ref=e474]:
+                        - checkbox "选择用例 Case-00006"
+                    - generic [ref=e477]: Case-00006
+                    - generic [ref=e479]: 状态迁移：订单初始无班级批次，分配班级批次后等待定时刷新，状态变为已完成（同时满足其他两个条件）
+                    - generic [ref=e481]: P1
+                    - generic [ref=e483]: 未评审
+                    - generic [ref=e485]: 未执行
+                    - generic [ref=e487]: "-"
+                    - generic [ref=e489]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e490]:
+                    - generic "选择用例 Case-00005" [ref=e492] [cursor=pointer]:
+                      - generic [ref=e493]:
+                        - checkbox "选择用例 Case-00005"
+                    - generic [ref=e496]: Case-00005
+                    - generic [ref=e498]: 非功能：定时刷新每5分钟执行一次，且批量处理正确
+                    - generic [ref=e500]: P2
+                    - generic [ref=e502]: 未评审
+                    - generic [ref=e504]: 未执行
+                    - generic [ref=e506]: "-"
+                    - generic [ref=e508]: 【订单中心】待确认增加是否匹配班级成功校验
+                  - generic [ref=e509]:
+                    - generic "选择用例 Case-00004" [ref=e511] [cursor=pointer]:
+                      - generic [ref=e512]:
+                        - checkbox "选择用例 Case-00004"
+                    - generic [ref=e515]: Case-00004
+                    - generic [ref=e517]: 边界：班级批次字段值为空字符串，视为无班级批次
+                    - generic [ref=e519]: P1
+                    - generic [ref=e521]: 未评审
+                    - generic [ref=e523]: 未执行
+                    - generic [ref=e525]: "-"
+                    - generic [ref=e527]: 【订单中心】待确认增加是否匹配班级成功校验
+                - generic [ref=e528]:
+                  - generic [ref=e529]:
+                    - generic [ref=e530]: 操作
+                    - button "字段设置" [ref=e531] [cursor=pointer]:
+                      - img [ref=e532]
+                  - generic [ref=e536]:
+                    - button "编辑" [ref=e537] [cursor=pointer]:
+                      - generic [ref=e538]: 编辑
+                    - button "执行" [ref=e539] [cursor=pointer]:
+                      - generic [ref=e540]: 执行
+                    - button [ref=e542] [cursor=pointer]:
+                      - img [ref=e545]
+                  - generic [ref=e548]:
+                    - button "编辑" [ref=e549] [cursor=pointer]:
+                      - generic [ref=e550]: 编辑
+                    - button "执行" [ref=e551] [cursor=pointer]:
+                      - generic [ref=e552]: 执行
+                    - button [ref=e554] [cursor=pointer]:
+                      - img [ref=e557]
+                  - generic [ref=e560]:
+                    - button "编辑" [ref=e561] [cursor=pointer]:
+                      - generic [ref=e562]: 编辑
+                    - button "执行" [ref=e563] [cursor=pointer]:
+                      - generic [ref=e564]: 执行
+                    - button [ref=e566] [cursor=pointer]:
+                      - img [ref=e569]
+                  - generic [ref=e572]:
+                    - button "编辑" [ref=e573] [cursor=pointer]:
+                      - generic [ref=e574]: 编辑
+                    - button "执行" [ref=e575] [cursor=pointer]:
+                      - generic [ref=e576]: 执行
+                    - button [ref=e578] [cursor=pointer]:
+                      - img [ref=e581]
+                  - generic [ref=e584]:
+                    - button "编辑" [ref=e585] [cursor=pointer]:
+                      - generic [ref=e586]: 编辑
+                    - button "执行" [ref=e587] [cursor=pointer]:
+                      - generic [ref=e588]: 执行
+                    - button [ref=e590] [cursor=pointer]:
+                      - img [ref=e593]
+                  - generic [ref=e596]:
+                    - button "编辑" [ref=e597] [cursor=pointer]:
+                      - generic [ref=e598]: 编辑
+                    - button "执行" [ref=e599] [cursor=pointer]:
+                      - generic [ref=e600]: 执行
+                    - button [ref=e602] [cursor=pointer]:
+                      - img [ref=e605]
+                  - generic [ref=e608]:
+                    - button "编辑" [ref=e609] [cursor=pointer]:
+                      - generic [ref=e610]: 编辑
+                    - button "执行" [ref=e611] [cursor=pointer]:
+                      - generic [ref=e612]: 执行
+                    - button [ref=e614] [cursor=pointer]:
+                      - img [ref=e617]
+                  - generic [ref=e620]:
+                    - button "编辑" [ref=e621] [cursor=pointer]:
+                      - generic [ref=e622]: 编辑
+                    - button "执行" [ref=e623] [cursor=pointer]:
+                      - generic [ref=e624]: 执行
+                    - button [ref=e626] [cursor=pointer]:
+                      - img [ref=e629]
+                  - generic [ref=e632]:
+                    - button "编辑" [ref=e633] [cursor=pointer]:
+                      - generic [ref=e634]: 编辑
+                    - button "执行" [ref=e635] [cursor=pointer]:
+                      - generic [ref=e636]: 执行
+                    - button [ref=e638] [cursor=pointer]:
+                      - img [ref=e641]
+                  - generic [ref=e644]:
+                    - button "编辑" [ref=e645] [cursor=pointer]:
+                      - generic [ref=e646]: 编辑
+                    - button "执行" [ref=e647] [cursor=pointer]:
+                      - generic [ref=e648]: 执行
+                    - button [ref=e650] [cursor=pointer]:
+                      - img [ref=e653]
+              - generic [ref=e656]:
+                - generic [ref=e657]: 共 12 条，2 页
+                - generic [ref=e658]:
+                  - generic [ref=e661] [cursor=pointer]:
+                    - generic:
+                      - combobox [ref=e663]
+                      - generic [ref=e664]: 10/page
+                    - img [ref=e667]
+                  - button "Go to previous page" [disabled] [ref=e669]:
+                    - generic:
+                      - img
+                  - list [ref=e670]:
+                    - listitem "page 1" [ref=e671]: "1"
+                    - listitem "page 2" [ref=e672] [cursor=pointer]: "2"
+                  - button "Go to next page" [ref=e673] [cursor=pointer]:
+                    - generic:
+                      - img

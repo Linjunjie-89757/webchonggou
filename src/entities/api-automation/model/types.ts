@@ -101,6 +101,12 @@ export interface ApiDefinitionModuleItem {
   children: ApiDefinitionModuleItem[]
 }
 
+export interface SaveApiDefinitionModulePayload {
+  workspaceCode?: string
+  parentId?: number | null
+  name: string
+}
+
 export interface ApiDefinitionCaseItem {
   id: number
   workspaceCode: string
@@ -144,6 +150,56 @@ export interface ApiRunPayload {
   variableSetId?: number | null
 }
 
+export interface ApiRequestSnapshot {
+  method: string
+  url: string
+  headers: Record<string, string>
+  queryParams?: ApiKeyValueInput[] | null
+  cookies?: ApiKeyValueInput[] | null
+  bodyType?: string | null
+  bodyContentType?: string | null
+  bodyFormItems?: ApiKeyValueInput[] | null
+  bodyFileName?: string | null
+  bodyFileContentType?: string | null
+  body: string | null
+}
+
+export interface ApiResponseSnapshot {
+  statusCode: number
+  headers: Record<string, string>
+  body: string | null
+  contentType: string | null
+}
+
+export interface ApiAssertionResult {
+  id?: string | null
+  type: string
+  name?: string | null
+  subject?: string | null
+  condition?: string | null
+  expectedValue?: string | null
+  actualValue?: string | null
+  success: boolean
+  message?: string | null
+}
+
+export interface ApiRunStepResult {
+  id: number | null
+  reportId: number | null
+  stepOrder: number
+  stepName: string
+  definitionId: number | null
+  success: boolean
+  durationMs: number
+  request: ApiRequestSnapshot | null
+  response: ApiResponseSnapshot | null
+  assertionResults: ApiAssertionResult[]
+  extractionResults?: unknown[]
+  processorResults?: unknown[]
+  errorMessage: string | null
+  createdAt: string | null
+}
+
 export interface ApiRunResult {
   taskId: number | null
   reportId: number | null
@@ -151,7 +207,7 @@ export interface ApiRunResult {
   reportName: string | null
   result: string | null
   failureSummary: string | null
-  stepResults: unknown[]
+  stepResults: ApiRunStepResult[]
 }
 
 export interface ApiRunHistoryItem {

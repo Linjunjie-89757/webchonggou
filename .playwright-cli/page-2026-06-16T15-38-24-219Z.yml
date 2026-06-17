@@ -1,0 +1,16 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: A
+      - generic [ref=e7]:
+        - heading "自动化测试平台" [level=1] [ref=e8]
+        - paragraph [ref=e9]: 前端 2.0
+    - generic [ref=e10]:
+      - generic [ref=e14]:
+        - img [ref=e17]
+        - textbox "用户名" [ref=e19]
+      - generic [ref=e24]:
+        - img [ref=e27]
+        - textbox "密码" [ref=e30]
+      - button "登录" [disabled] [ref=e31]:
+        - generic [ref=e32]: 登录

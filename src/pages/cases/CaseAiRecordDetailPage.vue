@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter, type HistoryState } from 'vue-router'
 import {
   ArrowDown,
@@ -17,7 +17,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-import { caseAiApi, type AiGenerationTaskItem, type GeneratedAiCaseItem } from '@/entities/case-ai'
+import { caseAiApi, type AiGenerationTaskEventItem, type AiGenerationTaskItem, type GeneratedAiCaseItem } from '@/entities/case-ai'
 import { caseApi, type CaseDirectoryNode, type SaveCasePayload } from '@/entities/case'
 import { useSession } from '@/entities/session'
 import { useWorkspaceContext } from '@/entities/workspace'
@@ -106,10 +106,15 @@ const loading = ref(true)
 const errorMessage = ref('')
 const detailRecord = ref<AiGenerationTaskItem | null>(null)
 const requirementExpanded = ref(false)
+const outputExpanded = ref(false)
 const previewVisible = ref(false)
 const previewActiveTab = ref<'detail' | 'analysis'>('detail')
 const activeCaseCursor = ref(-1)
 const selectedCaseIndexes = ref<number[]>([])
+const detailCaseTableRef = ref<{
+  clearSelection?: () => void
+  toggleRowSelection?: (row: DetailCaseRow, selected?: boolean) => void
+} | null>(null)
 
 const settingsVisible = ref(false)
 const draggingColumnKey = ref<DetailColumnKey | null>(null)
@@ -159,6 +164,12 @@ const caseEditForm = reactive({
 })
 
 let pollingTimer: number | null = null
+const streamConnected = ref(false)
+let streamAbortController: AbortController | null = null
+let streamTaskId: string | null = null
+let streamRefreshTimer: number | null = null
+let lastOutputTaskId = ''
+let lastOutputStatus = ''
 
 const resolvedWorkspaceCode = computed(() => {
   const queryWorkspace = Array.isArray(route.query.workspace) ? route.query.workspace[0] : route.query.workspace
@@ -173,33 +184,6 @@ const orderedColumns = computed(() => columnOrder.value
 const visibleColumns = computed(() => orderedColumns.value.filter(column => (
   column.required || Boolean(columnVisibility.value[column.key])
 )))
-
-const dataGridTemplateColumns = computed(() => [
-  '52px',
-  '72px',
-  ...visibleColumns.value.map((column) => {
-    if (typeof column.width === 'number') {
-      return `${column.width}px`
-    }
-    if (typeof column.minWidth === 'number') {
-      return `${column.minWidth}px`
-    }
-    return '120px'
-  }),
-].join(' '))
-
-const dataGridMinWidth = computed(() => {
-  const width = visibleColumns.value.reduce((total, column) => {
-    if (typeof column.width === 'number') {
-      return total + column.width
-    }
-    if (typeof column.minWidth === 'number') {
-      return total + column.minWidth
-    }
-    return total + 120
-  }, 52 + 72)
-  return `${width}px`
-})
 
 const drawerColumns = computed(() => orderedColumns.value.map(column => ({
   key: column.key,
@@ -228,9 +212,6 @@ const activeCase = computed(() => detailCases.value[activeCaseCursor.value] ?? n
 const canPreviewPreviousCase = computed(() => activeCaseCursor.value > 0)
 const canPreviewNextCase = computed(() => activeCaseCursor.value >= 0 && activeCaseCursor.value < detailCases.value.length - 1)
 const selectedCases = computed(() => detailCases.value.filter(item => selectedCaseIndexes.value.includes(item.index)))
-const allCurrentPageSelected = computed(() => detailCases.value.length > 0
-  && detailCases.value.every(item => selectedCaseIndexes.value.includes(item.index)))
-const currentPageSelectionIndeterminate = computed(() => selectedCaseIndexes.value.length > 0 && !allCurrentPageSelected.value)
 const selectedAdoptableCases = computed(() => selectedCases.value.filter(item => getCaseReviewState(item) === 'PENDING'))
 const selectedDiscardableCases = computed(() => selectedCases.value.filter(item => getCaseReviewState(item) === 'PENDING'))
 const adoptableCases = computed(() => detailCases.value.filter(item => getCaseReviewState(item) === 'PENDING'))
@@ -242,6 +223,9 @@ const optimizedCaseCount = computed(() => detailCases.value.filter(item => item.
 const supplementedCaseCount = computed(() => detailCases.value.filter(item => item.aiReviewStatus === 'SUPPLEMENTED' || item.aiSource === 'REVIEW_SUPPLEMENTED').length)
 const confirmRequiredCaseCount = computed(() => detailCases.value.filter(item => item.aiReviewStatus === 'CONFIRM_REQUIRED').length)
 const notRecommendedCaseCount = computed(() => detailCases.value.filter(item => item.aiReviewStatus === 'NOT_RECOMMENDED').length)
+const reviewResultSummary = computed(() => detailRecord.value?.reviewResult?.summary?.trim() || '')
+const unresolvedCoverageGaps = computed(() => (detailRecord.value?.reviewResult?.unresolvedCoverageGaps ?? []).filter(Boolean))
+const supplementCaseCount = computed(() => detailRecord.value?.reviewResult?.supplementCases?.length ?? 0)
 
 const outputEvents = computed(() => [...(detailRecord.value?.events ?? [])].sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0)))
 const showTaskOutputBoard = computed(() => Boolean(detailRecord.value && (
@@ -271,7 +255,9 @@ const outputConnectionLabel = computed(() => {
     return '-'
   }
   if (['PENDING', 'GENERATING', 'REVIEWING'].includes(detailRecord.value.status)) {
-    return detailRecord.value.outputMode === 'STREAM' ? '实时流式' : '轮询刷新'
+    return detailRecord.value.outputMode === 'STREAM'
+      ? (streamConnected.value ? '实时连接中' : '轮询兜底')
+      : '轮询刷新'
   }
   return '未连接'
 })
@@ -280,6 +266,9 @@ const outputTimeline = computed(() => {
   const currentStep = detailRecord.value?.currentStep ?? 1
   return processSteps.map((item, index) => ({
     ...item,
+    meta: index === 0
+      ? formatModelDisplay(generationModelInfo.value.provider, generationModelInfo.value.model)
+      : formatModelDisplay(reviewModelInfo.value.provider, reviewModelInfo.value.model),
     active: currentStep === index + 2 && detailRecord.value?.status !== 'COMPLETED' && detailRecord.value?.status !== 'FAILED',
     done: detailRecord.value?.status === 'COMPLETED'
       ? true
@@ -507,6 +496,21 @@ function formatCaseCellText(value?: string | null) {
   return value?.trim() || '-'
 }
 
+function hasDisplayText(value?: string | null) {
+  return Boolean(value?.trim())
+}
+
+function formatAiDisplayText(value?: string | null) {
+  const normalized = value?.trim()
+  if (!normalized) {
+    return '-'
+  }
+  return normalized.replace(/\b(?:caseIndex|itemIndex|Index|Case)\s*[:#=]?\s*(\d+)\b/gi, (_matched, indexText) => {
+    const parsed = Number.parseInt(indexText, 10)
+    return `第 ${Number.isFinite(parsed) ? parsed + 1 : 1} 条`
+  })
+}
+
 function getStatusLabel(status: string) {
   const map: Record<string, string> = {
     PENDING: '需求解析中',
@@ -545,9 +549,36 @@ function getOutputConnectionClass() {
     return 'status-neutral'
   }
   if (['PENDING', 'GENERATING', 'REVIEWING'].includes(detailRecord.value.status)) {
-    return detailRecord.value.outputMode === 'STREAM' ? 'status-success' : 'status-warning'
+    return detailRecord.value.outputMode === 'STREAM'
+      ? (streamConnected.value ? 'status-success' : 'status-warning')
+      : 'status-warning'
   }
   return 'status-neutral'
+}
+
+function shouldExpandOutputByDefault(status?: string | null) {
+  return status !== 'COMPLETED'
+}
+
+function syncOutputExpandedState(record: AiGenerationTaskItem | null) {
+  if (!record) {
+    lastOutputTaskId = ''
+    lastOutputStatus = ''
+    outputExpanded.value = false
+    return
+  }
+
+  if (lastOutputTaskId !== record.taskId) {
+    outputExpanded.value = shouldExpandOutputByDefault(record.status)
+    lastOutputTaskId = record.taskId
+    lastOutputStatus = record.status
+    return
+  }
+
+  if (record.status !== lastOutputStatus && shouldExpandOutputByDefault(record.status)) {
+    outputExpanded.value = true
+  }
+  lastOutputStatus = record.status
 }
 
 function getOutputEventClass(level?: string | null) {
@@ -583,6 +614,14 @@ function getFailureSuggestions(record: AiGenerationTaskItem) {
     return ['当前任务已标记为取消，确认不需要继续生成后可关闭此记录。']
   }
   return list
+}
+
+function formatOutputEventMessage(event: AiGenerationTaskEventItem) {
+  const message = formatAiDisplayText(event.message)
+  if (event.itemTitle && event.itemIndex !== null && !message.includes(event.itemTitle)) {
+    return message.replace(/^第\s*(\d+)\s*条/, `第 $1 条：${event.itemTitle}`)
+  }
+  return message
 }
 
 function getCaseReviewState(row: DetailCaseRow | null | undefined): CaseReviewState {
@@ -661,26 +700,6 @@ function getCaseSavedDirectoryName(row: DetailCaseRow) {
   return detailRecord.value?.directoryName || '未采纳'
 }
 
-function getAnalysisFields(row: DetailCaseRow | null) {
-  if (!row) {
-    return []
-  }
-
-  return [
-    { label: '测试角度', value: row.testAngle },
-    { label: '生成原因', value: row.generationReason },
-    { label: '需求依据', value: row.requirementEvidence },
-    { label: '评审意见', value: row.reviewComment },
-    { label: '优化原因', value: row.optimizationReason },
-    { label: '补充原因', value: row.supplementReason },
-    { label: '覆盖缺口', value: row.coverageGap },
-    { label: 'AI 评审摘要', value: row.aiReviewSummary },
-    { label: '覆盖性意见', value: row.aiCoverageComment },
-    { label: '证据性意见', value: row.aiEvidenceComment },
-    { label: '风险提示', value: row.riskNotes },
-  ].filter(field => field.value && field.value.trim())
-}
-
 function getDefaultDirectoryPath(record: AiGenerationTaskItem) {
   if (!record.directoryName) {
     return '未设置默认路径'
@@ -720,6 +739,96 @@ function startPolling() {
   }, 2500)
 }
 
+function isRunningRecord(record: AiGenerationTaskItem | null | undefined) {
+  return Boolean(record && ['PENDING', 'GENERATING', 'REVIEWING'].includes(record.status))
+}
+
+function stopEventStream() {
+  if (streamAbortController) {
+    streamAbortController.abort()
+    streamAbortController = null
+  }
+  streamTaskId = null
+  streamConnected.value = false
+}
+
+function shouldRefreshForEvent(event: AiGenerationTaskEventItem) {
+  return [
+    'CASE_GENERATED',
+    'CASE_REVIEWED',
+    'GENERATION_COMPLETED',
+    'TASK_COMPLETED',
+    'TASK_FAILED',
+    'TASK_CANCELED',
+  ].includes(event.eventType)
+}
+
+function mergeTaskEvent(event: AiGenerationTaskEventItem) {
+  if (!detailRecord.value || detailRecord.value.taskId !== event.taskId) {
+    return
+  }
+  const events = detailRecord.value.events ?? []
+  const existingIndex = events.findIndex(item => item.seq === event.seq)
+  const nextEvents = existingIndex >= 0
+    ? events.map(item => (item.seq === event.seq ? event : item))
+    : [...events, event]
+  detailRecord.value = {
+    ...detailRecord.value,
+    events: nextEvents.sort((left, right) => (left.seq ?? 0) - (right.seq ?? 0)),
+  }
+  if (shouldRefreshForEvent(event)) {
+    scheduleRecordRefresh()
+  }
+}
+
+function scheduleRecordRefresh() {
+  if (streamRefreshTimer != null) {
+    return
+  }
+  streamRefreshTimer = window.setTimeout(() => {
+    streamRefreshTimer = null
+    void loadRecord({ silent: true })
+  }, 350)
+}
+
+function startEventStream(record: AiGenerationTaskItem) {
+  if (streamTaskId === record.taskId && streamAbortController) {
+    return
+  }
+  stopEventStream()
+  const controller = new AbortController()
+  streamAbortController = controller
+  streamTaskId = record.taskId
+  streamConnected.value = true
+  void caseAiApi.streamTaskEvents(record.workspaceCode, record.taskId, {
+    signal: controller.signal,
+    onEvent: mergeTaskEvent,
+  }).then(() => {
+    if (streamTaskId === record.taskId) {
+      streamConnected.value = false
+      streamAbortController = null
+      streamTaskId = null
+      void loadRecord({ silent: true })
+    }
+  }).catch((error) => {
+    if ((error as Error).name !== 'AbortError' && streamTaskId === record.taskId) {
+      streamConnected.value = false
+    }
+    if (streamTaskId === record.taskId) {
+      streamAbortController = null
+      streamTaskId = null
+    }
+  })
+}
+
+function syncEventStream(record: AiGenerationTaskItem | null) {
+  if (record && record.outputMode === 'STREAM' && isRunningRecord(record)) {
+    startEventStream(record)
+    return
+  }
+  stopEventStream()
+}
+
 async function loadRecord(options?: { silent?: boolean }) {
   const taskId = String(route.params.taskId || '')
   if (!taskId) {
@@ -744,15 +853,17 @@ async function loadRecord(options?: { silent?: boolean }) {
       activeCaseCursor.value = detailCases.value.length - 1
     }
 
-    if (['PENDING', 'GENERATING', 'REVIEWING'].includes(detailRecord.value.status)) {
+    if (isRunningRecord(detailRecord.value)) {
       startPolling()
     } else {
       stopPolling()
     }
+    syncEventStream(detailRecord.value)
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
     detailRecord.value = null
     stopPolling()
+    syncEventStream(null)
   } finally {
     if (!options?.silent) {
       loading.value = false
@@ -1215,22 +1326,23 @@ async function saveCaseEdit() {
   }
 }
 
-function isCaseSelected(index: number) {
-  return selectedCaseIndexes.value.includes(index)
+function handleSelectionChange(rows: DetailCaseRow[]) {
+  selectedCaseIndexes.value = rows.map(item => item.index)
 }
 
-function toggleCaseSelected(index: number, checked: boolean) {
-  const next = new Set(selectedCaseIndexes.value)
-  if (checked) {
-    next.add(index)
-  } else {
-    next.delete(index)
-  }
-  selectedCaseIndexes.value = [...next]
-}
-
-function toggleCurrentPageSelection(checked: boolean) {
-  selectedCaseIndexes.value = checked ? detailCases.value.map(item => item.index) : []
+function restoreTableSelection(indexes: number[]) {
+  selectedCaseIndexes.value = [...indexes]
+  void nextTick(() => {
+    const table = detailCaseTableRef.value
+    if (!table?.toggleRowSelection) {
+      return
+    }
+    table.clearSelection?.()
+    const selectedIndexSet = new Set(indexes)
+    detailCases.value.forEach((row) => {
+      table.toggleRowSelection?.(row, selectedIndexSet.has(row.index))
+    })
+  })
 }
 
 function exportExcel() {
@@ -1292,6 +1404,7 @@ function exportExcel() {
 }
 
 watch(() => route.params.taskId, () => {
+  stopEventStream()
   previewVisible.value = false
   selectedCaseIndexes.value = []
   void loadRecord()
@@ -1301,6 +1414,23 @@ watch(previewVisible, (visible) => {
   if (!visible) {
     caseEditing.value = false
   }
+})
+
+watch(
+  () => detailRecord.value ? `${detailRecord.value.taskId}:${detailRecord.value.status}` : '',
+  () => {
+    syncOutputExpandedState(detailRecord.value)
+  },
+  { immediate: true },
+)
+
+watch(detailCases, (rows) => {
+  const nextSelectedIndexes = selectedCaseIndexes.value.filter(index => rows.some(row => row.index === index))
+  if (!rows.length) {
+    selectedCaseIndexes.value = []
+    return
+  }
+  restoreTableSelection(nextSelectedIndexes)
 })
 
 onMounted(() => {
@@ -1315,6 +1445,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopPolling()
+  stopEventStream()
+  if (streamRefreshTimer != null) {
+    window.clearTimeout(streamRefreshTimer)
+    streamRefreshTimer = null
+  }
 })
 </script>
 
@@ -1384,26 +1519,38 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <AppCard v-if="showTaskOutputBoard" class="case-ai-record-detail-page__output-card" :class="{ 'is-failed': detailRecord.status === 'FAILED' }">
-        <div class="case-ai-record-detail-page__output-header">
+        <button class="case-ai-record-detail-page__output-toggle" type="button" @click="outputExpanded = !outputExpanded">
+          <div class="case-ai-record-detail-page__output-header">
           <div>
             <div class="case-ai-record-detail-page__output-title">
               {{ detailRecord.status === 'FAILED' ? '任务失败详情' : detailRecord.status === 'COMPLETED' ? 'AI 输出记录' : '实时输出' }}
             </div>
-            <div v-if="detailRecord.status !== 'COMPLETED'" class="case-ai-record-detail-page__output-subtitle">
+            <div v-if="detailRecord.status !== 'COMPLETED' && detailRecord.status !== 'FAILED'" class="case-ai-record-detail-page__output-subtitle">
               {{ detailRecord.stepMessage || '等待任务执行...' }}
             </div>
           </div>
-          <div class="case-ai-record-detail-page__output-pills">
-            <span class="case-ai-record-detail-page__status-pill" :class="getStatusClass(detailRecord.status)">
-              {{ getStatusLabel(detailRecord.status) }}
-            </span>
-            <span class="case-ai-record-detail-page__status-pill" :class="getOutputConnectionClass()">
-              {{ outputConnectionLabel }}
-            </span>
+            <div class="case-ai-record-detail-page__output-header-right">
+              <div class="case-ai-record-detail-page__output-pills">
+                <span class="case-ai-record-detail-page__status-pill" :class="getStatusClass(detailRecord.status)">
+                  {{ getStatusLabel(detailRecord.status) }}
+                </span>
+                <span
+                  v-if="detailRecord.outputMode === 'STREAM' && ['PENDING', 'GENERATING', 'REVIEWING'].includes(detailRecord.status)"
+                  class="case-ai-record-detail-page__status-pill"
+                  :class="getOutputConnectionClass()"
+                >
+                  {{ outputConnectionLabel }}
+                </span>
+              </div>
+              <el-icon class="case-ai-record-detail-page__output-arrow">
+                <component :is="outputExpanded ? ArrowUp : ArrowDown" />
+              </el-icon>
+            </div>
           </div>
-        </div>
+        </button>
 
-        <template v-if="detailRecord.status === 'FAILED'">
+        <div v-if="outputExpanded" class="case-ai-record-detail-page__output-expanded">
+          <template v-if="detailRecord.status === 'FAILED'">
           <div class="case-ai-record-detail-page__failure-grid">
             <div class="case-ai-record-detail-page__failure-item">
               <div class="case-ai-record-detail-page__failure-label">失败阶段</div>
@@ -1426,9 +1573,9 @@ onBeforeUnmount(() => {
               </ul>
             </div>
           </div>
-        </template>
+          </template>
 
-        <template v-else>
+          <template v-else>
           <div class="case-ai-record-detail-page__output-meta">
             <span>输出模式：{{ getOutputModeLabel(detailRecord.outputMode) }}</span>
             <span>生成用例：{{ detailRecord.generatedCount ?? 0 }}</span>
@@ -1445,7 +1592,10 @@ onBeforeUnmount(() => {
                 :class="{ 'is-active': item.active, 'is-done': item.done }"
               >
                 <span class="case-ai-record-detail-page__timeline-dot" />
-                <div class="case-ai-record-detail-page__timeline-label">{{ item.label }}</div>
+                <div class="case-ai-record-detail-page__timeline-main">
+                  <div class="case-ai-record-detail-page__timeline-label">{{ item.label }}</div>
+                  <div class="case-ai-record-detail-page__timeline-meta">{{ item.meta }}</div>
+                </div>
               </div>
             </div>
             <div class="case-ai-record-detail-page__output-log">
@@ -1457,11 +1607,48 @@ onBeforeUnmount(() => {
                 :class="getOutputEventClass(event.level)"
               >
                 <span class="case-ai-record-detail-page__output-time">{{ formatTime(event.createdAt) }}</span>
-                <span class="case-ai-record-detail-page__output-message">{{ event.message }}</span>
+                <span class="case-ai-record-detail-page__output-message">{{ formatOutputEventMessage(event) }}</span>
               </div>
             </div>
           </div>
-        </template>
+          </template>
+        </div>
+      </AppCard>
+
+      <AppCard
+        v-if="reviewResultSummary || supplementCaseCount || unresolvedCoverageGaps.length || detailRecord.reviewResult?.issues?.length || detailRecord.reviewResult?.suggestions?.length"
+        class="case-ai-record-detail-page__review-summary-card"
+      >
+        <div class="case-ai-record-detail-page__review-summary-grid">
+          <section v-if="reviewResultSummary" class="case-ai-record-detail-page__review-summary-section">
+            <div class="case-ai-record-detail-page__detail-label">评审总结</div>
+            <div class="case-ai-record-detail-page__detail-text">{{ reviewResultSummary }}</div>
+          </section>
+          <section v-if="supplementCaseCount" class="case-ai-record-detail-page__review-summary-section">
+            <div class="case-ai-record-detail-page__detail-label">补充情况</div>
+            <div class="case-ai-record-detail-page__detail-text">
+              本次评审补充了 {{ supplementCaseCount }} 条用例，已合并进入当前结果列表。
+            </div>
+          </section>
+          <section v-if="unresolvedCoverageGaps.length" class="case-ai-record-detail-page__review-summary-section case-ai-record-detail-page__review-summary-section--full">
+            <div class="case-ai-record-detail-page__detail-label">覆盖缺口</div>
+            <ul class="case-ai-record-detail-page__review-summary-list">
+              <li v-for="item in unresolvedCoverageGaps" :key="item">{{ item }}</li>
+            </ul>
+          </section>
+          <section v-if="detailRecord.reviewResult?.issues?.length" class="case-ai-record-detail-page__review-summary-section">
+            <div class="case-ai-record-detail-page__detail-label">评审问题</div>
+            <ul class="case-ai-record-detail-page__review-summary-list">
+              <li v-for="item in detailRecord.reviewResult?.issues" :key="item">{{ item }}</li>
+            </ul>
+          </section>
+          <section v-if="detailRecord.reviewResult?.suggestions?.length" class="case-ai-record-detail-page__review-summary-section">
+            <div class="case-ai-record-detail-page__detail-label">处理建议</div>
+            <ul class="case-ai-record-detail-page__review-summary-list">
+              <li v-for="item in detailRecord.reviewResult?.suggestions" :key="item">{{ item }}</li>
+            </ul>
+          </section>
+        </div>
       </AppCard>
 
       <AppCard class="case-ai-record-detail-page__toolbar-card">
@@ -1499,107 +1686,128 @@ onBeforeUnmount(() => {
       </AppCard>
 
       <AppCard class="case-ai-record-detail-page__table-card">
-        <div class="case-ai-record-detail-page__table-shell">
-          <div class="case-ai-record-detail-page__table-data">
-            <div class="case-ai-record-detail-page__table-scroll">
-              <div
-                class="case-ai-record-detail-page__grid case-ai-record-detail-page__grid--header"
-                :style="{ gridTemplateColumns: dataGridTemplateColumns, minWidth: dataGridMinWidth }"
-              >
-                <div class="case-ai-record-detail-page__cell case-ai-record-detail-page__cell--selection">
-                  <el-checkbox
-                    :model-value="allCurrentPageSelected"
-                    :indeterminate="currentPageSelectionIndeterminate"
-                    aria-label="选择当前页用例"
-                    @change="toggleCurrentPageSelection(Boolean($event))"
-                  />
-                </div>
-                <div class="case-ai-record-detail-page__cell case-ai-record-detail-page__cell--index">序号</div>
-                <div
-                  v-for="column in visibleColumns"
-                  :key="`header-${column.key}`"
-                  :class="['case-ai-record-detail-page__cell', `case-ai-record-detail-page__cell--${column.key}`]"
-                >
-                  {{ column.key === 'savedDirectoryName' ? '最终保存路径' : column.label }}
-                </div>
-              </div>
-
-              <div
-                v-for="row in detailCases"
-                :key="row.index"
-                class="case-ai-record-detail-page__grid case-ai-record-detail-page__grid--row"
-                :style="{ gridTemplateColumns: dataGridTemplateColumns, minWidth: dataGridMinWidth }"
-              >
-                <div class="case-ai-record-detail-page__cell case-ai-record-detail-page__cell--selection">
-                  <el-checkbox
-                    :model-value="isCaseSelected(row.index)"
-                    :aria-label="`选择第 ${row.index + 1} 条用例`"
-                    @change="toggleCaseSelected(row.index, Boolean($event))"
-                  />
-                </div>
-                <div class="case-ai-record-detail-page__cell case-ai-record-detail-page__cell--index">
-                  {{ row.index + 1 }}
-                </div>
-                <div
-                  v-for="column in visibleColumns"
-                  :key="`${row.index}-${column.key}`"
-                  :class="['case-ai-record-detail-page__cell', `case-ai-record-detail-page__cell--${column.key}`]"
-                >
-                  <span v-if="column.key === 'title'" class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.title) }}</span>
-                  <span v-else-if="column.key === 'precondition'" class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.precondition) }}</span>
-                  <span v-else-if="column.key === 'steps'" class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.steps) }}</span>
-                  <span v-else-if="column.key === 'expectedResult'" class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.expectedResult) }}</span>
-                  <span v-else-if="column.key === 'savedDirectoryName'">{{ getCaseSavedDirectoryName(row) }}</span>
-                  <span v-else-if="column.key === 'priority'" class="case-ai-record-detail-page__priority-chip" :class="`priority-${(row.priority || 'P2').toLowerCase()}`">
+        <div class="case-ai-record-detail-page__table-wrap">
+          <el-table
+            ref="detailCaseTableRef"
+            :data="detailCases"
+            class="case-ai-record-detail-page__detail-table"
+            border
+            row-key="index"
+            @selection-change="handleSelectionChange"
+          >
+            <el-table-column type="selection" width="52" reserve-selection />
+            <el-table-column label="序号" type="index" width="72" align="center" />
+            <template v-for="column in visibleColumns" :key="column.key">
+              <el-table-column v-if="column.key === 'title'" label="用例标题" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.title) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'precondition'" label="前置条件" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.precondition) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'steps'" label="操作步骤" min-width="260" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.steps) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'expectedResult'" label="预期结果" min-width="240" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="case-ai-record-detail-page__cell-clamp">{{ formatCaseCellText(row.expectedResult) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'savedDirectoryName'" label="最终保存路径" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span class="case-ai-record-detail-page__detail-cell-text">{{ getCaseSavedDirectoryName(row) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'priority'" label="优先级" width="88" align="center">
+                <template #default="{ row }">
+                  <span class="case-ai-record-detail-page__priority-chip" :class="`priority-${(row.priority || 'P2').toLowerCase()}`">
                     {{ row.priority || 'P2' }}
                   </span>
-                  <span v-else-if="column.key === 'aiReview'" class="case-ai-record-detail-page__status-pill" :class="getAiReviewListClass(row)">
-                    {{ getAiReviewListLabel(row) }}
-                  </span>
-                  <span v-else-if="column.key === 'status'" class="case-ai-record-detail-page__status-pill" :class="getCaseReviewStateClass(row)">
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'aiReview'" label="AI评审" width="132" align="center" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="case-ai-record-detail-page__ai-review-cell">
+                    <span class="case-ai-record-detail-page__status-pill" :class="getAiReviewListClass(row)">
+                      {{ getAiReviewListLabel(row) }}
+                    </span>
+                    <span
+                      v-if="row.aiReviewSummary"
+                      class="case-ai-record-detail-page__ai-review-summary"
+                    >
+                      {{ formatAiDisplayText(row.aiReviewSummary) }}
+                    </span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'status'" label="状态" width="100" align="center">
+                <template #default="{ row }">
+                  <span class="case-ai-record-detail-page__status-pill" :class="getCaseReviewStateClass(row)">
                     {{ getCaseReviewStateLabel(row) }}
                   </span>
-                  <span v-else-if="column.key === 'manualEdited'">{{ row.manualEdited ? '是' : '否' }}</span>
-                  <span v-else-if="column.key === 'manualEditedByName'">{{ row.manualEditedByName || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'manualEdited'" label="人工修改" width="88" align="center">
+                <template #default="{ row }">
+                  <span class="case-ai-record-detail-page__detail-cell-text">{{ row.manualEdited ? '是' : '否' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-else-if="column.key === 'manualEditedByName'" label="操作人" width="120" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span class="case-ai-record-detail-page__detail-cell-text">{{ row.manualEditedByName || '-' }}</span>
+                </template>
+              </el-table-column>
+            </template>
+            <el-table-column width="120" fixed="right" align="center">
+              <template #header>
+                <div class="case-ai-record-detail-page__table-action-header">
+                  <span>操作</span>
+                  <AppTableSettingsTrigger @click="settingsVisible = true" />
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="case-ai-record-detail-page__table-actions-fixed">
-            <div class="case-ai-record-detail-page__action-header">
-              <span>操作</span>
-              <AppTableSettingsTrigger @click="settingsVisible = true" />
-            </div>
-            <div
-              v-for="row in detailCases"
-              :key="`action-${row.index}`"
-              class="case-ai-record-detail-page__actions-row"
-            >
-              <div class="case-ai-record-detail-page__row-actions">
-                <el-button text type="primary" @click="openCasePreview(row)">查看详情</el-button>
-                <el-button
-                  v-if="getCaseReviewState(row) === 'PENDING'"
-                  text
-                  type="success"
-                  @click="adoptSingleCase(row)"
-                >
-                  采纳
-                </el-button>
-                <el-button
-                  v-if="getCaseReviewState(row) === 'PENDING'"
-                  text
-                  type="danger"
-                  @click="discardSingleCase(row)"
-                >
-                  弃用
-                </el-button>
-                  <el-button v-if="getCaseReviewState(row) === 'DISCARDED'" text class="case-ai-record-detail-page__action-link-neutral" @click="restoreSingleCase(row)">
+              </template>
+              <template #default="{ row }">
+                <div class="case-ai-record-detail-page__table-action-row">
+                  <el-button class="case-ai-record-detail-page__table-action-link" type="primary" text @click="openCasePreview(row)">查看详情</el-button>
+                  <el-button
+                    v-if="getCaseReviewState(row) === 'PENDING'"
+                    class="case-ai-record-detail-page__table-action-link"
+                    type="success"
+                    text
+                    @click="adoptSingleCase(row)"
+                  >
+                    采纳
+                  </el-button>
+                  <el-button
+                    v-if="getCaseReviewState(row) === 'PENDING'"
+                    class="case-ai-record-detail-page__table-action-link"
+                    type="danger"
+                    text
+                    @click="discardSingleCase(row)"
+                  >
+                    弃用
+                  </el-button>
+                  <el-button
+                    v-if="getCaseReviewState(row) === 'DISCARDED'"
+                    class="case-ai-record-detail-page__table-action-link case-ai-record-detail-page__table-action-link--neutral"
+                    text
+                    @click="restoreSingleCase(row)"
+                  >
                     取消弃用
                   </el-button>
                 </div>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <div class="case-ai-record-detail-page__table-empty">
+                <span class="case-ai-record-detail-page__table-empty-text">暂无数据</span>
               </div>
-          </div>
+            </template>
+          </el-table>
         </div>
       </AppCard>
     </template>
@@ -1610,22 +1818,19 @@ onBeforeUnmount(() => {
       title="用例详情"
       drawer-class="case-ai-record-detail-page__preview-drawer"
     >
+      <template #header>
+        <div class="case-ai-record-detail-page__preview-drawer-header">
+          <div class="case-ai-record-detail-page__preview-drawer-title">用例详情</div>
+          <div v-if="activeCase" class="case-ai-record-detail-page__preview-drawer-statuses">
+            <span class="case-ai-record-detail-page__status-pill" :class="getCaseReviewStateClass(activeCase)">
+              {{ getCaseReviewStateLabel(activeCase) }}
+            </span>
+            <span class="case-ai-record-detail-page__status-pill status-neutral">{{ getAiSourceLabel(activeCase) }}</span>
+          </div>
+        </div>
+      </template>
       <template v-if="activeCase">
         <div class="case-ai-record-detail-page__preview-shell">
-          <div class="case-ai-record-detail-page__preview-header">
-            <div class="case-ai-record-detail-page__preview-statuses">
-              <span class="case-ai-record-detail-page__status-pill" :class="getCaseReviewStateClass(activeCase)">
-                {{ getCaseReviewStateLabel(activeCase) }}
-              </span>
-              <span class="case-ai-record-detail-page__status-pill status-neutral">{{ getAiSourceLabel(activeCase) }}</span>
-            </div>
-            <div class="case-ai-record-detail-page__preview-nav">
-              <AppButton size="small" :disabled="!canPreviewPreviousCase" :icon="ArrowLeft" @click="moveCasePreview(-1)">上一条</AppButton>
-              <span>{{ activeCaseCursor + 1 }}/{{ detailCases.length }}</span>
-              <AppButton size="small" :disabled="!canPreviewNextCase" :icon="ArrowRight" @click="moveCasePreview(1)">下一条</AppButton>
-            </div>
-          </div>
-
           <el-tabs v-model="previewActiveTab" class="case-ai-record-detail-page__preview-tabs">
             <el-tab-pane label="用例详情" name="detail">
               <div v-if="!caseEditing" class="case-ai-record-detail-page__preview-grid">
@@ -1682,13 +1887,49 @@ onBeforeUnmount(() => {
 
             <el-tab-pane label="AI 分析" name="analysis">
               <div class="case-ai-record-detail-page__analysis-stack">
-                <article
-                  v-for="field in getAnalysisFields(activeCase)"
-                  :key="field.label"
-                  class="case-ai-record-detail-page__preview-block"
-                >
-                  <div class="case-ai-record-detail-page__detail-label">{{ field.label }}</div>
-                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ field.value }}</div>
+                <article v-if="hasDisplayText(activeCase.testAngle)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">测试角度</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.testAngle) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.requirementEvidence)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">生成依据</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.requirementEvidence) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.generationReason)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">生成原因</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.generationReason) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.reviewComment)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">评审意见</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.reviewComment) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.optimizationReason)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">优化原因</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.optimizationReason) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.supplementReason)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">补充原因</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.supplementReason) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.coverageGap)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">覆盖缺口</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.coverageGap) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.aiReviewSummary)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">AI评审摘要</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.aiReviewSummary) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.aiCoverageComment)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">覆盖性意见</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.aiCoverageComment) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.aiEvidenceComment)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">证据性意见</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.aiEvidenceComment) }}</div>
+                </article>
+                <article v-if="hasDisplayText(activeCase.riskNotes)" class="case-ai-record-detail-page__preview-block">
+                  <div class="case-ai-record-detail-page__detail-label">风险提示</div>
+                  <div class="case-ai-record-detail-page__detail-text is-rich">{{ formatAiDisplayText(activeCase.riskNotes) }}</div>
                 </article>
                 <article
                   v-if="activeCase.warnings?.length"
@@ -1699,6 +1940,41 @@ onBeforeUnmount(() => {
                     <li v-for="item in activeCase.warnings" :key="item">{{ item }}</li>
                   </ul>
                 </article>
+                <div
+                  v-if="activeCase.originalCaseSnapshot"
+                  class="case-ai-record-detail-page__version-compare"
+                >
+                  <article class="case-ai-record-detail-page__version-card">
+                    <div class="case-ai-record-detail-page__detail-label">原始版本</div>
+                    <div class="case-ai-record-detail-page__version-title">
+                      {{ activeCase.originalCaseSnapshot.title || '-' }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.originalCaseSnapshot.precondition) }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.originalCaseSnapshot.steps) }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.originalCaseSnapshot.expectedResult) }}
+                    </div>
+                  </article>
+                  <article class="case-ai-record-detail-page__version-card case-ai-record-detail-page__version-card--current">
+                    <div class="case-ai-record-detail-page__detail-label">优化后版本</div>
+                    <div class="case-ai-record-detail-page__version-title">
+                      {{ activeCase.title || '-' }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.precondition) }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.steps) }}
+                    </div>
+                    <div class="case-ai-record-detail-page__version-content">
+                      {{ formatMultilineText(activeCase.expectedResult) }}
+                    </div>
+                  </article>
+                </div>
               </div>
             </el-tab-pane>
           </el-tabs>
@@ -1707,29 +1983,38 @@ onBeforeUnmount(() => {
 
       <template #footer>
         <template v-if="activeCase">
-          <AppButton v-if="!caseEditing" @click="startCaseEdit">编辑</AppButton>
-          <AppButton v-else @click="cancelCaseEdit">取消编辑</AppButton>
-          <AppButton v-if="caseEditing" type="primary" :loading="savingCaseEdit" @click="saveCaseEdit">保存</AppButton>
-          <AppButton
-            v-if="!caseEditing && getCaseReviewState(activeCase) === 'PENDING'"
-            type="success"
-            @click="adoptSingleCase(activeCase)"
-          >
-            采纳
-          </AppButton>
-          <AppButton
-            v-if="!caseEditing && getCaseReviewState(activeCase) === 'PENDING'"
-            type="danger"
-            @click="discardSingleCase(activeCase)"
-          >
-            弃用
-          </AppButton>
-          <AppButton
-            v-if="!caseEditing && getCaseReviewState(activeCase) === 'DISCARDED'"
-            @click="restoreSingleCase(activeCase)"
-          >
-            取消弃用
-          </AppButton>
+          <div class="case-ai-record-detail-page__preview-footer">
+            <div v-if="!caseEditing" class="case-ai-record-detail-page__preview-footer-nav">
+              <AppButton size="small" :disabled="!canPreviewPreviousCase" :icon="ArrowLeft" @click="moveCasePreview(-1)">上一条</AppButton>
+              <span>{{ activeCaseCursor + 1 }}/{{ detailCases.length }}</span>
+              <AppButton size="small" :disabled="!canPreviewNextCase" :icon="ArrowRight" @click="moveCasePreview(1)">下一条</AppButton>
+            </div>
+            <div class="case-ai-record-detail-page__preview-footer-actions">
+              <AppButton v-if="!caseEditing" @click="startCaseEdit">编辑</AppButton>
+              <AppButton v-else @click="cancelCaseEdit">取消编辑</AppButton>
+              <AppButton v-if="caseEditing" type="primary" :loading="savingCaseEdit" @click="saveCaseEdit">保存</AppButton>
+              <AppButton
+                v-if="!caseEditing && getCaseReviewState(activeCase) === 'PENDING'"
+                type="success"
+                @click="adoptSingleCase(activeCase)"
+              >
+                采纳
+              </AppButton>
+              <AppButton
+                v-if="!caseEditing && getCaseReviewState(activeCase) === 'PENDING'"
+                type="danger"
+                @click="discardSingleCase(activeCase)"
+              >
+                弃用
+              </AppButton>
+              <AppButton
+                v-if="!caseEditing && getCaseReviewState(activeCase) === 'DISCARDED'"
+                @click="restoreSingleCase(activeCase)"
+              >
+                取消弃用
+              </AppButton>
+            </div>
+          </div>
         </template>
       </template>
     </AppDrawer>
@@ -1977,9 +2262,11 @@ onBeforeUnmount(() => {
 .case-ai-record-detail-page__toolbar-row,
 .case-ai-record-detail-page__toolbar-actions,
 .case-ai-record-detail-page__output-header,
-.case-ai-record-detail-page__preview-header,
-.case-ai-record-detail-page__preview-statuses,
-.case-ai-record-detail-page__preview-nav,
+.case-ai-record-detail-page__preview-drawer-header,
+.case-ai-record-detail-page__preview-drawer-statuses,
+.case-ai-record-detail-page__preview-footer,
+.case-ai-record-detail-page__preview-footer-nav,
+.case-ai-record-detail-page__preview-footer-actions,
 .case-ai-record-detail-page__dialog-footer,
 .case-ai-record-detail-page__process-meta {
   display: flex;
@@ -2053,7 +2340,8 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
-.case-ai-record-detail-page__summary-header {
+.case-ai-record-detail-page__summary-header,
+.case-ai-record-detail-page__output-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2067,23 +2355,28 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.case-ai-record-detail-page__summary-title {
+.case-ai-record-detail-page__summary-title,
+.case-ai-record-detail-page__output-title {
   color: var(--app-text-primary);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
-  line-height: 24px;
+  line-height: 20px;
 }
 
 .case-ai-record-detail-page__summary-tip,
-.case-ai-record-detail-page__summary-arrow {
+.case-ai-record-detail-page__summary-arrow,
+.case-ai-record-detail-page__output-arrow {
   color: var(--app-text-muted);
   font-size: 13px;
+  transition: color 160ms ease;
 }
 
-.case-ai-record-detail-page__summary-expanded {
+.case-ai-record-detail-page__summary-expanded,
+.case-ai-record-detail-page__output-expanded {
   display: grid;
   gap: 16px;
   margin-top: 16px;
+  padding-bottom: 16px;
 }
 
 .case-ai-record-detail-page__summary-content-shell {
@@ -2106,21 +2399,33 @@ onBeforeUnmount(() => {
 }
 
 .case-ai-record-detail-page__output-card {
-  padding: 16px 18px;
+  padding: 0 20px;
   border: 1px solid var(--app-border);
   border-radius: 12px;
   background: var(--app-bg-panel);
 }
 
-.case-ai-record-detail-page__output-card.is-failed {
-  border-color: rgba(240, 68, 56, 0.22);
+.case-ai-record-detail-page__output-card :deep(.app-card__body),
+.case-ai-record-detail-page__toolbar-card :deep(.app-card__body) {
+  padding: 0;
 }
 
-.case-ai-record-detail-page__output-title {
-  color: var(--app-text-primary);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 24px;
+.case-ai-record-detail-page__output-toggle {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.case-ai-record-detail-page__output-toggle:hover .case-ai-record-detail-page__output-arrow {
+  color: var(--app-text-secondary);
+}
+
+.case-ai-record-detail-page__output-card.is-failed {
+  border-color: rgba(240, 68, 56, 0.22);
 }
 
 .case-ai-record-detail-page__output-card.is-failed .case-ai-record-detail-page__output-title {
@@ -2153,30 +2458,55 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
+.case-ai-record-detail-page__output-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.case-ai-record-detail-page__output-header {
+  min-height: 68px;
+  padding: 14px 2px;
+  align-items: center;
+}
+
+.case-ai-record-detail-page__output-header > div:first-child {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+}
+
 .case-ai-record-detail-page__output-body {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 16px;
-  margin-top: 14px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 14px;
+  margin-top: 12px;
 }
 
 .case-ai-record-detail-page__timeline {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+  padding-top: 2px;
 }
 
 .case-ai-record-detail-page__timeline-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 32px;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.case-ai-record-detail-page__timeline-main {
+  min-width: 0;
 }
 
 .case-ai-record-detail-page__timeline-dot {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   background: var(--app-border-strong);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.96);
 }
 
 .case-ai-record-detail-page__timeline-item.is-active .case-ai-record-detail-page__timeline-dot {
@@ -2187,20 +2517,28 @@ onBeforeUnmount(() => {
   background: var(--app-success);
 }
 
+.case-ai-record-detail-page__timeline-meta {
+  margin-top: 3px;
+  color: var(--app-text-subtle);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
 .case-ai-record-detail-page__output-log {
   max-height: 260px;
   overflow: auto;
-  padding: 12px;
+  padding: 10px 14px;
   border: 1px solid var(--app-border-soft);
   border-radius: 12px;
-  background: var(--app-bg-subtle);
+  background: #fbfcfe;
 }
 
 .case-ai-record-detail-page__output-row {
   display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  gap: 10px;
-  padding: 8px 0;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 0;
   border-bottom: 1px solid rgba(229, 231, 235, 0.8);
 }
 
@@ -2227,13 +2565,13 @@ onBeforeUnmount(() => {
 .case-ai-record-detail-page__output-time {
   color: var(--app-text-subtle);
   font-size: 12px;
-  line-height: 20px;
+  line-height: 18px;
 }
 
 .case-ai-record-detail-page__output-message {
   color: var(--app-text-main);
   font-size: 13px;
-  line-height: 20px;
+  line-height: 19px;
   word-break: break-word;
 }
 
@@ -2283,6 +2621,8 @@ onBeforeUnmount(() => {
 
 .case-ai-record-detail-page__toolbar-meta {
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 10px;
   flex-wrap: wrap;
   color: #344054;
@@ -2311,7 +2651,48 @@ onBeforeUnmount(() => {
   padding: 16px 2px;
 }
 
+.case-ai-record-detail-page__toolbar-card {
+  min-width: 0;
+  padding: 0 20px;
+}
+
+.case-ai-record-detail-page__review-summary-card {
+  min-width: 0;
+}
+
+.case-ai-record-detail-page__review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.case-ai-record-detail-page__review-summary-section {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.case-ai-record-detail-page__review-summary-section--full {
+  grid-column: 1 / -1;
+}
+
+.case-ai-record-detail-page__review-summary-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--app-text-main);
+  font-size: 13px;
+  line-height: 22px;
+}
+
 .case-ai-record-detail-page__toolbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  margin-left: auto;
   gap: 14px;
 }
 
@@ -2349,90 +2730,51 @@ onBeforeUnmount(() => {
 .case-ai-record-detail-page__table-card {
   width: 100%;
   min-width: 0;
+  padding: 0;
   overflow: hidden;
 }
 
-.case-ai-record-detail-page__table-shell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 156px;
-  min-width: 0;
+.case-ai-record-detail-page__table-wrap {
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
-  border-top: 1px solid var(--app-border-soft);
 }
 
-.case-ai-record-detail-page__table-data {
-  min-width: 0;
-}
-
-.case-ai-record-detail-page__table-scroll {
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-gutter: stable;
-}
-
-.case-ai-record-detail-page__table-scroll::-webkit-scrollbar {
-  height: 10px;
-}
-
-.case-ai-record-detail-page__table-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.case-ai-record-detail-page__table-scroll::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.5);
-}
-
-.case-ai-record-detail-page__grid {
-  display: grid;
-}
-
-.case-ai-record-detail-page__grid--header {
-  min-height: 48px;
-  border-bottom: 1px solid var(--app-border);
-  background: #f8fafc;
+:deep(.case-ai-record-detail-page__detail-table .el-table__header-wrapper th) {
+  background: rgba(248, 250, 252, 0.96);
   color: #344054;
-  font-size: 13px;
   font-weight: 600;
 }
 
-.case-ai-record-detail-page__grid--row {
-  min-height: 80px;
-  border-bottom: 1px solid var(--app-border-soft);
-  background: var(--app-bg-panel);
-  transition: background-color 160ms ease;
+:deep(.case-ai-record-detail-page__detail-table .el-table__cell) {
+  padding-top: 14px;
+  padding-bottom: 14px;
 }
 
-.case-ai-record-detail-page__grid--row:hover {
+:deep(.case-ai-record-detail-page__detail-table .el-table__body tr:hover > td) {
   background: #f8fbff;
 }
 
-.case-ai-record-detail-page__cell {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  padding: 14px 16px;
-  color: var(--app-text-main);
-  font-size: 13px;
-  line-height: 20px;
+:deep(.case-ai-record-detail-page__detail-table .el-table-fixed-column--right) {
+  background: var(--app-bg-panel);
+  box-shadow: -6px 0 12px rgba(15, 23, 42, 0.05);
+  z-index: 3;
 }
 
-.case-ai-record-detail-page__cell--selection,
-.case-ai-record-detail-page__cell--index,
-.case-ai-record-detail-page__cell--priority,
-.case-ai-record-detail-page__cell--aiReview,
-.case-ai-record-detail-page__cell--status,
-.case-ai-record-detail-page__cell--manualEdited {
-  justify-content: center;
+:deep(.case-ai-record-detail-page__detail-table .el-table-fixed-column--right .cell),
+:deep(.case-ai-record-detail-page__detail-table .el-table__fixed-right .cell) {
+  position: relative;
+  z-index: 4;
+  background: var(--app-bg-panel);
 }
 
-.case-ai-record-detail-page__cell--selection {
-  padding-inline: 12px;
+:deep(.case-ai-record-detail-page__detail-table .el-table__fixed-right),
+:deep(.case-ai-record-detail-page__detail-table .el-table__fixed-right-patch) {
+  background: var(--app-bg-panel);
 }
 
-.case-ai-record-detail-page__cell--index {
-  color: var(--app-text-secondary);
-  font-variant-numeric: tabular-nums;
+:deep(.case-ai-record-detail-page__detail-table .el-table__body-wrapper .el-scrollbar__wrap) {
+  overflow-x: auto;
 }
 
 .case-ai-record-detail-page__cell-clamp {
@@ -2441,48 +2783,28 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--app-text-main);
   font-size: 13px;
-  line-height: 20px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.case-ai-record-detail-page__action-header {
+.case-ai-record-detail-page__detail-cell-text {
+  color: var(--app-text-main);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.case-ai-record-detail-page__table-action-header {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 48px;
-  border-bottom: 1px solid var(--app-border);
-  background: #f8fafc;
   color: #344054;
   font-size: 13px;
   font-weight: 700;
 }
 
-.case-ai-record-detail-page__table-actions-fixed {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  border-left: 1px solid var(--app-border-soft);
-  background: var(--app-bg-panel);
-  box-shadow: -6px 0 12px rgba(15, 23, 42, 0.05);
-}
-
-.case-ai-record-detail-page__actions-row {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 80px;
-  border-bottom: 1px solid var(--app-border-soft);
-  background: var(--app-bg-panel);
-  transition: background-color 160ms ease;
-}
-
-.case-ai-record-detail-page__actions-row:hover {
-  background: #f8fbff;
-}
-
-.case-ai-record-detail-page__row-actions {
+.case-ai-record-detail-page__table-action-row {
   display: grid;
   justify-items: center;
   align-content: center;
@@ -2491,26 +2813,41 @@ onBeforeUnmount(() => {
   min-height: 80px;
   max-width: 100%;
   overflow: hidden;
+  flex-wrap: nowrap;
 }
 
-.case-ai-record-detail-page__row-actions :deep(.el-button) {
+.case-ai-record-detail-page__table-action-link {
   width: 72px;
   height: 24px;
+  margin: 0;
   padding: 0;
   justify-content: center;
   overflow: hidden;
-  margin-left: 0;
-  font-size: 13px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.case-ai-record-detail-page__action-link-neutral {
+.case-ai-record-detail-page__table-action-link--neutral {
   color: #667085;
 }
 
-.case-ai-record-detail-page__action-link-neutral:hover,
-.case-ai-record-detail-page__action-link-neutral:focus-visible {
+.case-ai-record-detail-page__table-action-link--neutral:hover,
+.case-ai-record-detail-page__table-action-link--neutral:focus-visible {
   color: #475467;
+}
+
+.case-ai-record-detail-page__table-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  width: 100%;
+}
+
+.case-ai-record-detail-page__table-empty-text {
+  font-size: 14px;
+  line-height: 22px;
+  color: #909399;
 }
 
 .case-ai-record-detail-page__priority-chip {
@@ -2543,8 +2880,21 @@ onBeforeUnmount(() => {
 }
 
 .case-ai-record-detail-page__ai-review-cell {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.case-ai-record-detail-page__ai-review-summary {
+  display: block;
+  max-width: 112px;
+  overflow: hidden;
+  color: #667085;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .case-ai-record-detail-page__status-pill {
@@ -2594,7 +2944,44 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
-.case-ai-record-detail-page__preview-nav span {
+.case-ai-record-detail-page__preview-drawer-header {
+  justify-content: flex-start;
+  width: calc(100% - 28px);
+  min-width: 0;
+  padding-right: 12px;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.case-ai-record-detail-page__preview-drawer-title {
+  flex: 0 0 auto;
+  color: var(--app-text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 26px;
+}
+
+.case-ai-record-detail-page__preview-drawer-statuses,
+.case-ai-record-detail-page__preview-footer-actions {
+  justify-content: flex-start;
+}
+
+.case-ai-record-detail-page__preview-drawer-statuses {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.case-ai-record-detail-page__preview-footer {
+  width: 100%;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.case-ai-record-detail-page__preview-footer-nav {
+  flex: 0 0 auto;
+}
+
+.case-ai-record-detail-page__preview-footer-nav span {
   min-width: 56px;
   color: var(--app-text-muted);
   font-size: 13px;
@@ -2650,6 +3037,43 @@ onBeforeUnmount(() => {
   color: var(--app-text-main);
   font-size: 14px;
   line-height: 24px;
+}
+
+.case-ai-record-detail-page__version-compare {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.case-ai-record-detail-page__version-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.case-ai-record-detail-page__version-card--current {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: rgba(239, 246, 255, 0.78);
+}
+
+.case-ai-record-detail-page__version-title {
+  color: var(--app-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  word-break: break-word;
+}
+
+.case-ai-record-detail-page__version-content {
+  color: var(--app-text-main);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .case-ai-record-detail-page__edit-form {
@@ -2850,12 +3274,20 @@ onBeforeUnmount(() => {
   .case-ai-record-detail-page__header-right,
   .case-ai-record-detail-page__toolbar-row,
   .case-ai-record-detail-page__output-header,
-  .case-ai-record-detail-page__preview-header {
+  .case-ai-record-detail-page__preview-drawer-header,
+  .case-ai-record-detail-page__preview-footer {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .case-ai-record-detail-page__output-body {
+    grid-template-columns: 1fr;
+  }
+
+  .case-ai-record-detail-page__preview-grid,
+  .case-ai-record-detail-page__analysis-stack,
+  .case-ai-record-detail-page__version-compare,
+  .case-ai-record-detail-page__review-summary-grid {
     grid-template-columns: 1fr;
   }
 }

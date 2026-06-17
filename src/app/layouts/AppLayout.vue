@@ -29,6 +29,7 @@ const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext(
 const switchableWorkspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceErrorMessage = ref('')
+const NAV_GROUP_STORAGE_KEY = 'app:navigation-groups-expanded-v1'
 
 const headerTitle = computed(() => {
   return typeof route.meta.title === 'string' && route.meta.title ? route.meta.title : '前端 2.0 重建'
@@ -72,6 +73,8 @@ interface NavigationItem {
   }>
 }
 
+type NavigationGroupExpandedState = Record<string, boolean>
+
 const navigationItems: NavigationItem[] = [
   { path: '/', label: '工作台', icon: Grid },
   { path: '/config-center', label: '配置中心', icon: Setting },
@@ -93,8 +96,31 @@ const navigationItems: NavigationItem[] = [
   { path: '/settings', label: '系统设置', icon: User },
 ]
 
+function readNavigationGroupExpandedState(): NavigationGroupExpandedState {
+  if (typeof window === 'undefined') {
+    return {}
+  }
+
+  const raw = window.localStorage.getItem(NAV_GROUP_STORAGE_KEY)
+  if (!raw) {
+    return {}
+  }
+
+  try {
+    return JSON.parse(raw) as NavigationGroupExpandedState
+  } catch {
+    return {}
+  }
+}
+
+const navigationGroupExpandedState = ref<NavigationGroupExpandedState>(readNavigationGroupExpandedState())
+
 function matchesNavigationPath(path: string) {
   return route.path === path || route.path.startsWith(`${path}/`)
+}
+
+function hasNavigationChildren(item: NavigationItem) {
+  return Boolean(item.children?.length)
 }
 
 function isNavigationItemActive(item: NavigationItem) {
@@ -106,6 +132,39 @@ function isNavigationItemActive(item: NavigationItem) {
 
 function isNavigationChildActive(path: string) {
   return matchesNavigationPath(path)
+}
+
+function persistNavigationGroupExpandedState() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(NAV_GROUP_STORAGE_KEY, JSON.stringify(navigationGroupExpandedState.value))
+}
+
+function isNavigationGroupExpanded(item: NavigationItem) {
+  if (!hasNavigationChildren(item)) {
+    return false
+  }
+
+  const stored = navigationGroupExpandedState.value[item.path]
+  if (typeof stored === 'boolean') {
+    return stored
+  }
+
+  return isNavigationItemActive(item)
+}
+
+function toggleNavigationGroup(item: NavigationItem) {
+  if (!hasNavigationChildren(item)) {
+    return
+  }
+
+  navigationGroupExpandedState.value = {
+    ...navigationGroupExpandedState.value,
+    [item.path]: !isNavigationGroupExpanded(item),
+  }
+  persistNavigationGroupExpandedState()
 }
 
 function resolveInitialWorkspaceCode(items: WorkspaceItem[]) {
@@ -199,14 +258,31 @@ onMounted(() => {
           v-for="item in navigationItems"
           :key="item.path"
           class="app-layout__nav-group"
-          :class="{ 'is-active': isNavigationItemActive(item) }"
+          :class="{
+            'is-active': isNavigationItemActive(item),
+            'is-expanded': isNavigationGroupExpanded(item),
+          }"
         >
-          <RouterLink
-            class="app-layout__nav-item"
+          <button
+            v-if="hasNavigationChildren(item)"
+            type="button"
+            class="app-layout__nav-item app-layout__nav-button"
             :class="{
               'is-active': isNavigationItemActive(item),
-              'has-children': Boolean(item.children?.length),
+              'has-children': true,
             }"
+            :aria-expanded="isNavigationGroupExpanded(item)"
+            @click="toggleNavigationGroup(item)"
+          >
+            <el-icon class="app-layout__nav-icon">
+              <component :is="item.icon" />
+            </el-icon>
+            <span>{{ item.label }}</span>
+          </button>
+          <RouterLink
+            v-else
+            class="app-layout__nav-item"
+            :class="{ 'is-active': isNavigationItemActive(item) }"
             :to="{ path: item.path, query: navigationTargetQuery }"
           >
             <el-icon class="app-layout__nav-icon">
@@ -215,7 +291,7 @@ onMounted(() => {
             <span>{{ item.label }}</span>
           </RouterLink>
 
-          <div v-if="item.children?.length" class="app-layout__nav-children">
+          <div v-if="item.children?.length && isNavigationGroupExpanded(item)" class="app-layout__nav-children">
             <RouterLink
               v-for="child in item.children"
               :key="child.path"
@@ -363,6 +439,15 @@ onMounted(() => {
   font-weight: 500;
   text-decoration: none;
   transition: background-color 160ms ease, color 160ms ease;
+}
+
+.app-layout__nav-button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
 .app-layout__nav-item.has-children {

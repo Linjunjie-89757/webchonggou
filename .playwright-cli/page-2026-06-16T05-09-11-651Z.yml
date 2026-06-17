@@ -1,0 +1,57 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "AT Auto Test Hub 全功能自动化测试平台" [ref=e5] [cursor=pointer]:
+      - generic [ref=e6]: AT
+      - generic [ref=e7]:
+        - generic [ref=e8]: Auto Test Hub
+        - generic [ref=e9]: 全功能自动化测试平台
+      - img [ref=e10]
+    - navigation "主导航" [ref=e12]:
+      - button "工作台" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e18]: 工作台
+      - button "用例中心" [ref=e20] [cursor=pointer]:
+        - img [ref=e21]
+        - generic [ref=e24]: 用例中心
+      - button "缺陷管理" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+        - generic [ref=e36]: 缺陷管理
+      - button "接口自动化" [ref=e38] [cursor=pointer]:
+        - img [ref=e39]
+        - generic [ref=e44]: 接口自动化
+      - button "Web UI 自动化" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - generic [ref=e49]: Web UI 自动化
+      - button "APP 自动化" [ref=e51] [cursor=pointer]:
+        - img [ref=e52]
+        - generic [ref=e54]: APP 自动化
+      - button "配置中心" [ref=e56] [cursor=pointer]:
+        - img [ref=e57]
+        - generic [ref=e58]: 配置中心
+      - button "系统设置" [ref=e61] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e65]: 系统设置
+    - generic [ref=e68] [cursor=pointer]:
+      - generic [ref=e69]: 超
+      - generic [ref=e70]:
+        - generic [ref=e71]: 超级管理员
+        - generic [ref=e72]: SUPER_ADMIN
+  - generic [ref=e73]:
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]: 工作台
+        - button "全部" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e84]: 全部
+          - img [ref=e85]
+      - generic [ref=e87]:
+        - button [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+        - button "超 超级管理员" [ref=e95] [cursor=pointer]:
+          - generic [ref=e96]: 超
+          - generic [ref=e97]: 超级管理员
+          - img [ref=e98]
+    - main [ref=e100]:
+      - generic [ref=e103]:
+        - img [ref=e104]
+        - paragraph [ref=e107]: 工作台 页面建设中...

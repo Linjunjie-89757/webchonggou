@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -34,10 +34,12 @@ interface DirectoryPickerNode {
 }
 
 interface AiConfigSummary {
+  providerConnectionId: number | null
   providerConnectionName: string | null
   model: string | null
   promptTemplate: string | null
   supportsImageInput: boolean
+  status: number | null
 }
 
 const router = useRouter()
@@ -150,6 +152,50 @@ const aiConfigStatusClass = computed(() => (
   aiConfigReady.value ? 'config-status-success' : 'config-status-danger'
 ))
 
+function getGenerateBlockReason(source: DirectoryPickerMode) {
+  if (!targetWorkspaceCode.value) {
+    return '请先选择目标空间'
+  }
+
+  if (!aiConfigReady.value) {
+    return `AI 配置缺失：${aiConfigMissingReasons.value.join('、') || '输出模式未选择'}`
+  }
+
+  if (source === 'document') {
+    if (!importedDocument.value) {
+      return '请先上传需求文档'
+    }
+    if (!importedRequirementTitle.value.trim()) {
+      return '请先填写文档标题'
+    }
+    if (!importedRequirementContent.value.trim()) {
+      return '导入结果为空，请确认文档内容'
+    }
+    if (!documentForm.value.directoryPath.trim()) {
+      return '请先选择保存路径'
+    }
+    if (requirementAssets.value.some(item => !item.id || item.id <= 0)) {
+      return '附件还未准备完成，请稍后重试'
+    }
+    return ''
+  }
+
+  if (!manualForm.value.requirementTitle.trim()) {
+    return '请先填写需求标题'
+  }
+  if (!manualForm.value.requirementContent.trim()) {
+    return '请先填写需求描述'
+  }
+  if (!manualForm.value.manualDirectoryPath.trim()) {
+    return '请先选择保存路径'
+  }
+
+  return ''
+}
+
+const manualGenerateBlockReason = computed(() => getGenerateBlockReason('manual'))
+const documentGenerateBlockReason = computed(() => getGenerateBlockReason('document'))
+
 const manualDirectoryDisplayPath = computed(() => {
   if (!manualForm.value.manualDirectoryPath) {
     return ''
@@ -168,22 +214,9 @@ const documentDirectoryDisplayPath = computed(() => {
     : documentForm.value.directoryPath
 })
 
-const canGenerate = computed(() => (
-  !!targetWorkspaceCode.value
-  && !!manualForm.value.requirementTitle.trim()
-  && !!manualForm.value.requirementContent.trim()
-  && !!manualForm.value.manualDirectoryPath.trim()
-  && aiConfigReady.value
-))
+const canGenerate = computed(() => !manualGenerateBlockReason.value)
 
-const canGenerateDocument = computed(() => (
-  !!targetWorkspaceCode.value
-  && !!importedDocument.value
-  && !!importedRequirementTitle.value.trim()
-  && !!importedRequirementContent.value.trim()
-  && !!documentForm.value.directoryPath.trim()
-  && aiConfigReady.value
-))
+const canGenerateDocument = computed(() => !documentGenerateBlockReason.value)
 
 const selectedRequirementAssetIds = computed(() => requirementAssets.value.map(item => item.id))
 const imageCapabilityNotices = computed(() => {
@@ -193,26 +226,32 @@ const imageCapabilityNotices = computed(() => {
     : ['模型不支持图片识别。若文档中包含图片素材，生成时可选择忽略图片并仅基于文本继续。']
 })
 
+function getTaskSortTimestamp(task: AiGenerationTaskItem) {
+  return new Date(task.updatedAt || task.createdAt || 0).getTime()
+}
+
+function sortTasksByRecent(tasks: AiGenerationTaskItem[]) {
+  return [...tasks].sort((left, right) => getTaskSortTimestamp(right) - getTaskSortTimestamp(left))
+}
+
 const recentTaskRecords = computed(() => {
-  const priorityMap: Record<string, number> = {
-    PENDING: 0,
-    GENERATING: 1,
-    REVIEWING: 2,
-    FAILED: 3,
-    COMPLETED: 4,
-    CANCELED: 5,
+  const sortedTasks = sortTasksByRecent(taskRecords.value)
+  const selectedTaskIds = new Set<string>()
+  const recentTasks: AiGenerationTaskItem[] = []
+
+  const pushTask = (task: AiGenerationTaskItem | undefined) => {
+    if (!task || selectedTaskIds.has(task.taskId)) {
+      return
+    }
+    selectedTaskIds.add(task.taskId)
+    recentTasks.push(task)
   }
 
-  return [...taskRecords.value]
-    .sort((left, right) => {
-      const priorityDiff = (priorityMap[left.status] ?? 99) - (priorityMap[right.status] ?? 99)
-      if (priorityDiff !== 0) {
-        return priorityDiff
-      }
-      return new Date(right.updatedAt || right.createdAt || 0).getTime()
-        - new Date(left.updatedAt || left.createdAt || 0).getTime()
-    })
-    .slice(0, 3)
+  sortedTasks.filter(task => ['PENDING', 'GENERATING', 'REVIEWING'].includes(task.status)).forEach(pushTask)
+  pushTask(sortedTasks.find(task => task.status === 'COMPLETED'))
+  sortedTasks.forEach(pushTask)
+
+  return recentTasks.slice(0, 3)
 })
 
 const directoryPickerTree = computed<DirectoryPickerNode[]>(() => {
@@ -274,9 +313,10 @@ const directoryPickerPreviewPath = computed(() => {
 
 function describeAiRoleConfigIssue(config: AiConfigSummary | null, roleLabel: string) {
   if (!config) return `${roleLabel}未配置`
-  if (!config.providerConnectionName?.trim()) return `${roleLabel}未选择连接`
-  if (!config.model?.trim()) return `${roleLabel}未选择模型`
-  if (!config.promptTemplate?.trim()) return `${roleLabel}提示词为空`
+  if (!config.providerConnectionId && !config.providerConnectionName?.trim()) return `${roleLabel}缺少连接`
+  if (!config.model?.trim()) return `${roleLabel}缺少模型`
+  if (!config.promptTemplate?.trim()) return `${roleLabel}缺少提示词`
+  if (config.status !== 1) return `${roleLabel}未启用`
   return ''
 }
 
@@ -340,12 +380,12 @@ function formatTaskTime(value?: string | null) {
 
 function getTaskStatusLabel(status: string) {
   const labelMap: Record<string, string> = {
-    PENDING: '已创建',
+    PENDING: '待开始',
     GENERATING: '生成中',
     REVIEWING: '评审中',
     COMPLETED: '已完成',
     FAILED: '失败',
-    CANCELED: '已终止',
+    CANCELED: '已取消',
   }
   return labelMap[status] ?? status
 }
@@ -363,8 +403,9 @@ function getTaskStatusTone(status: string) {
 }
 
 function pickLatestTaskRecord(records: AiGenerationTaskItem[]) {
-  return records.find(item => ['PENDING', 'GENERATING', 'REVIEWING', 'FAILED'].includes(item.status))
-    ?? records[0]
+  const sortedRecords = sortTasksByRecent(records)
+  return sortedRecords.find(item => ['PENDING', 'GENERATING', 'REVIEWING'].includes(item.status))
+    ?? sortedRecords[0]
     ?? null
 }
 
@@ -382,7 +423,7 @@ function getFailureStepLabel(step: number | null) {
     3: 'AI 自动评审',
     4: '任务完成',
   }
-  return step ? labelMap[step] || '当前步骤' : '当前步骤'
+  return step ? labelMap[step] || '未知阶段' : '未知阶段'
 }
 
 function isStepDone(step: number) {
@@ -421,9 +462,28 @@ function getStepStatusLabel(step: number) {
     return step === 4 ? '已完成' : ''
   }
   if (record.currentStep === step) {
-    return '进行中'
+    const labelMap: Record<string, string> = {
+      PENDING: '等待中',
+      GENERATING: '进行中',
+      REVIEWING: '进行中',
+    }
+    return labelMap[record.status] ?? ''
   }
   return ''
+}
+
+function isTaskResultAvailable(task: AiGenerationTaskItem | null | undefined) {
+  return task?.status === 'COMPLETED'
+}
+
+function getTaskDetailActionLabel(task: AiGenerationTaskItem) {
+  if (task.status === 'COMPLETED') {
+    return '查看结果'
+  }
+  if (task.status === 'FAILED') {
+    return '查看记录'
+  }
+  return '查看详情'
 }
 
 function stopTaskPolling() {
@@ -472,18 +532,22 @@ async function loadConfig() {
     const response = await caseAiApi.getConfig(selectedWorkspaceCode.value || 'ALL', targetWorkspaceCode.value)
     generatorConfig.value = response.generatorConfig
       ? {
+          providerConnectionId: response.generatorConfig.providerConnectionId,
           providerConnectionName: response.generatorConfig.providerConnectionName,
           model: response.generatorConfig.model,
           promptTemplate: response.generatorConfig.promptTemplate,
           supportsImageInput: response.generatorConfig.supportsImageInput,
+          status: response.generatorConfig.status,
         }
       : null
     reviewerConfig.value = response.reviewerConfig
       ? {
+          providerConnectionId: response.reviewerConfig.providerConnectionId,
           providerConnectionName: response.reviewerConfig.providerConnectionName,
           model: response.reviewerConfig.model,
           promptTemplate: response.reviewerConfig.promptTemplate,
           supportsImageInput: response.reviewerConfig.supportsImageInput,
+          status: response.reviewerConfig.status,
         }
       : null
   } catch (error) {
@@ -704,7 +768,7 @@ async function openTaskProcessDialog(taskId?: string) {
     : pickLatestTaskRecord(taskRecords.value)
 
   if (!latestTaskRecord.value) {
-    ElMessage.info('当前还没有生成任务')
+    ElMessage.info('暂无可查看的任务')
     return
   }
 
@@ -726,7 +790,7 @@ async function openScopedProcessDialog(source: DirectoryPickerMode) {
 
   latestTaskRecord.value = await caseAiApi.getTask(targetWorkspaceCode.value, taskId)
   if (!latestTaskRecord.value) {
-    ElMessage.info('当前任务记录不存在，请重新生成测试用例')
+    ElMessage.info('当前任务记录不存在或已被删除')
     return
   }
 
@@ -744,6 +808,10 @@ function openTaskDetail(taskId: string) {
       workspace: targetWorkspaceCode.value || undefined,
     },
   })
+}
+
+function openTaskResult(taskId: string) {
+  openTaskDetail(taskId)
 }
 
 function openTaskRecordsPage() {
@@ -775,6 +843,9 @@ function goToAiConnections() {
 }
 
 async function handleGenerateCases(source: DirectoryPickerMode = 'manual') {
+  const blockReason = source === 'document'
+    ? documentGenerateBlockReason.value
+    : manualGenerateBlockReason.value
   const requirementTitle = source === 'document'
     ? importedRequirementTitle.value.trim()
     : manualForm.value.requirementTitle.trim()
@@ -786,10 +857,10 @@ async function handleGenerateCases(source: DirectoryPickerMode = 'manual') {
     : normalizeDirectoryPath(manualForm.value.manualDirectoryPath)
   const canRun = source === 'document' ? canGenerateDocument.value : canGenerate.value
 
-  if (!canRun || !targetWorkspaceCode.value) {
-    ElMessage.warning(source === 'document'
+  if (!canRun || !targetWorkspaceCode.value || blockReason) {
+    ElMessage.warning(blockReason || (source === 'document'
       ? '请先上传需求文档，并确认文档标题、用例保存路径、目标空间和 AI 配置可用'
-      : '请先补充需求标题、需求描述、用例保存路径，并确认目标空间和 AI 配置可用')
+      : '请先补充需求标题、需求描述、用例保存路径，并确认目标空间和 AI 配置可用'))
     return
   }
 
@@ -855,7 +926,7 @@ async function handleGenerateCases(source: DirectoryPickerMode = 'manual') {
     activeProcessTaskId.value = baseRecord.taskId
     processDialogVisible.value = true
     startTaskPolling()
-    ElMessage.success('AI 生成任务已创建，后台会继续执行')
+    ElMessage.success('AI 生成与评审任务已创建，后台会继续执行')
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -992,7 +1063,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="form-stack">
-          <div class="field-label">需求标题<span class="field-required">*</span></div>
+          <div class="field-label">需求标题 <span class="field-required">*</span></div>
           <el-input
             v-model="manualForm.requirementTitle"
             maxlength="120"
@@ -1015,7 +1086,7 @@ onBeforeUnmount(() => {
             </template>
           </el-input>
 
-          <div class="field-label">需求描述<span class="field-required">*</span></div>
+          <div class="field-label">需求描述 <span class="field-required">*</span></div>
           <el-input
             v-model="manualForm.requirementContent"
             class="requirement-textarea"
@@ -1142,10 +1213,10 @@ onBeforeUnmount(() => {
     <div class="panel-card ai-config-card">
       <div class="panel-title-row">
         <div>
-          <div class="section-title section-title-with-icon">
-            <span class="section-title-icon output-section-icon" aria-hidden="true">📤</span>
-            <span>输出模式设置</span>
-          </div>
+            <div class="section-title section-title-with-icon">
+              <span class="section-title-icon output-section-icon" aria-hidden="true">📤</span>
+              <span>输出模式设置</span>
+            </div>
           <div class="section-desc">先选择本次任务的输出方式。</div>
         </div>
       </div>
@@ -1173,10 +1244,10 @@ onBeforeUnmount(() => {
     <div class="panel-card ai-config-card">
       <div class="panel-title-row">
         <div>
-          <div class="section-title section-title-with-icon">
-            <span class="section-title-icon" aria-hidden="true">🤖</span>
-            <span>当前 AI 配置</span>
-          </div>
+            <div class="section-title section-title-with-icon">
+              <span class="section-title-icon" aria-hidden="true">🤖</span>
+              <span>当前 AI 配置</span>
+            </div>
           <div class="section-desc">展示当前空间下本次生成任务会使用的 AI 配置摘要。</div>
         </div>
         <div class="ai-config-actions">
@@ -1250,7 +1321,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="recent-task-actions">
             <el-button class="recent-task-button recent-task-button-primary" :icon="View" @click="openTaskProcessDialog(task.taskId)">查看流程</el-button>
-            <el-button class="recent-task-button recent-task-button-secondary" @click="openTaskDetail(task.taskId)">查看详情</el-button>
+            <el-button
+              class="recent-task-button recent-task-button-secondary"
+              @click="isTaskResultAvailable(task) ? openTaskResult(task.taskId) : openTaskDetail(task.taskId)"
+            >
+              {{ getTaskDetailActionLabel(task) }}
+            </el-button>
           </div>
         </div>
       </div>
@@ -1325,6 +1401,13 @@ onBeforeUnmount(() => {
 
       <template #footer>
         <div class="dialog-footer">
+          <el-button
+            v-if="getCurrentProcessRecord() && isTaskResultAvailable(getCurrentProcessRecord())"
+            type="primary"
+            @click="openTaskResult(getCurrentProcessRecord()!.taskId)"
+          >
+            查看结果
+          </el-button>
           <el-button
             v-if="getCurrentProcessRecord() && ['PENDING', 'GENERATING', 'REVIEWING'].includes(getCurrentProcessRecord()!.status)"
             type="danger"
@@ -1972,7 +2055,7 @@ onBeforeUnmount(() => {
 }
 
 .recent-task-meta span:not(:last-child)::after {
-  content: '·';
+  content: '路';
   margin-left: 8px;
   color: #c0c8d2;
 }
@@ -2296,3 +2379,7 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+
+
+
+

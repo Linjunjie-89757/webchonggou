@@ -1,0 +1,161 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - button "AT Auto Test Hub 全功能自动化测试平台" [ref=e5] [cursor=pointer]:
+      - generic [ref=e6]: AT
+      - generic [ref=e7]:
+        - generic [ref=e8]: Auto Test Hub
+        - generic [ref=e9]: 全功能自动化测试平台
+      - img [ref=e10]
+    - navigation "主导航" [ref=e12]:
+      - button "工作台" [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e18]: 工作台
+      - button "用例中心" [ref=e20] [cursor=pointer]:
+        - img [ref=e21]
+        - generic [ref=e24]: 用例中心
+      - button "缺陷管理" [ref=e26] [cursor=pointer]:
+        - img [ref=e27]
+        - generic [ref=e36]: 缺陷管理
+      - button "接口自动化" [ref=e38] [cursor=pointer]:
+        - img [ref=e39]
+        - generic [ref=e44]: 接口自动化
+      - button "Web UI 自动化" [ref=e46] [cursor=pointer]:
+        - img [ref=e47]
+        - generic [ref=e49]: Web UI 自动化
+      - button "APP 自动化" [ref=e51] [cursor=pointer]:
+        - img [ref=e52]
+        - generic [ref=e54]: APP 自动化
+      - button "配置中心" [ref=e56] [cursor=pointer]:
+        - img [ref=e57]
+        - generic [ref=e58]: 配置中心
+      - button "系统设置" [ref=e61] [cursor=pointer]:
+        - img [ref=e62]
+        - generic [ref=e65]: 系统设置
+    - generic [ref=e68] [cursor=pointer]:
+      - generic [ref=e69]: 超
+      - generic [ref=e70]:
+        - generic [ref=e71]: 超级管理员
+        - generic [ref=e72]: SUPER_ADMIN
+  - generic [ref=e73]:
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]: 用例中心
+        - button "全部" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e84]: 全部
+          - img [ref=e85]
+      - generic [ref=e87]:
+        - button [ref=e88] [cursor=pointer]:
+          - img [ref=e89]
+        - button "超 超级管理员" [ref=e95] [cursor=pointer]:
+          - generic [ref=e96]: 超
+          - generic [ref=e97]: 超级管理员
+          - img [ref=e98]
+    - main [ref=e100]:
+      - generic [ref=e108]:
+        - generic [ref=e110]:
+          - tablist [ref=e113]:
+            - tab "用例管理" [ref=e114]
+            - tab "AI 用例生成" [active] [selected] [ref=e115] [cursor=pointer]
+            - tab "AI 生成记录" [ref=e116]
+            - tab "AI 配置" [ref=e117]
+          - generic:
+            - tabpanel "AI 用例生成"
+        - generic [ref=e621]:
+          - generic [ref=e622]:
+            - generic [ref=e623]:
+              - generic [ref=e626]:
+                - generic [ref=e627]: ✍️
+                - generic [ref=e628]: 手动输入需求描述
+              - generic [ref=e629]:
+                - generic [ref=e630]: 需求标题*
+                - textbox "请输入需求标题，例如：用户登录功能需求" [ref=e633]
+                - generic [ref=e634]: 用例保存路径 *
+                - generic [ref=e636]:
+                  - textbox "请选择模块路径，选中后会自动拼接需求标题" [ref=e637]
+                  - button [ref=e639] [cursor=pointer]:
+                    - img [ref=e641]
+                - generic [ref=e643]: 需求描述*
+                - textbox "请详细描述您的需求，包括功能描述、使用场景、业务流程等" [ref=e645]
+                - generic [ref=e646]: 0/5000
+                - generic [ref=e647]:
+                  - button "生成测试用例" [disabled] [ref=e648]:
+                    - img [ref=e650]
+                    - generic [ref=e652]: 生成测试用例
+                  - button "查看生成流程" [disabled] [ref=e653]:
+                    - img [ref=e655]
+                    - generic [ref=e657]: 查看生成流程
+            - generic [ref=e658]:
+              - generic [ref=e661]:
+                - generic [ref=e662]: 📄
+                - generic [ref=e663]: 上传需求文档
+              - button "拖拽文件到此处或点击选择文件 支持 PDF、Word、TXT、Markdown 格式 选择文件" [ref=e665] [cursor=pointer]:
+                - img [ref=e667]
+                - generic [ref=e669]:
+                  - generic [ref=e670]: 拖拽文件到此处或点击选择文件
+                  - generic [ref=e671]: 支持 PDF、Word、TXT、Markdown 格式
+                - generic [ref=e672]: 选择文件
+          - generic [ref=e673]:
+            - generic [ref=e675]:
+              - generic [ref=e676]:
+                - generic [ref=e677]: 📤
+                - generic [ref=e678]: 输出模式设置
+              - generic [ref=e679]: 先选择本次任务的输出方式。
+            - generic [ref=e680]:
+              - generic [ref=e681] [cursor=pointer]:
+                - radio "实时流式输出 优先展示任务执行进度和阶段状态。" [checked]
+                - generic [ref=e682]:
+                  - generic [ref=e683]: ⚡
+                  - generic [ref=e684]: 实时流式输出
+                - generic [ref=e685]: 优先展示任务执行进度和阶段状态。
+              - generic [ref=e686] [cursor=pointer]:
+                - radio "完整输出 等待生成和评审全部完成后统一返回结果。"
+                - generic [ref=e687]:
+                  - generic [ref=e688]: 📄
+                  - generic [ref=e689]: 完整输出
+                - generic [ref=e690]: 等待生成和评审全部完成后统一返回结果。
+          - generic [ref=e691]:
+            - generic [ref=e692]:
+              - generic [ref=e693]:
+                - generic [ref=e694]:
+                  - generic [ref=e695]: 🤖
+                  - generic [ref=e696]: 当前 AI 配置
+                - generic [ref=e697]: 展示当前空间下本次生成任务会使用的 AI 配置摘要。
+              - generic [ref=e698]:
+                - button "去创建连接" [ref=e699] [cursor=pointer]:
+                  - generic [ref=e700]: 去创建连接
+                - button "去配置AI" [ref=e701] [cursor=pointer]:
+                  - generic [ref=e702]: 去配置AI
+                - button "刷新配置" [ref=e703] [cursor=pointer]:
+                  - img [ref=e705]
+                  - generic [ref=e707]: 刷新配置
+            - generic [ref=e708]:
+              - generic [ref=e709]:
+                - generic [ref=e710]: 配置状态
+                - generic [ref=e713]: 配置缺失：未选择目标空间、生成模型未配置、评审模型未配置
+              - generic [ref=e714]:
+                - generic [ref=e715]: 当前空间
+                - generic [ref=e716]: "-"
+              - generic [ref=e717]:
+                - generic [ref=e718]: 编写模型
+                - generic [ref=e719]: 生成模型未配置
+              - generic [ref=e720]:
+                - generic [ref=e721]: 评审模型
+                - generic [ref=e722]: 评审模型未配置
+              - generic [ref=e723]:
+                - generic [ref=e724]: 输出模式
+                - generic [ref=e725]: 实时流式输出
+            - generic [ref=e726]: 当前账号的 AI 配置还没准备好。先在“系统设置 > AI连接”里创建个人连接，再到“AI配置”页绑定生成模型和评审模型。
+            - generic [ref=e727]:
+              - generic [ref=e728]:
+                - generic [ref=e729]:
+                  - generic [ref=e730]:
+                    - generic [ref=e731]: 🕘
+                    - generic [ref=e732]: 最近任务
+                  - generic [ref=e733]: 展示最近 3 条任务，优先显示进行中、失败和待处理任务。
+                - button "刷新任务" [ref=e734] [cursor=pointer]:
+                  - img [ref=e736]
+                  - generic [ref=e738]: 刷新任务
+              - generic [ref=e739]: 还没有最近任务，生成一次测试用例后会显示在这里。
+              - button "查看全部记录" [ref=e741] [cursor=pointer]:
+                - generic [ref=e742]: 查看全部记录
