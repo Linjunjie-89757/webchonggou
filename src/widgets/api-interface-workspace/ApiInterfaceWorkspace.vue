@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import {
   Close,
   Delete,
+  Document,
   DocumentCopy,
+  Files,
   Fold,
   Folder,
   FolderOpened,
+  Check,
+  Link,
   MoreFilled,
   Plus,
   Search,
@@ -51,7 +55,9 @@ type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
 type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
 type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
-type ApiImportMode = 'curl' | 'swagger' | 'postman' | 'har'
+type ApiImportMode = 'swagger' | 'postman' | 'har'
+type ApiImportInputMode = 'url' | 'file'
+type ApiSoftPromptInputType = 'text' | 'textarea'
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -146,6 +152,17 @@ interface ApiProcessorExtractItem {
   expression?: string | null
 }
 
+interface ApiSoftPromptOptions {
+  title: string
+  message?: string
+  value?: string
+  placeholder?: string
+  inputType?: ApiSoftPromptInputType
+  requiredMessage?: string
+  confirmText?: string
+  cancelText?: string
+}
+
 interface DirectoryNode {
   key: string
   type: DirectoryNodeType
@@ -210,8 +227,20 @@ const batchAddTarget = ref<BatchAddTarget>('query')
 const batchAddText = ref('')
 const activeAssertionId = ref('')
 const importDialogVisible = ref(false)
-const importMode = ref<ApiImportMode>('curl')
-const importCurlText = ref('')
+const importMode = ref<ApiImportMode>('swagger')
+const importInputMode = ref<ApiImportInputMode>('url')
+const importUrl = ref('')
+const importFileName = ref('')
+const softPromptVisible = ref(false)
+const softPromptTitle = ref('')
+const softPromptMessage = ref('')
+const softPromptValue = ref('')
+const softPromptPlaceholder = ref('')
+const softPromptInputType = ref<ApiSoftPromptInputType>('text')
+const softPromptRequiredMessage = ref('请输入内容')
+const softPromptConfirmText = ref('确定')
+const softPromptCancelText = ref('取消')
+const softPromptError = ref('')
 const caseDialogVisible = ref(false)
 const caseDialogMode = ref<ApiCaseDialogMode>('create')
 const caseDialogSaving = ref(false)
@@ -255,12 +284,13 @@ const aiCaseResultType = ref('')
 const aiCaseSelectedResultIds = ref<string[]>([])
 const aiCaseDetailVisible = ref(false)
 const aiCaseDetailResult = ref<ApiAiGeneratedCaseResult | null>(null)
-const responsePanelHeight = ref(250)
-const responsePanelMinHeight = 220
+const responsePanelHeight = ref(360)
+const responsePanelMinHeight = 300
 const responsePanelMaxHeight = 520
 const responsePanelHeightStorageKey = 'api-interface-response-panel-height'
 let responseResizeStartY = 0
 let responseResizeStartHeight = 0
+let softPromptResolve: ((value: string | null) => void) | null = null
 
 const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'none', value: 'NONE' },
@@ -292,12 +322,107 @@ const aiCaseCountOptions = [
   { label: '40 条', value: '40' },
 ]
 
-const importCapabilityItems: Array<{ mode: ApiImportMode; name: string; description: string; status: string }> = [
-  { mode: 'curl', name: 'Curl', description: '解析 method、URL、Headers、Body，填充到当前请求', status: '已支持' },
-  { mode: 'swagger', name: 'Swagger / OpenAPI', description: '批量解析 OpenAPI 文档并创建接口定义', status: '待后端接口' },
-  { mode: 'postman', name: 'Postman Collection', description: '解析 Collection v2.0 / v2.1', status: '待后端接口' },
-  { mode: 'har', name: 'HAR 文件', description: '解析浏览器 HTTP Archive 文件', status: '待后端接口' },
+const importCapabilityItems: Array<{
+  mode: ApiImportMode
+  name: string
+  description: string
+  status: string
+  accept: string
+  icon: Component
+  tone: 'green' | 'orange' | 'purple' | 'blue'
+}> = [
+  {
+    mode: 'swagger',
+    name: 'Swagger / OpenAPI',
+    description: '支持 Swagger 2.0 / OpenAPI 3.x',
+    status: '待后端接口',
+    accept: '.json,.yaml,.yml',
+    icon: Link,
+    tone: 'green',
+  },
+  {
+    mode: 'postman',
+    name: 'Postman Collection',
+    description: '支持 Postman v2.0 / v2.1 格式',
+    status: '待后端接口',
+    accept: '.json',
+    icon: Document,
+    tone: 'orange',
+  },
+  {
+    mode: 'har',
+    name: 'HAR 文件',
+    description: '浏览器导出的 HTTP 存档文件',
+    status: '待后端接口',
+    accept: '.har',
+    icon: Files,
+    tone: 'purple',
+  },
 ]
+
+const selectedImportCapability = computed(() => (
+  importCapabilityItems.find(item => item.mode === importMode.value) || importCapabilityItems[0]
+))
+
+function openApiSoftPrompt(options: ApiSoftPromptOptions) {
+  if (softPromptResolve) {
+    softPromptResolve(null)
+  }
+  softPromptTitle.value = options.title
+  softPromptMessage.value = options.message || ''
+  softPromptValue.value = options.value || ''
+  softPromptPlaceholder.value = options.placeholder || ''
+  softPromptInputType.value = options.inputType || 'text'
+  softPromptRequiredMessage.value = options.requiredMessage || '请输入内容'
+  softPromptConfirmText.value = options.confirmText || '确定'
+  softPromptCancelText.value = options.cancelText || '取消'
+  softPromptError.value = ''
+  softPromptVisible.value = true
+
+  return new Promise<string | null>((resolve) => {
+    softPromptResolve = resolve
+    void nextTick(() => {
+      const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>('.api-soft-dialog input, .api-soft-dialog textarea')
+      input?.focus()
+      input?.select()
+    })
+  })
+}
+
+function confirmApiSoftPrompt() {
+  const value = softPromptValue.value.trim()
+  if (!value) {
+    softPromptError.value = softPromptRequiredMessage.value
+    return
+  }
+  softPromptResolve?.(value)
+  softPromptResolve = null
+  softPromptVisible.value = false
+}
+
+function cancelApiSoftPrompt() {
+  softPromptResolve?.(null)
+  softPromptResolve = null
+  softPromptVisible.value = false
+}
+
+function confirmApiAction(
+  message: string,
+  title: string,
+  options: { confirmText?: string; cancelText?: string; danger?: boolean } = {},
+) {
+  return ElMessageBox.confirm(message, title, {
+    type: options.danger ? 'error' : 'warning',
+    confirmButtonText: options.confirmText || '确定',
+    cancelButtonText: options.cancelText || '取消',
+    customClass: `api-soft-message-box${options.danger ? ' is-danger' : ''}`,
+    confirmButtonClass: options.danger ? 'api-soft-message-box__danger' : 'api-soft-message-box__primary',
+    cancelButtonClass: 'api-soft-message-box__cancel',
+  }).then(
+    () => true,
+    () => false,
+  )
+}
 
 const paramTypeOptions = ['string', 'integer', 'number', 'boolean', 'array', 'json', 'file']
 const assertionTypeOptions = [
@@ -401,14 +526,12 @@ const processorExtractVariableTypeOptions = [
 ]
 
 const contentTabs = computed<Array<{ label: string; value: RequestContentTab; count?: number }>>(() => [
-  { label: '请求头', value: 'headers', count: enabledRows(activeEditor.value?.detail.requestConfig.headers).length },
+  { label: '请求头', value: 'headers' },
   { label: '请求体', value: 'body' },
   { label: 'Params', value: 'params', count: enabledRows(activeEditor.value?.detail.requestConfig.queryParams).length },
-  { label: 'Cookie', value: 'cookies', count: enabledRows(activeEditor.value?.detail.requestConfig.cookies).length },
   { label: 'Auth', value: 'auth' },
   { label: '前置处理', value: 'pre' },
   { label: '后置处理', value: 'post' },
-  { label: '提取器', value: 'extractors', count: activeEditor.value?.detail.extractors.length || undefined },
   { label: '断言', value: 'tests', count: activeEditor.value?.detail.assertions.length || undefined },
   { label: '设置', value: 'settings' },
   { label: '用例', value: 'cases', count: activeDefinitionCases.value.length || undefined },
@@ -677,6 +800,15 @@ const batchAddPlaceholder = computed(() => {
   if (batchAddTarget.value === 'extractor') return 'token=$.data.token\ntraceId=$.headers.traceId'
   if (batchAddTarget.value === 'assertion') return '状态码=200\n响应包含=success'
   return 'token=abc\nContent-Type: application/json'
+})
+const batchAddExamples = computed(() => {
+  if (batchAddTarget.value === 'extractor') {
+    return ['token=$.data.token', 'traceId: X-Trace-Id', 'userId\t$.data.user.id']
+  }
+  if (batchAddTarget.value === 'assertion') {
+    return ['状态码=200', '响应包含: success', 'traceId\t不为空']
+  }
+  return ['token=abc', 'Content-Type: application/json', 'page\t1']
 })
 
 function mapModuleNode(item: ApiDefinitionModuleItem): DirectoryNode {
@@ -1403,7 +1535,7 @@ function startResponseResize(event: PointerEvent) {
 function restoreResponsePanelHeight() {
   if (typeof window === 'undefined') return
   const savedHeight = Number(window.localStorage.getItem(responsePanelHeightStorageKey))
-  if (Number.isFinite(savedHeight) && savedHeight > 0) {
+  if (Number.isFinite(savedHeight) && savedHeight >= responsePanelMinHeight) {
     responsePanelHeight.value = clampResponsePanelHeight(savedHeight)
   }
 }
@@ -1687,6 +1819,21 @@ function currentRunPayload() {
   }
 }
 
+function isAllWorkspaceSelected() {
+  return props.workspaceCode === 'ALL'
+}
+
+function hasConcreteEditorWorkspace(editor: EditorTab) {
+  return Boolean(editor.detail.workspaceCode && editor.detail.workspaceCode !== 'ALL')
+}
+
+function guardAllWorkspaceAction(editor: EditorTab, actionText: string) {
+  if (!isAllWorkspaceSelected()) return true
+  if (editor.definitionId && hasConcreteEditorWorkspace(editor)) return true
+  ElMessage.warning(`请先切换到具体工作空间后再${actionText}`)
+  return false
+}
+
 async function loadWorkspaceData() {
   if (!props.workspaceReady) {
     return
@@ -1822,11 +1969,8 @@ async function closeEditorTab(key: string, force = false) {
   const index = tabs.value.findIndex(item => item.key === key)
   if (index < 0) return
   if (!force && tabs.value[index].dirty) {
-    await ElMessageBox.confirm('当前请求有未保存修改，关闭后会丢失，确认关闭吗？', '关闭标签', {
-      type: 'warning',
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-    })
+    const confirmed = await confirmApiAction('当前请求有未保存修改，关闭后会丢失，确认关闭吗？', '关闭标签')
+    if (!confirmed) return
   }
   tabs.value.splice(index, 1)
   if (activeEditorKey.value === key) {
@@ -1838,11 +1982,8 @@ async function closeOtherTabs() {
   if (!activeEditor.value) return
   const removingDirtyTabs = tabs.value.some(item => item.key !== activeEditor.value?.key && item.dirty)
   if (removingDirtyTabs) {
-    await ElMessageBox.confirm('其他标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭其他标签', {
-      type: 'warning',
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-    })
+    const confirmed = await confirmApiAction('其他标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭其他标签')
+    if (!confirmed) return
   }
   tabs.value = [activeEditor.value]
 }
@@ -1854,11 +1995,8 @@ async function closeDraftTabs() {
     return
   }
   if (draftTabs.some(item => item.dirty)) {
-    await ElMessageBox.confirm('草稿标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭全部草稿', {
-      type: 'warning',
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-    })
+    const confirmed = await confirmApiAction('草稿标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭全部草稿')
+    if (!confirmed) return
   }
   const activeWillClose = activeEditor.value ? draftTabs.some(item => item.key === activeEditor.value?.key) : false
   tabs.value = tabs.value.filter(item => item.definitionId)
@@ -1917,37 +2055,35 @@ function openBatchAdd(target: BatchAddTarget) {
 }
 
 function parseBatchRows(text: string) {
-  const seen = new Set<string>()
+  const rowMap = new Map<string, { key: string; value: string; description: string }>()
 
-  return text
-    .split(/\r?\n/)
-    .map((rawLine) => {
-      const line = rawLine.trim()
-      if (!line || /^[=:]/.test(line) || rawLine.startsWith('\t')) {
-        return null
-      }
+  text.split(/\r?\n/).forEach((rawLine) => {
+    const line = rawLine.trim()
+    if (!line || /^[=:]/.test(line) || rawLine.startsWith('\t')) {
+      return
+    }
 
-      const separatorIndex = rawLine.includes('\t')
-        ? rawLine.indexOf('\t')
-        : rawLine.includes(':')
-          ? rawLine.indexOf(':')
-          : rawLine.indexOf('=')
-      const parts = separatorIndex >= 0
-        ? [rawLine.slice(0, separatorIndex), rawLine.slice(separatorIndex + 1)]
-        : [rawLine, '']
-      const row = {
-        key: (parts[0] || '').trim(),
-        value: (parts[1] || '').trim(),
-        description: '',
-      }
-      const signature = `${row.key}\u0000${row.value}`
-      if (!row.key || seen.has(signature)) {
-        return null
-      }
-      seen.add(signature)
-      return row
-    })
-    .filter((row): row is { key: string; value: string; description: string } => Boolean(row))
+    const separatorIndex = rawLine.includes('\t')
+      ? rawLine.indexOf('\t')
+      : rawLine.includes(':')
+        ? rawLine.indexOf(':')
+        : rawLine.indexOf('=')
+    const parts = separatorIndex >= 0
+      ? [rawLine.slice(0, separatorIndex), rawLine.slice(separatorIndex + 1)]
+      : [rawLine, '']
+    const row = {
+      key: (parts[0] || '').trim(),
+      value: (parts[1] || '').trim(),
+      description: '',
+    }
+    if (!row.key) {
+      return
+    }
+    rowMap.delete(row.key)
+    rowMap.set(row.key, row)
+  })
+
+  return Array.from(rowMap.values())
 }
 
 function applyBatchAdd() {
@@ -1981,16 +2117,16 @@ function applyBatchAdd() {
 }
 
 async function createModule(parentId: number | null = null) {
-  const { value } = await ElMessageBox.prompt('请输入模块名称', '新建模块', {
-    inputPattern: /\S+/,
-    inputErrorMessage: '模块名称不能为空',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
+  const value = await openApiSoftPrompt({
+    title: '新建模块',
+    message: '请输入模块名称',
+    requiredMessage: '模块名称不能为空',
   })
+  if (!value) return
   await apiAutomationApi.createDefinitionModule(props.workspaceCode, {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
     parentId,
-    name: value.trim(),
+    name: value,
   })
   await loadWorkspaceData()
   ElMessage.success('模块已创建')
@@ -1998,16 +2134,16 @@ async function createModule(parentId: number | null = null) {
 
 async function renameModule(node: DirectoryNode) {
   if (!node.moduleId) return
-  const { value } = await ElMessageBox.prompt('请输入新的模块名称', '重命名模块', {
-    inputValue: node.label.split('/').pop() || node.label,
-    inputPattern: /\S+/,
-    inputErrorMessage: '模块名称不能为空',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
+  const value = await openApiSoftPrompt({
+    title: '重命名模块',
+    message: '请输入新的模块名称',
+    value: node.label.split('/').pop() || node.label,
+    requiredMessage: '模块名称不能为空',
   })
+  if (!value) return
   await apiAutomationApi.updateDefinitionModule(props.workspaceCode, node.moduleId, {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
-    name: value.trim(),
+    name: value,
   })
   await loadWorkspaceData()
   ElMessage.success('模块已重命名')
@@ -2019,11 +2155,8 @@ async function deleteModule(node: DirectoryNode) {
     ElMessage.warning('请先移除模块下的请求或子模块')
     return
   }
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该模块吗？', '删除模块', {
-    type: 'warning',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-  })
+  const confirmed = await confirmApiAction('删除后不可恢复，确认删除该模块吗？', '删除模块', { danger: true })
+  if (!confirmed) return
   await apiAutomationApi.deleteDefinitionModule(props.workspaceCode, node.moduleId)
   await loadWorkspaceData()
   ElMessage.success('模块已删除')
@@ -2031,17 +2164,17 @@ async function deleteModule(node: DirectoryNode) {
 
 async function renameRequest(node: DirectoryNode) {
   if (!node.definitionId || !node.definition) return
-  const { value } = await ElMessageBox.prompt('请输入新的请求名称', '重命名请求', {
-    inputValue: node.definition.name,
-    inputPattern: /\S+/,
-    inputErrorMessage: '请求名称不能为空',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
+  const value = await openApiSoftPrompt({
+    title: '重命名请求',
+    message: '请输入新的请求名称',
+    value: node.definition.name,
+    requiredMessage: '请求名称不能为空',
   })
+  if (!value) return
   const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, node.definitionId)
   const saved = await apiAutomationApi.updateDefinition(props.workspaceCode, node.definitionId, {
-    ...buildPayload({ ...detail, name: value.trim() }),
-    name: value.trim(),
+    ...buildPayload({ ...detail, name: value }),
+    name: value,
   })
   const opened = tabs.value.find(tab => tab.definitionId === node.definitionId)
   if (opened) {
@@ -2056,11 +2189,8 @@ async function renameRequest(node: DirectoryNode) {
 
 async function deleteRequest(node: DirectoryNode) {
   if (!node.definitionId) return
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该请求吗？', '删除请求', {
-    type: 'warning',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-  })
+  const confirmed = await confirmApiAction('删除后不可恢复，确认删除该请求吗？', '删除请求', { danger: true })
+  if (!confirmed) return
   await apiAutomationApi.deleteDefinition(props.workspaceCode, node.definitionId)
   const opened = tabs.value.find(tab => tab.definitionId === node.definitionId)
   if (opened) {
@@ -2074,6 +2204,7 @@ async function saveActiveEditor() {
   if (!activeEditor.value) return
   const editor = activeEditor.value
   const detail = editor.detail
+  if (!guardAllWorkspaceAction(editor, '保存接口')) return
   if (!detail.requestConfig.path.trim()) {
     ElMessage.warning('请输入请求 URL 或接口路径')
     return
@@ -2107,6 +2238,7 @@ async function sendActiveEditor() {
   if (!activeEditor.value) return
   const editor = activeEditor.value
   const detail = editor.detail
+  if (!guardAllWorkspaceAction(editor, '发送请求')) return
   if (!detail.requestConfig.path.trim()) {
     ElMessage.warning('请输入请求 URL 或接口路径')
     return
@@ -2141,11 +2273,8 @@ async function deleteActiveEditor() {
     return
   }
 
-  await ElMessageBox.confirm('删除后不可恢复，确认删除当前接口吗？', '删除接口', {
-    type: 'warning',
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-  })
+  const confirmed = await confirmApiAction('删除后不可恢复，确认删除当前接口吗？', '删除接口', { danger: true })
+  if (!confirmed) return
   try {
     await apiAutomationApi.deleteDefinition(props.workspaceCode, editor.definitionId)
     void closeEditorTab(editor.key, true)
@@ -2168,13 +2297,13 @@ function duplicateActiveEditor() {
 
 async function saveAsCase() {
   if (!activeEditor.value) return
+  if (!guardAllWorkspaceAction(activeEditor.value, '保存为用例')) return
   if (!activeEditor.value.definitionId) {
     try {
-      await ElMessageBox.confirm('当前请求还未保存为接口，请先保存接口，再保存为用例。是否现在保存接口？', '保存为用例', {
-        type: 'warning',
-        confirmButtonText: '先保存接口',
-        cancelButtonText: '取消',
+      const confirmed = await confirmApiAction('当前请求还未保存为接口，请先保存接口，再保存为用例。是否现在保存接口？', '保存为用例', {
+        confirmText: '先保存接口',
       })
+      if (!confirmed) return
     } catch {
       return
     }
@@ -2188,12 +2317,15 @@ async function promptImportCurl() {
   if (!activeEditor.value) {
     openNewRequestTab()
   }
-  const { value } = await ElMessageBox.prompt('粘贴 curl 命令，支持 method、URL、Headers、Body 的最小解析', 'Curl 导入', {
+  const value = await openApiSoftPrompt({
+    title: 'Curl 导入',
+    message: '粘贴 curl 命令，支持 method、URL、Headers、Body 的最小解析',
     inputType: 'textarea',
-    inputPlaceholder: `curl -X POST "https://example.com/api" -H "Content-Type: application/json" -d '{"name":"demo"}'`,
-    confirmButtonText: '导入',
-    cancelButtonText: '取消',
+    placeholder: `curl -X POST "https://example.com/api" -H "Content-Type: application/json" -d '{"name":"demo"}'`,
+    requiredMessage: '请输入 curl 命令',
+    confirmText: '导入',
   })
+  if (!value) return
   try {
     applyCurlToActiveEditor(value)
     ElMessage.success('Curl 已填充到当前请求')
@@ -2203,39 +2335,24 @@ async function promptImportCurl() {
 }
 
 function openImportDialog() {
-  importMode.value = 'curl'
-  importCurlText.value = ''
+  importMode.value = 'swagger'
+  importInputMode.value = 'url'
+  importUrl.value = ''
+  importFileName.value = ''
   importDialogVisible.value = true
-}
-
-function openCurlFromImportDialog() {
-  importMode.value = 'curl'
 }
 
 function closeImportDialog() {
   importDialogVisible.value = false
 }
 
+function handleImportFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  importFileName.value = input.files?.[0]?.name || ''
+}
+
 function submitImportDialog() {
-  if (importMode.value !== 'curl') {
-    ElMessage.info('当前导入类型需要后端接口支持')
-    return
-  }
-  if (!importCurlText.value.trim()) {
-    ElMessage.warning('请粘贴 curl 命令')
-    return
-  }
-  if (!activeEditor.value) {
-    openNewRequestTab()
-  }
-  try {
-    applyCurlToActiveEditor(importCurlText.value)
-    importDialogVisible.value = false
-    importCurlText.value = ''
-    ElMessage.success('Curl 已填充到当前请求')
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : 'Curl 解析失败')
-  }
+  ElMessage.info('当前导入类型需要后端接口支持')
 }
 
 function tokenizeCurl(input: string) {
@@ -2549,11 +2666,10 @@ async function batchAcceptAiGeneratedCases() {
   let pending = selectedPendingAiCaseResults.value
   if (!pending.length && aiCasePendingResults.value.length) {
     try {
-      await ElMessageBox.confirm('当前未勾选生成结果，是否采纳全部待处理结果？', '批量采纳', {
-        type: 'warning',
-        confirmButtonText: '采纳全部',
-        cancelButtonText: '取消',
+      const confirmed = await confirmApiAction('当前未勾选生成结果，是否采纳全部待处理结果？', '批量采纳', {
+        confirmText: '采纳全部',
       })
+      if (!confirmed) return
     } catch {
       return
     }
@@ -2574,11 +2690,11 @@ async function batchDiscardAiGeneratedCases() {
   let pending = selectedPendingAiCaseResults.value
   if (!pending.length && aiCasePendingResults.value.length) {
     try {
-      await ElMessageBox.confirm('当前未勾选生成结果，是否弃用全部待处理结果？', '批量弃用', {
-        type: 'warning',
-        confirmButtonText: '弃用全部',
-        cancelButtonText: '取消',
+      const confirmed = await confirmApiAction('当前未勾选生成结果，是否弃用全部待处理结果？', '批量弃用', {
+        confirmText: '弃用全部',
+        danger: true,
       })
+      if (!confirmed) return
     } catch {
       return
     }
@@ -2716,11 +2832,11 @@ async function duplicateCase(item: ApiDefinitionCaseItem) {
 }
 
 async function deleteCase(item: ApiDefinitionCaseItem) {
-  await ElMessageBox.confirm('删除后不可恢复，确认删除该用例吗？', '删除用例', {
-    type: 'warning',
-    confirmButtonText: '确认',
-    cancelButtonText: '取消',
+  const confirmed = await confirmApiAction('删除后不可恢复，确认删除该用例吗？', '删除用例', {
+    confirmText: '确认',
+    danger: true,
   })
+  if (!confirmed) return
   await apiAutomationApi.deleteCase(props.workspaceCode, item.id)
   await loadCasesForDefinition(item.definitionId)
   ElMessage.success('用例已删除')
@@ -2766,11 +2882,13 @@ onBeforeUnmount(() => {
 <template>
   <section v-loading="loading" class="api-interface-workspace">
     <div class="api-interface-tabs">
-      <button class="api-interface-tab is-active" type="button">接口</button>
-      <button class="api-interface-tab" type="button" disabled>场景</button>
-      <button class="api-interface-tab" type="button" disabled>执行</button>
-      <button class="api-interface-tab" type="button" disabled>报告</button>
-      <button class="api-interface-tab" type="button" disabled>设置</button>
+      <div class="api-interface-tab-nav">
+        <button class="api-interface-tab is-active" type="button">接口</button>
+        <button class="api-interface-tab" type="button" disabled>场景</button>
+        <button class="api-interface-tab" type="button" disabled>执行</button>
+        <button class="api-interface-tab" type="button" disabled>报告</button>
+        <button class="api-interface-tab" type="button" disabled>设置</button>
+      </div>
     </div>
 
     <div v-if="activeTopTab === 'definitions'" class="api-interface-shell">
@@ -2949,8 +3067,11 @@ onBeforeUnmount(() => {
               <el-icon><VideoPlay /></el-icon>
               发送
             </button>
-            <el-dropdown split-button class="api-save-dropdown" :loading="saving" @click="saveActiveEditor">
-              保存
+            <el-dropdown split-button class="api-save-dropdown" popper-class="api-save-dropdown-menu" :loading="saving" @click="saveActiveEditor">
+              <span class="api-save-label">
+                <el-icon><Check /></el-icon>
+                保存
+              </span>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item @click="saveAsCase">保存为用例</el-dropdown-item>
@@ -3553,6 +3674,9 @@ onBeforeUnmount(() => {
                   <p>点击 <b>发送</b> 获取响应内容</p>
                 </div>
                 <template v-else>
+                  <div v-if="activeEditor.runError" class="api-response-error-banner">
+                    {{ activeEditor.runError }}
+                  </div>
                   <div class="api-response-tabs">
                     <button :class="{ 'is-active': activeEditor.responseTab === 'body' }" @click="activeEditor.responseTab = 'body'">Body</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'header' }" @click="activeEditor.responseTab = 'header'">Header</button>
@@ -3589,68 +3713,173 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <el-dialog v-model="importDialogVisible" title="导入接口" width="640px" append-to-body class="api-import-dialog-shell">
+    <el-dialog
+      v-model="softPromptVisible"
+      width="420px"
+      append-to-body
+      :show-close="false"
+      class="api-soft-dialog-shell"
+      @closed="cancelApiSoftPrompt"
+    >
+      <div class="api-soft-dialog">
+        <div class="api-soft-dialog__header">
+          <strong>{{ softPromptTitle }}</strong>
+          <button type="button" class="api-soft-dialog__close" @click="cancelApiSoftPrompt">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+        <div class="api-soft-dialog__body">
+          <p v-if="softPromptMessage">{{ softPromptMessage }}</p>
+          <el-input
+            v-if="softPromptInputType === 'textarea'"
+            v-model="softPromptValue"
+            type="textarea"
+            :rows="8"
+            resize="none"
+            :placeholder="softPromptPlaceholder"
+            @keydown.ctrl.enter.prevent="confirmApiSoftPrompt"
+          />
+          <el-input
+            v-else
+            v-model="softPromptValue"
+            :placeholder="softPromptPlaceholder"
+            @keyup.enter="confirmApiSoftPrompt"
+          />
+          <div v-if="softPromptError" class="api-soft-dialog__error">{{ softPromptError }}</div>
+        </div>
+        <div class="api-soft-dialog__footer">
+          <button type="button" class="api-soft-dialog__cancel" @click="cancelApiSoftPrompt">{{ softPromptCancelText }}</button>
+          <button type="button" class="api-soft-dialog__submit" @click="confirmApiSoftPrompt">{{ softPromptConfirmText }}</button>
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="importDialogVisible"
+      width="520px"
+      append-to-body
+      destroy-on-close
+      :show-close="false"
+      class="api-import-dialog-shell"
+    >
       <div class="api-import-dialog">
-        <div class="api-import-mode-list">
-          <button
-            v-for="item in importCapabilityItems"
-            :key="item.name"
-            type="button"
-            :class="['api-import-mode', { 'is-active': importMode === item.mode, 'is-disabled': item.mode !== 'curl' }]"
-            @click="importMode = item.mode"
-          >
-            <div>
-              <strong>{{ item.name }}</strong>
-              <span>{{ item.description }}</span>
-            </div>
-            <em>{{ item.status }}</em>
+        <div class="api-import-header">
+          <div class="api-import-title">
+            <el-icon class="api-import-title-icon"><Upload /></el-icon>
+            <span>导入接口</span>
+          </div>
+          <button type="button" class="api-import-close" @click="closeImportDialog">
+            <el-icon><Close /></el-icon>
           </button>
         </div>
 
-        <div v-if="importMode === 'curl'" class="api-import-curl-panel">
-          <div class="api-import-panel-head">
-            <strong>Curl 导入当前请求</strong>
-            <span>支持 method、URL、Headers、Body 的最小解析，会填充到当前打开的请求 tab。</span>
-          </div>
-          <el-input
-            v-model="importCurlText"
-            type="textarea"
-            :rows="9"
-            resize="none"
-            placeholder="curl -X POST &quot;https://example.com/api&quot; -H &quot;Content-Type: application/json&quot; -d '{&quot;name&quot;:&quot;demo&quot;}'"
-          />
+        <div class="api-import-body">
+          <section class="api-import-section">
+            <div class="api-import-section-title">选择导入格式</div>
+            <div class="api-import-format-list">
+              <button
+                v-for="item in importCapabilityItems"
+                :key="item.mode"
+                type="button"
+                :class="['api-import-format', `is-${item.tone}`, { 'is-active': importMode === item.mode }]"
+                @click="importMode = item.mode"
+              >
+                <span class="api-import-format-icon">
+                  <el-icon><component :is="item.icon" /></el-icon>
+                </span>
+                <span class="api-import-format-copy">
+                  <span>{{ item.name }}</span>
+                  <small>{{ item.description }}</small>
+                </span>
+                <span class="api-import-check">
+                  <el-icon v-if="importMode === item.mode"><Check /></el-icon>
+                </span>
+              </button>
+            </div>
+          </section>
+
+          <section class="api-import-section">
+            <div class="api-import-section-title">导入方式</div>
+            <div class="api-import-mode-switch">
+              <button
+                type="button"
+                :class="{ 'is-active': importInputMode === 'url' }"
+                @click="importInputMode = 'url'"
+              >
+                URL 导入
+              </button>
+              <button
+                type="button"
+                :class="{ 'is-active': importInputMode === 'file' }"
+                @click="importInputMode = 'file'"
+              >
+                文件上传
+              </button>
+            </div>
+            <el-input
+              v-if="importInputMode === 'url'"
+              v-model="importUrl"
+              class="api-import-url"
+              :placeholder="importMode === 'swagger' ? 'https://api.example.com/v3/api-docs' : '输入文件远程地址'"
+            />
+            <label v-else class="api-import-upload">
+              <el-icon class="api-import-upload-icon"><Upload /></el-icon>
+              <span>{{ importFileName || '点击或拖拽文件到此处' }}</span>
+              <small>支持 {{ selectedImportCapability.accept }}</small>
+              <input
+                type="file"
+                :accept="selectedImportCapability.accept"
+                @change="handleImportFileChange"
+              >
+            </label>
+          </section>
         </div>
-        <div v-else class="api-import-pending-panel">
-          <strong>{{ importCapabilityItems.find(item => item.mode === importMode)?.name }} 导入待接入</strong>
-          <span>当前后端未提供该导入接口，本页不伪造导入成功。可先使用 Curl 导入单个请求。</span>
-          <button type="button" class="api-dialog-link-button" @click="openCurlFromImportDialog">切换到 Curl</button>
+
+        <div class="api-import-footer">
+          <button type="button" class="api-import-cancel" @click="closeImportDialog">取消</button>
+          <button type="button" class="api-import-submit" @click="submitImportDialog">开始导入</button>
         </div>
       </div>
-      <template #footer>
-        <div class="api-dialog-footer">
-          <button type="button" class="api-dialog-button" @click="closeImportDialog">取消</button>
-          <button type="button" class="api-dialog-button is-primary" @click="submitImportDialog">导入</button>
-        </div>
-      </template>
     </el-dialog>
 
-    <el-dialog v-model="batchAddVisible" :title="batchAddTitle" width="560px" append-to-body>
+    <el-dialog
+      v-model="batchAddVisible"
+      width="560px"
+      append-to-body
+      :show-close="false"
+      class="api-batch-dialog-shell"
+    >
       <div class="api-batch-dialog">
-        <p>{{ batchAddHint }}</p>
-        <el-input
-          v-model="batchAddText"
-          type="textarea"
-          :rows="10"
-          resize="none"
-          :placeholder="batchAddPlaceholder"
-        />
-      </div>
-      <template #footer>
-        <div class="api-dialog-footer">
-          <el-button @click="batchAddVisible = false">取消</el-button>
-          <el-button type="primary" @click="applyBatchAdd">确认添加</el-button>
+        <div class="api-batch-dialog__header">
+          <strong>{{ batchAddTitle }}</strong>
+          <button type="button" class="api-soft-dialog__close" @click="batchAddVisible = false">
+            <el-icon><Close /></el-icon>
+          </button>
         </div>
-      </template>
+        <div class="api-batch-dialog__body">
+          <p>{{ batchAddHint }}</p>
+          <div class="api-batch-dialog__examples">
+            <span>格式示例</span>
+            <code v-for="item in batchAddExamples" :key="item">{{ item }}</code>
+          </div>
+          <div class="api-batch-dialog__notes">
+            <span>空行会自动忽略</span>
+            <span>重复 key 以后输入的值为准</span>
+            <span>无 key 的行不会写入</span>
+          </div>
+          <el-input
+            v-model="batchAddText"
+            type="textarea"
+            :rows="10"
+            resize="none"
+            :placeholder="batchAddPlaceholder"
+          />
+        </div>
+        <div class="api-batch-dialog__footer">
+          <button type="button" class="api-soft-dialog__cancel" @click="batchAddVisible = false">取消</button>
+          <button type="button" class="api-soft-dialog__submit" @click="applyBatchAdd">确认添加</button>
+        </div>
+      </div>
     </el-dialog>
 
     <el-drawer v-model="caseDetailDrawerVisible" size="760px" class="api-case-detail-drawer" append-to-body>
@@ -4117,43 +4346,58 @@ onBeforeUnmount(() => {
 .api-interface-workspace {
   display: flex;
   min-width: 0;
-  height: calc(100dvh - 136px);
+  height: max(760px, calc(100dvh - 104px));
   min-height: 560px;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
-  box-shadow: var(--app-shadow-card);
+  box-shadow: none;
+  transform: translate(8px, -8px);
+  width: calc(100% - 8px);
 }
 
 .api-interface-tabs {
   display: flex;
-  height: 44px;
-  min-height: 44px;
+  height: 48px;
+  min-height: 48px;
   align-items: center;
-  gap: 8px;
-  padding: 0 24px;
+  padding: 6px 24px;
   border-bottom: 1px solid var(--app-border);
+  border-radius: 12px 12px 0 0;
   background: var(--app-bg-panel);
 }
 
+.api-interface-tab-nav {
+  display: inline-flex;
+  width: auto;
+  height: 36px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 3px;
+  border-radius: 10px;
+  background: #f3f4f6;
+}
+
 .api-interface-tab {
-  min-width: 68px;
-  height: 32px;
+  min-width: 64px;
+  height: 30px;
+  padding: 0 18px;
   border: 0;
   border-radius: var(--app-radius-md);
   background: transparent;
   color: var(--app-text-secondary);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 30px;
 }
 
 .api-interface-tab.is-active {
   background: #fff;
   color: var(--app-text-primary);
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
-  font-weight: 700;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
 .api-interface-tab:disabled {
@@ -4165,7 +4409,7 @@ onBeforeUnmount(() => {
   display: grid;
   min-height: 0;
   flex: 1;
-  grid-template-columns: 290px minmax(0, 1fr);
+  grid-template-columns: 272px minmax(0, 1fr);
 }
 
 .api-interface-sidebar {
@@ -4179,8 +4423,9 @@ onBeforeUnmount(() => {
 .api-interface-sidebar__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  padding: 12px 14px 0;
+  gap: 8px;
+  padding: 16px 16px 0;
+  background: #fff;
 }
 
 .api-sidebar-primary,
@@ -4188,18 +4433,18 @@ onBeforeUnmount(() => {
 .api-send-button,
 .api-curl-button {
   display: inline-flex;
-  height: 34px;
+  height: 36px;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-sm);
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
   background: #fff;
   color: var(--app-text-primary);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
-  font-weight: 600;
-  line-height: 1;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
   transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
 }
 
@@ -4210,42 +4455,65 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+.api-sidebar-secondary,
+.api-curl-button {
+  border-color: var(--app-border-strong);
+  color: var(--app-text-secondary);
+}
+
 .api-sidebar-secondary:hover,
 .api-curl-button:hover {
-  background: var(--app-bg-page);
-  border-color: var(--app-primary);
-  color: var(--app-primary);
+  background: #f9fafb;
+  border-color: var(--app-border-strong);
+  color: var(--app-text-primary);
 }
 
 .api-sidebar-primary:hover,
 .api-send-button:hover {
-  border-color: var(--app-primary);
-  background: var(--app-primary);
-  filter: brightness(0.96);
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
 }
 
 .api-sidebar-primary:disabled,
+.api-sidebar-secondary:disabled,
 .api-send-button:disabled {
   cursor: not-allowed;
   opacity: 0.58;
 }
 
+.api-sidebar-secondary:disabled:hover {
+  border-color: var(--app-border-strong);
+  background: #fff;
+  color: var(--app-text-primary);
+}
+
+.api-sidebar-primary :deep(.el-icon),
+.api-sidebar-secondary :deep(.el-icon),
+.api-send-button :deep(.el-icon),
+.api-curl-button :deep(.el-icon) {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
 .api-sidebar-search {
   position: relative;
-  padding: 10px 14px 0;
+  padding: 12px 16px 0;
+  background: #fff;
 }
 
 .api-sidebar-search > .el-icon {
   position: absolute;
   top: 30px;
-  left: 28px;
+  left: 30px;
   z-index: 2;
   color: var(--app-text-subtle);
 }
 
 .api-sidebar-search :deep(.el-input__wrapper) {
-  height: 36px;
-  padding-left: 32px;
+  height: 38px;
+  min-height: 38px;
+  padding-left: 34px;
   border-radius: var(--app-radius-md);
   background: var(--app-bg-page);
   box-shadow: inset 0 0 0 1px var(--app-border-strong);
@@ -4253,13 +4521,16 @@ onBeforeUnmount(() => {
 
 .api-directory-title {
   display: flex;
-  height: 52px;
+  height: 40px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
-  color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
-  font-weight: 700;
+  margin: 12px 12px 0;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--app-border);
+  background: #fff;
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .api-directory-title div {
@@ -4278,12 +4549,12 @@ onBeforeUnmount(() => {
 .api-editor-tab-add,
 .api-editor-tab-more {
   display: inline-flex;
-  width: 34px;
-  height: 34px;
+  width: 24px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-text-muted);
   cursor: pointer;
@@ -4293,13 +4564,22 @@ onBeforeUnmount(() => {
 .api-editor-tab-add:hover,
 .api-editor-tab-more:hover {
   background: var(--app-bg-page);
+  color: var(--app-primary);
+}
+
+.api-editor-tab-add,
+.api-editor-tab-more {
+  width: 36px;
+  height: 40px;
+  border-radius: 0;
 }
 
 .api-directory-body {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 0 8px 12px;
+  padding: 8px 8px 12px;
+  background: #fff;
 }
 
 .api-directory-error {
@@ -4322,11 +4602,12 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-tree :deep(.el-tree-node__content:hover) {
-  background: var(--app-primary-soft);
+  background: var(--app-bg-muted);
 }
 
 .api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
   background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .api-directory-node {
@@ -4340,7 +4621,7 @@ onBeforeUnmount(() => {
 
 .api-directory-node__action {
   display: inline-flex;
-  width: 28px;
+  width: 24px;
   height: 28px;
   align-items: center;
   justify-content: center;
@@ -4382,10 +4663,13 @@ onBeforeUnmount(() => {
 }
 
 .api-method {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
   flex: 0 0 auto;
   font-size: 12px;
-  font-weight: 800;
-  line-height: 16px;
+  font-weight: 600;
+  line-height: 18px;
 }
 
 .method-get { color: #00875a; }
@@ -4421,25 +4705,40 @@ onBeforeUnmount(() => {
 }
 
 .api-editor-tab {
+  position: relative;
   display: inline-flex;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   max-width: 220px;
   height: 40px;
+  min-height: 40px;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
+  gap: 6px;
+  padding: 0 16px;
   border: 0;
   border-right: 1px solid var(--app-border);
+  border-bottom: 3px solid transparent;
   background: var(--app-bg-page);
   color: var(--app-text-secondary);
   cursor: pointer;
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
 }
 
+.api-editor-tab:hover,
 .api-editor-tab.is-active {
   background: #fff;
   color: var(--app-text-primary);
 }
 
+.api-editor-tab.is-active {
+  border-bottom-color: var(--app-primary);
+}
+
 .api-editor-tab__label {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4447,15 +4746,40 @@ onBeforeUnmount(() => {
 }
 
 .api-editor-tab__dot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
-  background: var(--app-warning);
+  background: var(--app-primary);
 }
 
 .api-editor-tab__close {
   display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
   color: var(--app-text-subtle);
+  opacity: 0;
+  flex: 0 0 auto;
+  transition: opacity 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+
+.api-editor-tab.is-active .api-editor-tab__close {
+  background: transparent;
+  color: #667085;
+  opacity: 0.42;
+}
+
+.api-editor-tab:hover .api-editor-tab__close {
+  background: rgba(15, 23, 42, 0.08);
+  color: #344054;
+  opacity: 1;
+}
+
+.api-editor-tab__close :deep(.el-icon) {
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .api-editor-empty {
@@ -4477,33 +4801,37 @@ onBeforeUnmount(() => {
 }
 
 .api-request-line {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) 96px auto;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px 8px;
+  gap: 10px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--app-border);
+  background: #fff;
 }
 
 .api-url-compose {
   display: grid;
-  min-width: 360px;
-  flex: 1 1 460px;
-  grid-template-columns: 104px minmax(0, 1fr) 68px;
+  min-width: 0;
+  grid-template-columns: 112px minmax(0, 1fr) 68px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: #fff;
 }
 
 .api-run-options {
-  order: 3;
-  display: flex;
-  flex: 1 1 100%;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding-left: 114px;
+  display: none;
 }
 
 .api-run-options .el-select {
   width: 160px;
+}
+
+.api-run-options :deep(.el-select__wrapper) {
+  min-height: 32px;
+  border-radius: var(--app-radius-md);
 }
 
 .api-run-options small {
@@ -4523,53 +4851,122 @@ onBeforeUnmount(() => {
 .api-method-select :deep(.el-select__wrapper),
 .api-url-compose :deep(.el-input__wrapper),
 .api-curl-button {
-  height: 36px;
+  height: 38px;
+  min-height: 38px;
   border-radius: 0;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .api-method-select :deep(.el-select__wrapper) {
-  border-radius: var(--app-radius-md) 0 0 var(--app-radius-md);
-  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+  border-right: 1px solid var(--app-border);
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.api-method-select.method-get :deep(.el-select__selected-item),
+.api-method-select.method-get :deep(.el-select__placeholder) {
+  color: #00875a;
+}
+
+.api-method-select.method-post :deep(.el-select__selected-item),
+.api-method-select.method-post :deep(.el-select__placeholder) {
+  color: #e8590c;
+}
+
+.api-method-select.method-delete :deep(.el-select__selected-item),
+.api-method-select.method-delete :deep(.el-select__placeholder) {
+  color: #dc2626;
 }
 
 .api-url-compose :deep(.el-input__wrapper) {
-  box-shadow: inset 0 1px 0 0 var(--app-border-strong), inset 0 -1px 0 0 var(--app-border-strong);
+  padding-inline: 14px;
+  box-shadow: none;
 }
 
 .api-curl-button {
-  border-radius: 0 var(--app-radius-md) var(--app-radius-md) 0;
+  border-width: 0 0 0 1px;
+  border-color: var(--app-border);
   color: var(--app-primary);
+  font-size: 12px;
 }
 
 .api-send-button {
-  width: 92px;
-  height: 36px;
+  width: 96px;
+  min-width: 96px;
+  height: 38px;
+  padding: 0 16px;
 }
 
 .api-save-dropdown {
-  width: 116px;
+  width: 113px;
 }
 
 .api-save-dropdown :deep(.el-button),
 .api-save-dropdown :deep(.el-button-group > .el-button) {
-  height: 36px;
-  border-radius: var(--app-radius-sm);
-  font-weight: 600;
+  height: 38px;
+  border-color: var(--app-border-strong);
+  background: #fff;
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .api-save-dropdown :deep(.el-button-group > .el-button:first-child) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
+  padding-inline: 14px;
 }
 
 .api-save-dropdown :deep(.el-button-group > .el-button:last-child) {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
+  padding-inline: 9px;
 }
 
-.api-save-dropdown :deep(.el-button--primary) {
-  border-color: var(--app-primary);
-  background: var(--app-primary);
+.api-save-dropdown :deep(.el-button:hover:not(.is-disabled)) {
+  border-color: var(--app-text-subtle);
+  background: var(--app-bg-page);
+  color: var(--app-text-primary);
+}
+
+.api-save-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu__item) {
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu) {
+  min-width: 120px;
+  padding: 4px;
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu__item:hover) {
+  background: var(--app-bg-page);
+  color: var(--app-text-primary);
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu__item .el-icon) {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu__item.is-danger) {
+  color: var(--app-danger);
+}
+
+:global(.api-save-dropdown-menu .el-dropdown-menu__item.is-danger:hover) {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
 }
 
 .api-editor-scroll {
@@ -4577,60 +4974,85 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
 }
 
 .api-content-tabs,
 .api-response-tabs {
   display: flex;
-  height: 40px;
+  height: 46px;
+  min-height: 46px;
   align-items: center;
   gap: 0;
-  padding: 0 14px;
+  overflow: hidden;
+  padding: 0 16px;
   border-bottom: 1px solid var(--app-border);
+  background: #fff;
 }
 
 .api-content-tab,
 .api-response-tabs button {
   position: relative;
-  height: 40px;
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 45px;
+  align-items: center;
+  gap: 6px;
   border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  color: var(--app-text-secondary);
+  color: var(--app-text-muted);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
-  padding: 0 10px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  padding: 0 12px;
+  white-space: nowrap;
 }
 
 .api-content-tab.is-active,
 .api-response-tabs button.is-active {
+  border-bottom-color: var(--app-primary);
   color: var(--app-primary);
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .api-content-tab.is-active::after,
 .api-response-tabs button.is-active::after {
-  position: absolute;
-  right: 12px;
-  bottom: 0;
-  left: 12px;
-  height: 2px;
-  background: var(--app-primary);
-  content: '';
+  content: none;
+}
+
+.api-response-tabs {
+  height: 41px;
+  min-height: 41px;
+}
+
+.api-response-tabs button {
+  height: 41px;
 }
 
 .api-tab-badge {
-  margin-left: 4px;
-  color: var(--app-text-subtle);
-  font-size: 11px;
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #d4d4d8;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 5px;
 }
 
 .api-request-body {
-  min-height: 260px;
-  flex: 1 1 320px;
+  min-height: 362px;
+  flex: 0 0 362px;
   overflow: auto;
-  padding: 10px 14px 12px;
-  border-bottom: 1px solid var(--app-border);
+  padding: 8px 16px 16px;
+  border-bottom: 0;
   background: #fff;
 }
 
@@ -4638,31 +5060,45 @@ onBeforeUnmount(() => {
   overflow: auto;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
+  background: #fff;
 }
 
 .api-param-toolbar {
   display: flex;
   min-width: 0;
-  height: 34px;
+  height: 40px;
   align-items: center;
   justify-content: space-between;
   padding: 0 10px;
   border-bottom: 1px solid var(--app-border);
   background: #fff;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .api-param-toolbar button,
 .api-advanced-actions button,
 .api-case-actions button {
+  min-height: 28px;
+  padding: 0 4px;
   border: 0;
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.api-param-toolbar button:hover,
+.api-advanced-actions button:hover,
+.api-case-actions button:hover,
+.api-row-remove:hover,
+.api-add-row:hover {
+  background: #eff6ff;
+  color: var(--app-primary-hover);
 }
 
 .api-param-header,
@@ -4672,7 +5108,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 42px 1.1fr 48px 120px 1.1fr 170px 74px 1fr 64px;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 5px 10px 5px 0;
 }
 
 .api-param-table.is-header .api-param-header,
@@ -4688,22 +5124,34 @@ onBeforeUnmount(() => {
 }
 
 .api-param-header {
-  min-height: 32px;
-  background: var(--app-bg-page);
+  min-height: 40px;
+  padding-right: 10px;
+  background: #f9fafb;
   color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .api-param-row {
-  min-height: 36px;
-  border-top: 1px solid var(--app-border-soft);
+  min-height: 40px;
+  border-bottom: 1px solid var(--app-border-soft);
+  transition: background-color 0.15s ease;
+}
+
+.api-param-row:hover {
+  background: #f9fafb;
+}
+
+.api-param-row:last-of-type {
+  border-bottom: 0;
 }
 
 .api-param-row :deep(.el-input__wrapper),
 .api-param-row :deep(.el-select__wrapper),
 .api-param-row :deep(.el-input-number) {
-  min-height: 28px;
+  min-height: 30px;
+  box-shadow: none;
 }
 
 .api-length-range {
@@ -4719,17 +5167,32 @@ onBeforeUnmount(() => {
 
 .api-row-remove,
 .api-add-row {
+  min-height: 28px;
+  padding: 0 6px;
   border: 0;
+  border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .api-add-row {
   height: 32px;
   padding-left: 14px;
+}
+
+.api-row-remove,
+.api-case-actions .is-danger {
+  color: var(--app-danger);
+}
+
+.api-row-remove:hover,
+.api-case-actions .is-danger:hover {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
 }
 
 .api-body-section {
@@ -4791,8 +5254,10 @@ onBeforeUnmount(() => {
 }
 
 .api-empty-body {
-  min-height: 180px;
-  border-radius: var(--app-radius-lg);
+  min-height: 100px;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  font-size: 13px;
 }
 
 .api-binary-panel,
@@ -4806,6 +5271,19 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 12px;
   max-width: none;
+}
+
+.api-cases-panel,
+.api-assertion-panel,
+.api-extractor-panel,
+.api-processor-panel {
+  min-height: 0;
+}
+
+.api-assertion-panel,
+.api-extractor-panel,
+.api-processor-panel {
+  padding-bottom: 2px;
 }
 
 .api-auth-grid,
@@ -4938,8 +5416,13 @@ onBeforeUnmount(() => {
 
 .api-case-detail-drawer :deep(.el-drawer__header) {
   margin-bottom: 0;
-  padding: 16px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--app-border);
+}
+
+.api-case-detail-drawer :deep(.el-drawer__body) {
+  padding: 0;
+  background: var(--app-bg-panel);
 }
 
 .api-case-drawer-header {
@@ -4950,7 +5433,7 @@ onBeforeUnmount(() => {
 
 .api-case-drawer-header strong {
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-lg);
+  font-size: 16px;
 }
 
 .api-case-drawer-header span {
@@ -4963,8 +5446,8 @@ onBeforeUnmount(() => {
 
 .api-case-drawer-body {
   display: grid;
-  gap: 14px;
-  padding: 16px 20px 20px;
+  gap: 12px;
+  padding: 14px 18px 18px;
 }
 
 .api-case-drawer-tabs {
@@ -4998,7 +5481,7 @@ onBeforeUnmount(() => {
 
 .api-case-detail-panel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .api-case-summary-grid {
@@ -5011,7 +5494,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-subtle);
@@ -5079,9 +5562,9 @@ onBeforeUnmount(() => {
 .api-case-config-block {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
-  padding: 10px;
+  padding: 9px 10px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-subtle);
@@ -5153,8 +5636,8 @@ onBeforeUnmount(() => {
 
 .api-case-history-panel {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 12px;
   min-height: 460px;
 }
 
@@ -5213,27 +5696,28 @@ onBeforeUnmount(() => {
 
 .api-ai-case-drawer :deep(.el-drawer__header) {
   margin-bottom: 0;
-  padding: 16px 20px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--app-border);
 }
 
 .api-ai-case-drawer :deep(.el-drawer__body) {
   padding: 0;
+  background: var(--app-bg-panel);
 }
 
 .api-ai-case-body {
   display: grid;
-  gap: 14px;
-  padding: 16px 20px 20px;
+  gap: 12px;
+  padding: 14px 18px 18px;
 }
 
 .api-ai-case-section {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  padding: 10px 12px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
 
@@ -5316,7 +5800,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border: 1px solid var(--app-border-soft);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-page);
@@ -5365,9 +5849,9 @@ onBeforeUnmount(() => {
 
 .api-ai-result-card {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 10px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-subtle);
@@ -5425,6 +5909,30 @@ onBeforeUnmount(() => {
 .api-ai-result-status.is-discarded {
   background: var(--app-bg-muted);
   color: var(--app-text-muted);
+}
+
+.api-ai-case-detail-dialog :deep(.el-dialog) {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.api-ai-case-detail-dialog :deep(.el-dialog__header) {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  margin-right: 0;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-ai-case-detail-dialog :deep(.el-dialog__title) {
+  color: var(--app-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.api-ai-case-detail-dialog :deep(.el-dialog__headerbtn) {
+  top: 12px;
 }
 
 .api-ai-case-detail-dialog :deep(.el-dialog__body) {
@@ -5561,7 +6069,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 10px 12px;
+  min-height: 38px;
+  padding: 8px 10px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-page);
@@ -5594,7 +6103,8 @@ onBeforeUnmount(() => {
 .api-processor-list {
   overflow: auto;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
+  background: #fff;
 }
 
 .api-assertion-header,
@@ -5604,7 +6114,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 64px 1.1fr 140px 130px 1fr 1fr 64px;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
 }
 
 .api-assertion-header {
@@ -5615,24 +6125,25 @@ onBeforeUnmount(() => {
 }
 
 .api-assertion-row {
+  min-height: 40px;
   border-top: 1px solid var(--app-border-soft);
 }
 
 .api-assertion-editor {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  min-height: 320px;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 312px;
   overflow: hidden;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
 
 .api-assertion-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  gap: 5px;
+  padding: 8px;
   overflow: auto;
   border-right: 1px solid var(--app-border-soft);
   background: var(--app-bg-page);
@@ -5642,7 +6153,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 4px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 7px 9px;
   border: 1px solid transparent;
   border-radius: var(--app-radius-md);
   background: transparent;
@@ -5680,9 +6191,9 @@ onBeforeUnmount(() => {
 .api-assertion-detail {
   display: grid;
   align-content: start;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
-  padding: 12px;
+  padding: 10px 12px;
   overflow: auto;
 }
 
@@ -5708,9 +6219,9 @@ onBeforeUnmount(() => {
 
 .api-assertion-type-panel {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  padding: 10px;
+  padding: 9px 10px;
   border: 1px solid var(--app-border-soft);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-subtle);
@@ -5744,7 +6255,7 @@ onBeforeUnmount(() => {
 
 .api-assertion-item-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -5753,7 +6264,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  padding: 8px;
+  padding: 7px 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
@@ -5791,7 +6302,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 56px 150px 130px 130px minmax(180px, 1.2fr) 140px 120px 72px 88px minmax(140px, 1fr) 64px;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
+  padding: 6px 10px;
 }
 
 .api-extractor-header {
@@ -5802,6 +6313,7 @@ onBeforeUnmount(() => {
 }
 
 .api-extractor-row {
+  min-height: 40px;
   border-top: 1px solid var(--app-border-soft);
 }
 
@@ -5829,8 +6341,8 @@ onBeforeUnmount(() => {
 
 .api-processor-card {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 7px;
+  padding: 9px 10px;
   border-top: 1px solid var(--app-border-soft);
 }
 
@@ -5856,7 +6368,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   align-items: center;
-  gap: 10px 12px;
+  gap: 8px 10px;
 }
 
 .api-processor-config-grid label {
@@ -5894,7 +6406,7 @@ onBeforeUnmount(() => {
 
 .api-processor-extract-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   overflow: auto;
 }
@@ -5905,7 +6417,7 @@ onBeforeUnmount(() => {
   grid-template-columns: 48px 130px 130px 118px 130px 128px minmax(180px, 1fr) minmax(140px, 0.8fr) auto auto;
   align-items: center;
   gap: 8px;
-  padding: 8px;
+  padding: 7px 8px;
   border: 1px solid var(--app-border-soft);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-subtle);
@@ -5930,19 +6442,24 @@ onBeforeUnmount(() => {
 }
 
 .api-response-shell {
+  position: relative;
   display: flex;
-  min-height: 220px;
-  flex: 0 0 250px;
+  min-height: 360px;
+  flex: 0 0 360px;
   flex-direction: column;
+  border-top: 1px solid var(--app-border);
   background: #fff;
 }
 
 .api-response-resizer {
-  position: relative;
+  position: absolute;
+  z-index: 5;
+  top: -3px;
+  right: 0;
+  left: 0;
   height: 6px;
-  flex: 0 0 6px;
-  border-top: 1px solid var(--app-border);
-  background: var(--app-bg-page);
+  flex: none;
+  background: transparent;
   cursor: row-resize;
 }
 
@@ -5960,16 +6477,20 @@ onBeforeUnmount(() => {
 
 .api-response-header {
   display: flex;
-  height: 40px;
+  min-height: 40px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--app-border);
+  background: #fff;
 }
 
 .api-response-header strong {
-  font-size: var(--app-font-size-sm);
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .api-response-header__right {
@@ -5982,9 +6503,10 @@ onBeforeUnmount(() => {
 .api-response-metrics {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  gap: 8px;
+  color: var(--app-text-subtle);
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .api-response-case-button {
@@ -6008,44 +6530,47 @@ onBeforeUnmount(() => {
 }
 
 .api-response-pill {
-  padding: 2px 8px;
+  padding: 0;
   border-radius: 999px;
-  background: var(--app-bg-page);
+  background: transparent;
+  color: var(--app-text-subtle);
 }
 
 .api-response-pill.is-success {
-  background: var(--app-success-soft);
   color: var(--app-success);
 }
 
 .api-response-pill.is-danger {
-  background: var(--app-danger-soft);
   color: var(--app-danger);
 }
 
 .api-response-pill.is-warning {
-  background: var(--app-warning-soft);
   color: var(--app-warning);
 }
 
 .api-response-content {
-  min-height: 220px;
+  display: flex;
+  min-height: 300px;
   flex: 1;
+  flex-direction: column;
   overflow: auto;
 }
 
 .api-response-empty {
   display: flex;
-  min-height: 220px;
+  min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 12px;
+  padding: 12px 0 4px;
   color: var(--app-text-muted);
 }
 
 .api-response-empty__window {
   display: flex;
+  align-items: center;
   gap: 5px;
   padding: 8px 10px;
   border: 1px solid var(--app-border);
@@ -6058,19 +6583,23 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 999px;
   background: var(--app-text-subtle);
+  opacity: 0.6;
 }
 
 .api-response-empty p {
   margin: 0;
-  font-size: var(--app-font-size-sm);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .api-response-empty b {
   color: var(--app-primary);
+  font-weight: 500;
 }
 
 .api-response-pre {
-  min-height: 180px;
+  min-height: 260px;
   max-height: none;
   overflow: auto;
   margin: 0;
@@ -6083,156 +6612,650 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
+.api-response-error-banner {
+  margin: 10px 16px 0;
+  padding: 9px 12px;
+  border: 1px solid #fecaca;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
 .api-directory-empty,
 .api-import-dialog {
+  display: grid;
+  gap: 0;
+}
+
+.api-import-dialog-shell :deep(.el-dialog) {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 16px;
+  box-shadow: var(--app-shadow-overlay);
+}
+
+.api-import-dialog-shell :deep(.el-dialog__header),
+.api-import-dialog-shell :deep(.el-dialog__body) {
+  margin: 0;
+  padding: 0;
+}
+
+:global(.el-dialog.api-import-dialog-shell) {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 16px;
+  box-shadow: var(--app-shadow-overlay);
+}
+
+:global(.el-dialog.api-import-dialog-shell .el-dialog__header),
+:global(.el-dialog.api-import-dialog-shell .el-dialog__body) {
+  margin: 0;
+  padding: 0;
+}
+
+:global(.el-dialog.api-import-dialog-shell .el-dialog__header) {
+  display: none;
+}
+
+.api-import-dialog {
+  overflow: hidden;
+  background: #fff;
+}
+
+.api-import-header,
+.api-import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.api-import-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-import-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--app-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.api-import-title-icon {
+  color: #3b82f6;
+  font-size: 20px;
+}
+
+.api-import-close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--app-text-subtle);
+  cursor: pointer;
+}
+
+.api-import-close:hover {
+  background: var(--app-bg-muted);
+  color: var(--app-text-secondary);
+}
+
+.api-import-body {
+  display: grid;
+  gap: 20px;
+  height: 436px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.api-import-section {
   display: grid;
   gap: 12px;
 }
 
-.api-import-dialog-shell :deep(.el-dialog__body) {
-  padding: 10px 18px 8px;
-}
-
-.api-import-dialog-shell :deep(.el-dialog__footer) {
-  padding: 10px 18px 16px;
-  border-top: 1px solid var(--app-border-soft);
-}
-
-.api-import-mode-list {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.api-import-mode {
-  display: flex;
-  min-height: 76px;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-sm);
-  background: #fff;
+.api-import-section-title {
   color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.api-import-format-list {
+  display: grid;
+  gap: 8px;
+}
+
+.api-import-format {
+  display: grid;
+  width: 100%;
+  min-height: 64px;
+  grid-template-columns: 36px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 2px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
   cursor: pointer;
   text-align: left;
-  transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.api-import-mode:hover,
-.api-import-mode.is-active {
-  border-color: var(--app-primary);
-  background: var(--app-primary-soft);
+.api-import-format:hover {
+  border-color: var(--app-border-strong);
+  background: var(--app-bg-page);
 }
 
-.api-import-mode.is-active {
-  box-shadow: inset 0 0 0 1px var(--app-primary);
+.api-import-format.is-active.is-green {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
 }
 
-.api-import-mode.is-disabled:not(.is-active) {
-  background: var(--app-bg-subtle);
+.api-import-format.is-active.is-orange {
+  border-color: #fed7aa;
+  background: #fff7ed;
 }
 
-.api-import-mode > div {
+.api-import-format.is-active.is-purple {
+  border-color: #e9d5ff;
+  background: #faf5ff;
+}
+
+.api-import-format-icon,
+.api-import-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+}
+
+.api-import-format-icon {
+  width: 36px;
+  height: 36px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-subtle);
+}
+
+.api-import-format.is-active.is-green .api-import-format-icon {
+  background: #dcfce7;
+  color: var(--app-success);
+}
+
+.api-import-format.is-active.is-orange .api-import-format-icon {
+  background: #ffedd5;
+  color: var(--app-warning);
+}
+
+.api-import-format.is-active.is-purple .api-import-format-icon {
+  background: #f3e8ff;
+  color: var(--app-purple);
+}
+
+.api-import-format-copy {
   display: grid;
-  gap: 4px;
   min-width: 0;
+  gap: 3px;
 }
 
-.api-import-mode strong,
-.api-import-panel-head strong,
-.api-import-pending-panel strong {
+.api-import-format-copy > span {
   color: var(--app-text-primary);
   font-size: var(--app-font-size-sm);
+  font-weight: 600;
 }
 
-.api-import-mode span,
-.api-import-panel-head span,
-.api-import-pending-panel span {
+.api-import-format-copy small {
+  overflow: hidden;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
-  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.api-import-mode em {
-  width: fit-content;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--app-bg-muted);
-  color: var(--app-text-muted);
-  font-size: 11px;
-  font-style: normal;
-}
-
-.api-import-mode.is-active em {
-  background: #fff;
+.api-import-check {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--app-border-strong);
   color: var(--app-primary);
 }
 
-.api-import-curl-panel,
-.api-import-pending-panel {
-  display: grid;
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
-}
-
-.api-import-panel-head,
-.api-import-pending-panel {
-  align-content: start;
-}
-
-.api-import-panel-head {
-  display: grid;
-  gap: 4px;
-}
-
-.api-import-curl-panel :deep(.el-textarea__inner) {
-  min-height: 176px;
-  border-radius: var(--app-radius-sm);
-  font-family: Consolas, Monaco, monospace;
+.api-import-check :deep(.el-icon) {
   font-size: 12px;
-  line-height: 1.6;
 }
 
-.api-dialog-button,
-.api-dialog-link-button {
+.api-import-mode-switch {
   display: inline-flex;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
+  width: fit-content;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--app-bg-muted);
+}
+
+.api-import-mode-switch button {
+  height: 30px;
   padding: 0 14px;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-sm);
-  background: #fff;
+  border: 0;
+  border-radius: var(--app-radius-md);
+  background: transparent;
   color: var(--app-text-secondary);
   cursor: pointer;
   font-size: var(--app-font-size-sm);
   font-weight: 600;
 }
 
-.api-dialog-button:hover,
-.api-dialog-link-button:hover {
-  border-color: var(--app-primary);
+.api-import-mode-switch button.is-active {
+  background: #fff;
   color: var(--app-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
-.api-dialog-button.is-primary {
+.api-import-url :deep(.el-input__wrapper) {
+  min-height: 42px;
+  border-radius: var(--app-radius-md);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-import-url :deep(.el-input__wrapper.is-focus) {
+  box-shadow: inset 0 0 0 1px var(--app-primary), 0 0 0 2px rgba(37, 99, 235, 0.16);
+}
+
+.api-import-upload {
+  display: flex;
+  min-height: 112px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.api-import-upload:hover {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.api-import-upload input {
+  display: none;
+}
+
+.api-import-upload-icon {
+  color: var(--app-text-subtle);
+  font-size: 24px;
+}
+
+.api-import-upload small {
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-import-footer {
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--app-border-soft);
+  background: var(--app-bg-page);
+}
+
+.api-import-cancel,
+.api-import-submit {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
+  cursor: pointer;
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+}
+
+.api-import-cancel {
+  border-color: var(--app-border-strong);
+  background: #fff;
+  color: var(--app-text-secondary);
+}
+
+.api-import-cancel:hover {
+  background: var(--app-bg-muted);
+}
+
+.api-import-submit {
   border-color: var(--app-primary);
   background: var(--app-primary);
   color: #fff;
 }
 
-.api-dialog-link-button {
-  width: fit-content;
+.api-import-submit:hover {
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
 }
 
-.api-batch-dialog p {
+.api-soft-dialog-shell :deep(.el-dialog) {
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
+}
+
+.api-soft-dialog-shell :deep(.el-dialog__header),
+.api-soft-dialog-shell :deep(.el-dialog__body) {
+  padding: 0;
+}
+
+:global(.el-dialog.api-soft-dialog-shell) {
+  overflow: hidden;
+  padding: 0;
+  border-radius: 16px;
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
+}
+
+:global(.el-dialog.api-soft-dialog-shell .el-dialog__header),
+:global(.el-dialog.api-soft-dialog-shell .el-dialog__body) {
+  margin: 0;
+  padding: 0;
+}
+
+:global(.el-dialog.api-soft-dialog-shell .el-dialog__header) {
+  display: none;
+}
+
+.api-soft-dialog {
+  background: #fff;
+}
+
+.api-soft-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 64px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-soft-dialog__header strong {
+  color: var(--app-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.api-soft-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--app-radius-md);
+  background: transparent;
   color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.api-soft-dialog__close:hover {
+  background: var(--app-bg-muted);
+  color: var(--app-text-primary);
+}
+
+.api-soft-dialog__body {
+  padding: 24px;
+}
+
+.api-soft-dialog__body p {
+  margin: 0 0 12px;
+  color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
+.api-soft-dialog__body :deep(.el-input__wrapper),
+.api-soft-dialog__body :deep(.el-textarea__inner) {
+  border-radius: var(--app-radius-md);
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+.api-soft-dialog__body :deep(.el-textarea__inner) {
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.api-soft-dialog__error {
+  margin-top: 8px;
+  color: var(--app-danger);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-soft-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--app-border-soft);
+  background: #fff;
+}
+
+.api-soft-dialog__cancel,
+.api-soft-dialog__submit {
+  height: 36px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
+  cursor: pointer;
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+}
+
+.api-soft-dialog__cancel {
+  border-color: var(--app-border-strong);
+  background: #fff;
+  color: var(--app-text-secondary);
+}
+
+.api-soft-dialog__cancel:hover {
+  background: var(--app-bg-muted);
+}
+
+.api-soft-dialog__submit {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
+  color: #fff;
+}
+
+.api-soft-dialog__submit:hover {
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
+}
+
+:global(.api-soft-message-box.el-message-box) {
+  width: 432px;
+  padding: 0;
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
+}
+
+:global(.api-soft-message-box .el-message-box__header) {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+:global(.api-soft-message-box .el-message-box__title) {
+  color: var(--app-text-primary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+:global(.api-soft-message-box .el-message-box__headerbtn) {
+  top: 16px;
+  right: 18px;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--app-radius-md);
+}
+
+:global(.api-soft-message-box .el-message-box__content) {
+  padding: 24px;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+:global(.api-soft-message-box .el-message-box__status) {
+  top: 20px;
+}
+
+:global(.api-soft-message-box .el-message-box__message) {
+  padding-left: 28px;
+  line-height: 20px;
+}
+
+:global(.api-soft-message-box .el-message-box__btns) {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--app-border-soft);
+  background: #fff;
+}
+
+:global(.api-soft-message-box .el-button) {
+  height: 36px;
+  margin-left: 0;
+  padding: 0 16px;
+  border-radius: var(--app-radius-md);
+  font-size: var(--app-font-size-sm);
+  font-weight: 500;
+}
+
+:global(.api-soft-message-box__primary.el-button--primary) {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
+}
+
+:global(.api-soft-message-box__primary.el-button--primary:hover) {
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
+}
+
+:global(.api-soft-message-box__danger.el-button--primary) {
+  border-color: var(--app-danger);
+  background: var(--app-danger);
+}
+
+:global(.api-soft-message-box__danger.el-button--primary:hover) {
+  border-color: #dc2626;
+  background: #dc2626;
+}
+
+.api-batch-dialog-shell :deep(.el-dialog) {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+
+.api-batch-dialog-shell :deep(.el-dialog__header),
+.api-batch-dialog-shell :deep(.el-dialog__body) {
+  padding: 0;
+}
+
+.api-batch-dialog {
+  background: #fff;
+}
+
+.api-batch-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-batch-dialog__header strong {
+  color: var(--app-text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.api-batch-dialog__body {
+  padding: 16px 20px 18px;
+}
+
+.api-batch-dialog__body p {
+  margin: 0 0 12px;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 20px;
+}
+
+.api-batch-dialog__examples {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.api-batch-dialog__examples span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.api-batch-dialog__examples code {
+  color: var(--app-text-primary);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+}
+
+.api-batch-dialog__notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.api-batch-dialog__notes span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-batch-dialog__body :deep(.el-textarea__inner) {
+  min-height: 220px;
+  border-radius: var(--app-radius-md);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+.api-batch-dialog__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--app-border-soft);
+  background: var(--app-bg-page);
 }
 
 .api-directory-empty {
@@ -6257,6 +7280,12 @@ onBeforeUnmount(() => {
 .api-dialog-footer :deep(.el-button--primary) {
   border-color: var(--app-primary);
   background: var(--app-primary);
+}
+
+@media (max-width: 1480px) {
+  .api-interface-shell {
+    grid-template-columns: 272px minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1180px) {
