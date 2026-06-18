@@ -69,6 +69,7 @@ watch(selectedWorkspaceCode, (value) => {
       <ApiInterfaceWorkspace
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
+        :workspaces="workspaces"
         @loaded="handleWorkspaceDataLoaded"
       />
     </div>

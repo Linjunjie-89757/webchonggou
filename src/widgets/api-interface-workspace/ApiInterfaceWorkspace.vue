@@ -2,26 +2,30 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import {
   Close,
-  Delete,
-  Document,
-  DocumentCopy,
-  Files,
   Fold,
-  Folder,
-  FolderOpened,
-  Check,
-  Link,
   MoreFilled,
   Plus,
   Search,
   VideoPlay,
   Upload,
 } from '@element-plus/icons-vue'
+import {
+  Check as LucideCheck,
+  FileJson as LucideFileJson,
+  FileText as LucideFileText,
+  Folder as LucideFolder,
+  FolderOpen as LucideFolderOpen,
+  Link as LucideLink,
+  MoreHorizontal as LucideMoreHorizontal,
+  Plus as LucidePlus,
+  Save as LucideSave,
+  Upload as LucideUpload,
+  X as LucideX,
+} from '@lucide/vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   apiAutomationApi,
-  apiMethodOptions,
   type ApiAiCaseGenerationEvent,
   type ApiAiCaseGenerationOptionPayload,
   type ApiAiGeneratedCaseDraft,
@@ -42,12 +46,13 @@ import {
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
 import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
+import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 
 type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases'
 type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
-type DirectoryNodeType = 'root' | 'module' | 'request' | 'unassigned'
+type DirectoryNodeType = 'root' | 'workspace' | 'module' | 'request' | 'unassigned'
 type BodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT' | 'BINARY'
 type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
@@ -58,6 +63,8 @@ type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
+
+const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -171,6 +178,7 @@ interface DirectoryNode {
   moduleId: number | null
   workspaceCode: string
   definitionId: number | null
+  fullPath?: string | null
   method?: string
   definition?: ApiDefinitionItem
   children: DirectoryNode[]
@@ -193,6 +201,7 @@ interface EditorTab {
 const props = defineProps<{
   workspaceCode: string
   workspaceReady?: boolean
+  workspaces?: WorkspaceItem[]
 }>()
 
 const emit = defineEmits<{
@@ -337,7 +346,7 @@ const importCapabilityItems: Array<{
     description: '支持 Swagger 2.0 / OpenAPI 3.x',
     status: '待后端接口',
     accept: '.json,.yaml,.yml',
-    icon: Link,
+    icon: LucideLink,
     tone: 'green',
   },
   {
@@ -346,7 +355,7 @@ const importCapabilityItems: Array<{
     description: '支持 Postman v2.0 / v2.1 格式',
     status: '待后端接口',
     accept: '.json',
-    icon: Document,
+    icon: LucideFileJson,
     tone: 'orange',
   },
   {
@@ -355,7 +364,7 @@ const importCapabilityItems: Array<{
     description: '浏览器导出的 HTTP 存档文件',
     status: '待后端接口',
     accept: '.har',
-    icon: Files,
+    icon: LucideFileText,
     tone: 'purple',
   },
 ]
@@ -631,37 +640,111 @@ const filteredDefinitions = computed(() => {
 })
 
 const directoryTree = computed<DirectoryNode[]>(() => {
-  const moduleNodes = modules.value.map(mapModuleNode)
-  const buckets = new Map<string, DirectoryNode>()
+  type MutableNode = DirectoryNode & { childMap?: Map<string, MutableNode> }
+  const workspaceCodes: string[] = props.workspaceCode === 'ALL'
+    ? Array.from(new Set([
+        ...(props.workspaces || [])
+          .map(item => item.workspaceCode || item.code || '')
+          .filter((code): code is string => Boolean(code) && code !== 'ALL'),
+        ...modules.value
+          .map(item => item.workspaceCode || '')
+          .filter((code): code is string => Boolean(code)),
+        ...filteredDefinitions.value
+          .map(item => item.workspaceCode || '')
+          .filter((code): code is string => Boolean(code)),
+      ]))
+    : [props.workspaceCode]
 
-  function index(nodes: DirectoryNode[]) {
-    nodes.forEach((node) => {
-      if (node.type === 'module') {
-        buckets.set(node.label, node)
-        const shortName = node.label.split('/').pop()
-        if (shortName) {
-          buckets.set(shortName, node)
-        }
+  const workspaceNodes: MutableNode[] = workspaceCodes.map((code): MutableNode => {
+    const workspace = (props.workspaces || []).find(item => (item.workspaceCode || item.code) === code)
+    return {
+      key: `workspace:${code}`,
+      type: 'workspace' as const,
+      label: workspace?.workspaceName || workspace?.name || code,
+      count: 0,
+      moduleId: null,
+      workspaceCode: code,
+      definitionId: null,
+      fullPath: null,
+      children: [],
+      childMap: new Map<string, MutableNode>(),
+    }
+  })
+  const workspaceMap = new Map(workspaceNodes.map(item => [item.workspaceCode, item]))
+  const unassignedRequestMap = new Map<string, MutableNode[]>()
+
+  const ensureNode = (
+    parentChildren: MutableNode[],
+    parentMap: Map<string, MutableNode>,
+    workspaceCode: string,
+    label: string,
+    fullPath: string,
+    moduleId: number | null,
+  ) => {
+    let node = parentMap.get(fullPath)
+    if (!node) {
+      node = {
+        key: `module:${workspaceCode}:${fullPath}`,
+        type: 'module',
+        label,
+        count: 0,
+        moduleId,
+        workspaceCode,
+        definitionId: null,
+        fullPath,
+        children: [],
+        childMap: new Map<string, MutableNode>(),
       }
-      index(node.children)
+      parentMap.set(fullPath, node)
+      parentChildren.push(node)
+    }
+    if (moduleId != null) {
+      node.moduleId = moduleId
+    }
+    return node
+  }
+
+  const flattenModules = (items: ApiDefinitionModuleItem[]) => {
+    const result: ApiDefinitionModuleItem[] = []
+    const walk = (moduleItems: ApiDefinitionModuleItem[]) => {
+      moduleItems.forEach((item) => {
+        result.push(item)
+        walk(item.children || [])
+      })
+    }
+    walk(items)
+    return result
+  }
+
+  flattenModules(modules.value).forEach((item) => {
+    const workspaceNode = workspaceMap.get(item.workspaceCode)
+    if (!workspaceNode) return
+    const path = (item.fullPath || item.name || '').trim()
+    if (!path) return
+    const segments = path.split('/').map(part => part.trim()).filter(Boolean)
+    let currentChildren = workspaceNode.children as MutableNode[]
+    let currentMap = workspaceNode.childMap ?? new Map<string, MutableNode>()
+    let assembled = ''
+    segments.forEach((segment, index) => {
+      assembled = assembled ? `${assembled}/${segment}` : segment
+      const node = ensureNode(
+        currentChildren,
+        currentMap,
+        item.workspaceCode,
+        segment,
+        assembled,
+        index === segments.length - 1 ? item.id : null,
+      )
+      currentChildren = node.children as MutableNode[]
+      currentMap = node.childMap ?? new Map<string, MutableNode>()
     })
-  }
-
-  index(moduleNodes)
-
-  const unassigned: DirectoryNode = {
-    key: 'definition-unassigned',
-    type: 'unassigned',
-    label: '未规划请求',
-    count: 0,
-    moduleId: null,
-    workspaceCode: props.workspaceCode,
-    definitionId: null,
-    children: [],
-  }
+  })
 
   filteredDefinitions.value.forEach((item) => {
-    const requestNode: DirectoryNode = {
+    const workspaceNode = workspaceMap.get(item.workspaceCode)
+    if (!workspaceNode) return
+    const path = (item.directoryName || '').trim()
+    const requestNode: MutableNode = {
       key: `request:${item.id}`,
       type: 'request',
       label: item.name,
@@ -669,45 +752,101 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       moduleId: null,
       workspaceCode: item.workspaceCode,
       definitionId: item.id,
+      fullPath: path || null,
       method: item.method,
       definition: item,
       children: [],
     }
-    const target = item.directoryName ? buckets.get(item.directoryName) : null
-    if (target) {
-      target.children.push(requestNode)
-      target.count += 1
-    } else {
-      unassigned.children.push(requestNode)
-      unassigned.count += 1
+
+    if (!path) {
+      const requests = unassignedRequestMap.get(item.workspaceCode) ?? []
+      requests.push(requestNode)
+      unassignedRequestMap.set(item.workspaceCode, requests)
+      return
+    }
+
+    const segments = path.split('/').map(part => part.trim()).filter(Boolean)
+    let currentChildren = workspaceNode.children as MutableNode[]
+    let currentMap = workspaceNode.childMap ?? new Map<string, MutableNode>()
+    let assembled = ''
+    segments.forEach((segment) => {
+      assembled = assembled ? `${assembled}/${segment}` : segment
+      const node = ensureNode(currentChildren, currentMap, item.workspaceCode, segment, assembled, null)
+      node.count += 1
+      currentChildren = node.children as MutableNode[]
+      currentMap = node.childMap ?? new Map<string, MutableNode>()
+    })
+    workspaceNode.count += 1
+    currentChildren.push(requestNode)
+  })
+
+  const stripChildMap = (nodes: MutableNode[]): DirectoryNode[] => {
+    nodes.sort((left, right) => {
+      const leftOrder = left.type === 'request' ? 1 : 0
+      const rightOrder = right.type === 'request' ? 1 : 0
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder
+      }
+      return left.label.localeCompare(right.label, 'zh-CN')
+    })
+    return nodes.map((node) => ({
+      key: node.key,
+      type: node.type,
+      label: node.label,
+      count: node.count,
+      moduleId: node.moduleId,
+      workspaceCode: node.workspaceCode,
+      definitionId: node.definitionId,
+      fullPath: node.fullPath,
+      method: node.method,
+      definition: node.definition,
+      children: stripChildMap(node.children as MutableNode[]),
+    }))
+  }
+  const workspaceTrees = workspaceNodes.map((workspaceNode) => {
+    const children = stripChildMap(workspaceNode.children as MutableNode[])
+    const unassignedRequests = unassignedRequestMap.get(workspaceNode.workspaceCode) ?? []
+    if (unassignedRequests.length) {
+      children.push({
+        key: `definition-unassigned:${workspaceNode.workspaceCode}`,
+        type: 'unassigned',
+        label: '未规划请求',
+        count: unassignedRequests.length,
+        moduleId: null,
+        workspaceCode: workspaceNode.workspaceCode,
+        definitionId: null,
+        fullPath: null,
+        children: stripChildMap(unassignedRequests),
+      })
+    }
+    return {
+      key: workspaceNode.key,
+      type: workspaceNode.type,
+      label: workspaceNode.label,
+      count: workspaceNode.count,
+      moduleId: workspaceNode.moduleId,
+      workspaceCode: workspaceNode.workspaceCode,
+      definitionId: workspaceNode.definitionId,
+      fullPath: workspaceNode.fullPath,
+      children,
     }
   })
 
-  function rollupCount(nodes: DirectoryNode[]) {
-    nodes.forEach((node) => {
-      rollupCount(node.children)
-      if (node.type === 'module') {
-        node.count += node.children
-          .filter(child => child.type === 'module')
-          .reduce((sum, child) => sum + child.count, 0)
-      }
-    })
-  }
-
-  rollupCount(moduleNodes)
-
-  const children = unassigned.children.length ? [...moduleNodes, unassigned] : moduleNodes
   return [{
     key: 'definition-root',
     type: 'root',
-    label: '全部',
+    label: '请求目录',
     count: filteredDefinitions.value.length,
     moduleId: null,
     workspaceCode: props.workspaceCode,
     definitionId: null,
-    children,
+    fullPath: null,
+    children: workspaceTrees,
   }]
 })
+
+const visibleDirectoryTree = computed<DirectoryNode[]>(() => directoryTree.value[0]?.children ?? [])
+const directoryTreeRenderKey = computed(() => `${props.workspaceCode}:${expandedKeys.value.join('|')}`)
 
 function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   const keys: string[] = []
@@ -730,6 +869,20 @@ watch(
   },
 )
 
+watch(
+  directoryTree,
+  (tree) => {
+    const available = new Set(collectExpandableDirectoryKeys(tree))
+    const nextKeys = expandedKeys.value.filter(key => available.has(key))
+    if (!nextKeys.length && tree.length) {
+      expandedKeys.value = collectExpandableDirectoryKeys(tree)
+      return
+    }
+    expandedKeys.value = nextKeys
+  },
+  { immediate: true },
+)
+
 const currentStep = computed<ApiRunStepResult | null>(() => activeEditor.value?.runResult?.stepResults?.[0] || null)
 const caseDetailPreviewStep = computed<ApiRunStepResult | null>(() => selectedCaseRunHistoryDetail.value?.stepResults?.[0] || null)
 const selectedEnvironment = computed(() => environments.value.find(item => item.id === selectedEnvironmentId.value) || null)
@@ -740,6 +893,9 @@ const responseBody = computed(() => currentStep.value?.response?.body ?? '')
 const responseBodyPretty = computed(() => {
   if (!currentStep.value && activeEditor.value?.runError) {
     return activeEditor.value.runError
+  }
+  if (!responseBody.value) {
+    return ''
   }
   return toPrettyJson(responseBody.value)
 })
@@ -777,7 +933,7 @@ const processorRows = computed(() => currentStep.value?.processorResults ?? [])
 const responseSize = computed(() => {
   const text = responseBody.value || ''
   if (!text) {
-    return '-'
+    return '0 B'
   }
   const bytes = new Blob([text]).size
   return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
@@ -810,19 +966,6 @@ const batchAddExamples = computed(() => {
   }
   return ['token=abc', 'Content-Type: application/json', 'page\t1']
 })
-
-function mapModuleNode(item: ApiDefinitionModuleItem): DirectoryNode {
-  return {
-    key: `module:${item.id}`,
-    type: 'module',
-    label: item.fullPath || item.name,
-    count: 0,
-    moduleId: item.id,
-    workspaceCode: item.workspaceCode,
-    definitionId: null,
-    children: item.children.map(mapModuleNode),
-  }
-}
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -903,6 +1046,13 @@ function enabledRows(rows?: ApiKeyValueInput[]) {
   return (rows || []).filter(row => row.enabled !== false && row.key.trim())
 }
 
+function setRowsEnabled(rows: ApiKeyValueInput[], checked: unknown) {
+  rows.forEach(row => {
+    row.enabled = Boolean(checked)
+  })
+  markDirty()
+}
+
 function markDirty() {
   if (activeEditor.value) {
     activeEditor.value.dirty = true
@@ -943,6 +1093,10 @@ function formatDuration(value?: number | null) {
 
 function formatResponseSize(value?: number | null) {
   return formatFileSize(value)
+}
+
+function responseCodeLines(value: string) {
+  return value ? value.split('\n') : ['']
 }
 
 function runResultLabel(result?: string | null) {
@@ -1798,19 +1952,6 @@ function restoreRunOptions() {
   selectedVariableSetId.value = variableSetId && variableSets.value.some(item => item.id === variableSetId) ? variableSetId : null
 }
 
-function persistRunOptions() {
-  if (selectedEnvironmentId.value) {
-    localStorage.setItem(runOptionStorageKey('environment'), String(selectedEnvironmentId.value))
-  } else {
-    localStorage.removeItem(runOptionStorageKey('environment'))
-  }
-  if (selectedVariableSetId.value) {
-    localStorage.setItem(runOptionStorageKey('variableSet'), String(selectedVariableSetId.value))
-  } else {
-    localStorage.removeItem(runOptionStorageKey('variableSet'))
-  }
-}
-
 function currentRunPayload() {
   return {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
@@ -1858,10 +1999,14 @@ async function loadWorkspaceData() {
     definitions.value = definitionPage.items
     environments.value = environmentPage.items
     variableSets.value = variableSetPage.items
+    await nextTick()
+    expandedKeys.value = collectExpandableDirectoryKeys(directoryTree.value)
     restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
-    if (!tabs.value.length && definitions.value.length) {
-      void openDefinition(definitions.value[0])
+    if (!tabs.value.length && props.workspaceCode === 'ALL') {
+      openNewRequestTab()
+    } else if (!tabs.value.length && definitions.value.length) {
+      void openDefinition(definitions.value[0], false)
     }
     if (!tabs.value.length && !definitions.value.length) {
       openNewRequestTab()
@@ -1898,7 +2043,7 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
     definitionId: source?.id || null,
     title: editorTitle(detail),
     method: detail.requestConfig.method || detail.method || 'GET',
-    dirty: !source,
+    dirty: Boolean(source),
     activeTab: 'body',
     responseTab: 'body',
     detail,
@@ -1913,11 +2058,13 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
   })
 }
 
-async function openDefinition(item: ApiDefinitionItem) {
+async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
   const existed = tabs.value.find(tab => tab.definitionId === item.id)
   if (existed) {
     activeEditorKey.value = existed.key
-    selectedDirectoryKey.value = `request:${item.id}`
+    if (syncDirectory) {
+      selectedDirectoryKey.value = `request:${item.id}`
+    }
     return
   }
 
@@ -1950,7 +2097,9 @@ async function openDefinition(item: ApiDefinitionItem) {
 
   tabs.value.push(tab)
   activeEditorKey.value = tab.key
-  selectedDirectoryKey.value = `request:${item.id}`
+  if (syncDirectory) {
+    selectedDirectoryKey.value = `request:${item.id}`
+  }
 
   try {
     const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, item.id)
@@ -2925,7 +3074,8 @@ onBeforeUnmount(() => {
           </div>
           <el-tree
             v-else
-            :data="directoryTree"
+            :key="directoryTreeRenderKey"
+            :data="visibleDirectoryTree"
             node-key="key"
             :default-expanded-keys="expandedKeys"
             :current-node-key="selectedDirectoryKey"
@@ -2938,42 +3088,52 @@ onBeforeUnmount(() => {
           >
             <template #default="{ data }">
               <div :class="['api-directory-node', { 'is-request': data.type === 'request' }]">
-                <template v-if="data.type === 'request'">
-                  <span :class="['api-method', requestMethodClass(data.method)]">{{ data.method }}</span>
-                  <span class="api-directory-node__name">{{ data.label }}</span>
-                </template>
-                <template v-else>
-                  <el-icon class="api-directory-node__icon">
-                    <FolderOpened v-if="expandedKeys.includes(data.key)" />
-                    <Folder v-else />
-                  </el-icon>
-                  <span class="api-directory-node__name">{{ data.label }}</span>
-                  <span class="api-directory-node__count">{{ data.count }}</span>
-                </template>
-                <el-dropdown trigger="click" @click.stop>
-                  <button type="button" class="api-directory-node__action" @click.stop>
-                    <el-icon><MoreFilled /></el-icon>
-                  </button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <template v-if="data.type === 'root' || data.type === 'module'">
-                        <el-dropdown-item @click="createModule(data.type === 'module' ? data.moduleId : null)">新建模块</el-dropdown-item>
-                        <el-dropdown-item v-if="data.type === 'module'" @click="renameModule(data)">重命名模块</el-dropdown-item>
-                        <el-dropdown-item v-if="data.type === 'module'" @click="deleteModule(data)">删除模块</el-dropdown-item>
-                      </template>
-                      <template v-else-if="data.type === 'request'">
-                        <el-dropdown-item @click="renameRequest(data)">重命名请求</el-dropdown-item>
-                        <el-dropdown-item divided @click="deleteRequest(data)">删除请求</el-dropdown-item>
-                      </template>
-                    </el-dropdown-menu>
+                <div class="api-directory-node__main">
+                  <template v-if="data.type === 'request'">
+                    <span :class="['api-method', requestMethodClass(data.method)]">{{ data.method }}</span>
+                    <span class="api-directory-node__name">{{ data.label }}</span>
                   </template>
-                </el-dropdown>
+                  <template v-else>
+                    <span :class="['api-directory-node__folder', { 'is-open': expandedKeys.includes(data.key) }]">
+                      <LucideFolderOpen v-if="expandedKeys.includes(data.key)" class="api-directory-node__icon" />
+                      <LucideFolder v-else class="api-directory-node__icon" />
+                    </span>
+                    <span class="api-directory-node__name">{{ data.label }}</span>
+                    <span class="api-directory-node__count">{{ data.count }}</span>
+                  </template>
+                </div>
+
+                <div class="api-directory-node__actions" @click.stop>
+                  <button
+                    v-if="data.type === 'workspace' || data.type === 'module'"
+                    type="button"
+                    class="api-directory-node__action"
+                    title="新建模块"
+                    @click.stop="createModule(data.type === 'module' ? data.moduleId : null)"
+                  >
+                    <LucidePlus class="api-directory-node__lucide-action" />
+                  </button>
+                  <el-dropdown v-if="data.type === 'module' || data.type === 'request'" trigger="click" @click.stop>
+                    <button type="button" class="api-directory-node__action is-more" title="更多操作" @click.stop>
+                      <LucideMoreHorizontal class="api-directory-node__lucide-action" />
+                    </button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <template v-if="data.type === 'module'">
+                          <el-dropdown-item @click="renameModule(data)">重命名模块</el-dropdown-item>
+                          <el-dropdown-item @click="deleteModule(data)">删除模块</el-dropdown-item>
+                        </template>
+                        <template v-else-if="data.type === 'request'">
+                          <el-dropdown-item @click="renameRequest(data)">重命名请求</el-dropdown-item>
+                          <el-dropdown-item divided @click="deleteRequest(data)">删除请求</el-dropdown-item>
+                        </template>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </div>
             </template>
           </el-tree>
-          <div v-if="!filteredDefinitions.length && !definitionLoading" class="api-directory-empty">
-            {{ directoryKeyword.trim() ? '暂无匹配的模块或请求' : '暂无请求，请新建请求或使用 Curl 导入' }}
-          </div>
         </div>
       </aside>
 
@@ -2991,26 +3151,26 @@ onBeforeUnmount(() => {
               <span :class="['api-method', requestMethodClass(item.method)]">{{ item.method }}</span>
               <span class="api-editor-tab__label">{{ item.title }}</span>
               <span v-if="item.dirty" class="api-editor-tab__dot"></span>
-              <span class="api-editor-tab__close" @click.stop="closeEditorTab(item.key)">
+              <span v-if="tabs.length > 1" class="api-editor-tab__close" @click.stop="closeEditorTab(item.key)">
                 <el-icon><Close /></el-icon>
               </span>
             </button>
-            <button type="button" class="api-editor-tab-add" @click="openNewRequestTab()">
-              <el-icon><Plus /></el-icon>
-            </button>
-            <el-dropdown v-if="tabs.length" trigger="click" @command="handleEditorTabMenu">
-              <button type="button" class="api-editor-tab-more">
-                <el-icon><MoreFilled /></el-icon>
-              </button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="closeCurrent" :disabled="!activeEditor">关闭当前标签</el-dropdown-item>
-                  <el-dropdown-item command="closeOthers">关闭其他标签</el-dropdown-item>
-                  <el-dropdown-item command="closeDrafts">关闭全部草稿</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </div>
+          <button type="button" class="api-editor-tab-add" @click="openNewRequestTab()">
+            <el-icon><Plus /></el-icon>
+          </button>
+          <el-dropdown v-if="tabs.length" trigger="click" @command="handleEditorTabMenu">
+            <button type="button" class="api-editor-tab-more">
+              <el-icon><MoreFilled /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="closeCurrent" :disabled="!activeEditor">关闭当前标签</el-dropdown-item>
+                <el-dropdown-item command="closeOthers">关闭其他标签</el-dropdown-item>
+                <el-dropdown-item command="closeDrafts">关闭全部草稿</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
 
         <div v-if="!activeEditor" class="api-editor-empty">
@@ -3024,6 +3184,7 @@ onBeforeUnmount(() => {
               <el-select
                 v-model="activeEditor.detail.requestConfig.method"
                 :class="['api-method-select', requestMethodClass(activeEditor.detail.requestConfig.method)]"
+                popper-class="api-method-popper"
                 @change="markDirty"
               >
                 <el-option v-for="method in apiMethodOptions" :key="method" :label="method" :value="method">
@@ -3038,50 +3199,35 @@ onBeforeUnmount(() => {
               />
               <button type="button" class="api-curl-button" @click="promptImportCurl">Curl</button>
             </div>
-            <div class="api-run-options" v-loading="runOptionsLoading">
-              <el-select
-                v-model="selectedEnvironmentId"
-                clearable
-                placeholder="环境"
-                :disabled="Boolean(runOptionsErrorMessage)"
-                @change="persistRunOptions"
-              >
-                <el-option v-for="item in environments" :key="item.id" :label="item.name" :value="item.id">
-                  <span>{{ item.name }}</span>
-                  <small v-if="item.baseUrl">{{ item.baseUrl }}</small>
-                </el-option>
-              </el-select>
-              <el-select
-                v-model="selectedVariableSetId"
-                clearable
-                placeholder="变量集"
-                :disabled="Boolean(runOptionsErrorMessage)"
-                @change="persistRunOptions"
-              >
-                <el-option v-for="item in variableSets" :key="item.id" :label="item.name" :value="item.id" />
-              </el-select>
-              <span v-if="runOptionsErrorMessage" class="api-run-options__hint">运行选项加载失败</span>
-              <span v-else-if="!environments.length && !variableSets.length" class="api-run-options__hint">暂无环境或变量集</span>
-            </div>
-            <button type="button" class="api-send-button" :disabled="sending" @click="sendActiveEditor">
+            <button
+              type="button"
+              class="api-send-button"
+              :disabled="sending || !activeEditor.detail.requestConfig.path.trim()"
+              @click="sendActiveEditor"
+            >
               <el-icon><VideoPlay /></el-icon>
               发送
             </button>
-            <el-dropdown split-button class="api-save-dropdown" popper-class="api-save-dropdown-menu" :loading="saving" @click="saveActiveEditor">
+            <el-dropdown
+              split-button
+              class="api-save-dropdown"
+              popper-class="api-save-dropdown-menu"
+              :disabled="!activeEditor.detail.requestConfig.path.trim()"
+              :loading="saving"
+              @click="saveActiveEditor"
+            >
               <span class="api-save-label">
-                <el-icon><Check /></el-icon>
+                <LucideSave class="api-button-icon" />
                 保存
               </span>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="saveAsCase">保存为用例</el-dropdown-item>
+                  <el-dropdown-item v-if="activeEditor.definitionId" @click="saveAsCase">保存为用例</el-dropdown-item>
                   <el-dropdown-item @click="duplicateActiveEditor">
-                    <el-icon><DocumentCopy /></el-icon>
                     复制接口
                   </el-dropdown-item>
-                  <el-dropdown-item class="is-danger" @click="deleteActiveEditor">
-                    <el-icon><Delete /></el-icon>
-                    {{ activeEditor.definitionId ? '删除接口' : '关闭草稿' }}
+                  <el-dropdown-item @click="deleteActiveEditor">
+                    {{ activeEditor.definitionId ? '删除接口' : '删除接口' }}
                   </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
@@ -3102,23 +3248,34 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="api-request-body">
+            <div :class="['api-request-body', `is-${activeEditor.activeTab}`]">
               <template v-if="activeEditor.activeTab === 'params'">
                 <div class="api-param-table is-query">
-                  <div class="api-param-toolbar">
-                    <span>Query 参数</span>
-                    <button type="button" @click="openBatchAdd('query')">批量添加</button>
-                  </div>
                   <div class="api-param-header">
-                    <span></span><span>参数名</span><span>*</span><span>类型</span><span>参数值</span><span>长度</span><span>编码</span><span>描述</span><span></span>
+                    <span class="api-drag-cell"></span>
+                    <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.queryParams.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.queryParams, $event)" /></span>
+                    <span class="api-header-title">Query 参数</span>
+                    <span class="api-type-header">类型</span>
+                    <span>参数值</span>
+                    <span class="api-length-header">长度范围</span>
+                    <span>编码</span>
+                    <span>描述</span>
+                    <button type="button" class="api-link-button" @click="openBatchAdd('query')">批量添加</button>
                   </div>
                   <div v-for="(row, index) in activeEditor.detail.requestConfig.queryParams" :key="`query-${index}`" class="api-param-row">
-                    <el-checkbox v-model="row.enabled" @change="markDirty" />
+                    <span class="api-drag-cell">
+                      <span class="api-drag-handle" aria-hidden="true">
+                        <span v-for="dotIndex in 6" :key="`query-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
+                      </span>
+                    </span>
+                    <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
                     <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
-                    <el-checkbox v-model="row.required" @change="markDirty" />
-                    <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
-                      <el-option v-for="type in paramTypeOptions.filter(item => item !== 'file')" :key="type" :label="type" :value="type" />
-                    </el-select>
+                    <div class="api-type-field">
+                      <button type="button" :class="['api-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markDirty()">*</button>
+                      <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
+                        <el-option v-for="type in paramTypeOptions.filter(item => item !== 'file')" :key="type" :label="type" :value="type" />
+                      </el-select>
+                    </div>
                     <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markDirty" />
                     <div class="api-length-range">
                       <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="min" @change="markDirty" />
@@ -3134,18 +3291,23 @@ onBeforeUnmount(() => {
 
               <template v-else-if="activeEditor.activeTab === 'headers'">
                 <div class="api-param-table is-header">
-                  <div class="api-param-toolbar">
-                    <span>请求头</span>
-                    <button type="button" @click="openBatchAdd('header')">批量添加</button>
-                  </div>
                   <div class="api-param-header">
-                    <span></span><span>参数名称</span><span>参数值</span><span>必填</span><span>描述</span><span></span>
+                    <span class="api-drag-cell"></span>
+                    <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.headers.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.headers, $event)" /></span>
+                    <span class="api-header-title">参数名称</span>
+                    <span>参数值</span>
+                    <span>描述</span>
+                    <button type="button" class="api-link-button" @click="openBatchAdd('header')">批量添加</button>
                   </div>
                   <div v-for="(row, index) in activeEditor.detail.requestConfig.headers" :key="`header-${index}`" class="api-param-row">
-                    <el-checkbox v-model="row.enabled" @change="markDirty" />
+                    <span class="api-drag-cell">
+                      <span class="api-drag-handle" aria-hidden="true">
+                        <span v-for="dotIndex in 6" :key="`header-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
+                      </span>
+                    </span>
+                    <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
                     <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
                     <el-input v-model="row.value" placeholder="参数值" @input="markDirty" />
-                    <el-checkbox v-model="row.required" @change="markDirty" />
                     <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
                     <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.headers, index)">删除</button>
                   </div>
@@ -3198,25 +3360,35 @@ onBeforeUnmount(() => {
                       @input="markDirty"
                     />
                     <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeEditor.detail.requestConfig.body.type)" class="api-param-table is-body-form">
-                      <div class="api-param-toolbar">
-                        <span>{{ activeEditor.detail.requestConfig.body.type === 'FORM_DATA' ? 'form-data' : 'x-www-form-urlencoded' }}</span>
-                        <button type="button" @click="openBatchAdd('body-form')">批量添加</button>
-                      </div>
                       <div class="api-param-header">
-                        <span></span><span>参数名称</span><span>*</span><span>类型</span><span>参数值 / 文件名</span><span>长度</span><span>描述</span><span></span>
+                        <span class="api-drag-cell"></span>
+                        <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.body.formItems.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.body.formItems, $event)" /></span>
+                        <span class="api-header-title">参数名称</span>
+                        <span class="api-type-header">类型</span>
+                        <span>参数值</span>
+                        <span class="api-length-header">长度范围</span>
+                        <span>描述</span>
+                        <button type="button" class="api-link-button" @click="openBatchAdd('body-form')">批量添加</button>
                       </div>
                       <div v-for="(row, index) in activeEditor.detail.requestConfig.body.formItems" :key="`body-${index}`" class="api-param-row">
-                        <el-checkbox v-model="row.enabled" @change="markDirty" />
+                        <span class="api-drag-cell">
+                          <span class="api-drag-handle" aria-hidden="true">
+                            <span v-for="dotIndex in 6" :key="`body-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
+                          </span>
+                        </span>
+                        <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
                         <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
-                        <el-checkbox v-model="row.required" @change="markDirty" />
-                        <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
-                          <el-option
-                            v-for="type in (activeEditor.detail.requestConfig.body.type === 'FORM_DATA' ? paramTypeOptions : paramTypeOptions.filter(item => item !== 'file'))"
-                            :key="type"
-                            :label="type"
-                            :value="type"
-                          />
-                        </el-select>
+                        <div class="api-type-field">
+                          <button type="button" :class="['api-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markDirty()">*</button>
+                          <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
+                            <el-option
+                              v-for="type in (activeEditor.detail.requestConfig.body.type === 'FORM_DATA' ? paramTypeOptions : paramTypeOptions.filter(item => item !== 'file'))"
+                              :key="type"
+                              :label="type"
+                              :value="type"
+                            />
+                          </el-select>
+                        </div>
                         <div v-if="row.paramType === 'file'" class="api-file-picker">
                           <label class="api-file-picker__button">
                             选择文件
@@ -3648,7 +3820,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
 
-            <div class="api-response-shell" :style="{ flexBasis: `${responsePanelHeight}px` }">
+            <div class="api-response-shell" :style="{ minHeight: `${responsePanelHeight}px` }">
               <div class="api-response-resizer" title="拖拽调整响应区高度" @pointerdown="startResponseResize"></div>
               <div class="api-response-header">
                 <strong>响应内容</strong>
@@ -3658,14 +3830,6 @@ onBeforeUnmount(() => {
                     <span>耗时 {{ responseDuration ?? '-' }}<template v-if="responseDuration !== null"> ms</template></span>
                     <span>大小 {{ responseSize }}</span>
                   </div>
-                  <button
-                    v-if="!showResponseEmpty"
-                    type="button"
-                    class="api-response-case-button"
-                    @click="saveAsCase"
-                  >
-                    保存为用例
-                  </button>
                 </div>
               </div>
               <div class="api-response-content">
@@ -3684,10 +3848,30 @@ onBeforeUnmount(() => {
                     <button :class="{ 'is-active': activeEditor.responseTab === 'actualRequest' }" @click="activeEditor.responseTab = 'actualRequest'">实际请求</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'assertions' }" @click="activeEditor.responseTab = 'assertions'">断言</button>
                   </div>
-                  <pre v-if="activeEditor.responseTab === 'body'" class="api-response-pre">{{ responseBodyPretty }}</pre>
-                  <pre v-else-if="activeEditor.responseTab === 'header'" class="api-response-pre">{{ responseHeaders }}</pre>
-                  <pre v-else-if="activeEditor.responseTab === 'console'" class="api-response-pre">{{ responseConsole }}</pre>
-                  <pre v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-pre">{{ actualRequest }}</pre>
+                  <div v-if="activeEditor.responseTab === 'body'" class="api-response-code">
+                    <div v-for="(line, index) in responseCodeLines(responseBodyPretty)" :key="`body-${index}`" class="api-response-code__line">
+                      <span class="api-response-code__number">{{ index + 1 }}</span>
+                      <code>{{ line || ' ' }}</code>
+                    </div>
+                  </div>
+                  <div v-else-if="activeEditor.responseTab === 'header'" class="api-response-code">
+                    <div v-for="(line, index) in responseCodeLines(responseHeaders)" :key="`header-${index}`" class="api-response-code__line">
+                      <span class="api-response-code__number">{{ index + 1 }}</span>
+                      <code>{{ line || ' ' }}</code>
+                    </div>
+                  </div>
+                  <div v-else-if="activeEditor.responseTab === 'console'" class="api-response-code is-text">
+                    <div v-for="(line, index) in responseCodeLines(responseConsole)" :key="`console-${index}`" class="api-response-code__line">
+                      <span class="api-response-code__number">{{ index + 1 }}</span>
+                      <code>{{ line || ' ' }}</code>
+                    </div>
+                  </div>
+                  <div v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-code">
+                    <div v-for="(line, index) in responseCodeLines(actualRequest)" :key="`actual-${index}`" class="api-response-code__line">
+                      <span class="api-response-code__number">{{ index + 1 }}</span>
+                      <code>{{ line || ' ' }}</code>
+                    </div>
+                  </div>
                   <el-table v-else-if="assertionRows.length" :data="assertionRows" size="small">
                     <el-table-column prop="name" label="断言名称" min-width="140" />
                     <el-table-column label="条件" width="100">
@@ -3718,6 +3902,7 @@ onBeforeUnmount(() => {
       width="420px"
       append-to-body
       :show-close="false"
+      align-center
       class="api-soft-dialog-shell"
       @closed="cancelApiSoftPrompt"
     >
@@ -3765,11 +3950,11 @@ onBeforeUnmount(() => {
       <div class="api-import-dialog">
         <div class="api-import-header">
           <div class="api-import-title">
-            <el-icon class="api-import-title-icon"><Upload /></el-icon>
+            <LucideUpload class="api-import-title-icon" />
             <span>导入接口</span>
           </div>
           <button type="button" class="api-import-close" @click="closeImportDialog">
-            <el-icon><Close /></el-icon>
+            <LucideX />
           </button>
         </div>
 
@@ -3785,14 +3970,14 @@ onBeforeUnmount(() => {
                 @click="importMode = item.mode"
               >
                 <span class="api-import-format-icon">
-                  <el-icon><component :is="item.icon" /></el-icon>
+                  <component :is="item.icon" />
                 </span>
                 <span class="api-import-format-copy">
                   <span>{{ item.name }}</span>
                   <small>{{ item.description }}</small>
                 </span>
                 <span class="api-import-check">
-                  <el-icon v-if="importMode === item.mode"><Check /></el-icon>
+                  <LucideCheck v-if="importMode === item.mode" />
                 </span>
               </button>
             </div>
@@ -3823,7 +4008,7 @@ onBeforeUnmount(() => {
               :placeholder="importMode === 'swagger' ? 'https://api.example.com/v3/api-docs' : '输入文件远程地址'"
             />
             <label v-else class="api-import-upload">
-              <el-icon class="api-import-upload-icon"><Upload /></el-icon>
+              <LucideUpload class="api-import-upload-icon" />
               <span>{{ importFileName || '点击或拖拽文件到此处' }}</span>
               <small>支持 {{ selectedImportCapability.accept }}</small>
               <input
@@ -4478,7 +4663,7 @@ onBeforeUnmount(() => {
 .api-sidebar-secondary:disabled,
 .api-send-button:disabled {
   cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.55;
 }
 
 .api-sidebar-secondary:disabled:hover {
@@ -4572,6 +4757,7 @@ onBeforeUnmount(() => {
   width: 36px;
   height: 40px;
   border-radius: 0;
+  color: #909399;
 }
 
 .api-directory-body {
@@ -4589,7 +4775,7 @@ onBeforeUnmount(() => {
   border-radius: var(--app-radius-md);
   background: var(--app-danger-soft);
   color: var(--app-danger);
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
 }
 
 .api-directory-tree {
@@ -4599,15 +4785,19 @@ onBeforeUnmount(() => {
 .api-directory-tree :deep(.el-tree-node__content) {
   height: 32px;
   border-radius: var(--app-radius-md);
+  transition: background-color 0.15s ease;
 }
 
 .api-directory-tree :deep(.el-tree-node__content:hover) {
   background: var(--app-bg-muted);
 }
 
+.api-directory-tree :deep(.el-tree-node__expand-icon.is-leaf) {
+  color: transparent;
+}
+
 .api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
   background: var(--app-primary-soft);
-  color: var(--app-primary);
 }
 
 .api-directory-node {
@@ -4615,14 +4805,31 @@ onBeforeUnmount(() => {
   min-width: 0;
   width: 100%;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
+  gap: 8px;
   font-size: var(--app-font-size-sm);
+}
+
+.api-directory-node__main {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.api-directory-node__actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
 .api-directory-node__action {
   display: inline-flex;
   width: 24px;
-  height: 28px;
+  height: 24px;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -4634,10 +4841,15 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
-.api-directory-tree :deep(.el-tree-node__content:hover) .api-directory-node__action,
-.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__action {
+.api-directory-node__actions .api-directory-node__action {
   opacity: 1;
   pointer-events: auto;
+}
+
+.api-directory-node:hover .api-directory-node__actions,
+.api-directory-node:focus-within .api-directory-node__actions,
+.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__actions {
+  opacity: 1;
 }
 
 .api-directory-node__action:hover {
@@ -4645,16 +4857,41 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
 }
 
+.api-directory-node__action.is-more {
+  border-radius: 4px;
+}
+
+.api-directory-node__lucide-action {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+
 .api-directory-node__name {
   min-width: 0;
-  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--app-text-primary);
+}
+
+.api-directory-node__folder {
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
 }
 
 .api-directory-node__icon {
-  color: var(--app-primary);
+  width: 16px;
+  height: 16px;
+  color: #60a5fa;
+}
+
+.api-directory-node__folder.is-open .api-directory-node__icon {
+  color: #3b82f6;
 }
 
 .api-directory-node__count {
@@ -4672,8 +4909,8 @@ onBeforeUnmount(() => {
   line-height: 18px;
 }
 
-.method-get { color: #00875a; }
-.method-post { color: #e8590c; }
+.method-get { color: #15803d; }
+.method-post { color: #ea580c; }
 .method-put { color: #2563eb; }
 .method-patch { color: #7c3aed; }
 .method-delete { color: #dc2626; }
@@ -4690,18 +4927,29 @@ onBeforeUnmount(() => {
 
 .api-editor-tabs {
   display: flex;
+  box-sizing: border-box;
   height: 40px;
   min-height: 40px;
   align-items: center;
   border-bottom: 1px solid var(--app-border);
+  background: #fff;
+  overflow: hidden;
 }
 
 .api-editor-tabs__nav {
   display: flex;
   min-width: 0;
-  flex: 1;
-  align-items: center;
-  overflow: hidden;
+  height: 100%;
+  flex: 0 1 auto;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.api-editor-tabs__nav::-webkit-scrollbar {
+  display: none;
 }
 
 .api-editor-tab {
@@ -4721,7 +4969,7 @@ onBeforeUnmount(() => {
   background: var(--app-bg-page);
   color: var(--app-text-secondary);
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
   line-height: 20px;
 }
 
@@ -4740,6 +4988,7 @@ onBeforeUnmount(() => {
   height: 20px;
   align-items: center;
   min-width: 0;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4813,7 +5062,7 @@ onBeforeUnmount(() => {
 .api-url-compose {
   display: grid;
   min-width: 0;
-  grid-template-columns: 112px minmax(0, 1fr) 68px;
+  grid-template-columns: 104px minmax(0, 1fr) 68px;
   align-items: center;
   overflow: hidden;
   border: 1px solid var(--app-border-strong);
@@ -4859,24 +5108,99 @@ onBeforeUnmount(() => {
 }
 
 .api-method-select :deep(.el-select__wrapper) {
+  padding: 0 10px;
   border-right: 1px solid var(--app-border);
-  background: #f8fafc;
+  background: #f9fafb;
   box-shadow: none;
+}
+
+.api-method-select {
+  width: 104px;
+  min-width: 104px;
+  line-height: 21px;
+}
+
+.api-method-select :deep(.el-select__selected-item) {
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.api-method-option {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
 }
 
 .api-method-select.method-get :deep(.el-select__selected-item),
 .api-method-select.method-get :deep(.el-select__placeholder) {
-  color: #00875a;
+  color: #15803d;
 }
 
 .api-method-select.method-post :deep(.el-select__selected-item),
 .api-method-select.method-post :deep(.el-select__placeholder) {
-  color: #e8590c;
+  color: #ea580c;
+}
+
+.api-method-select.method-put :deep(.el-select__selected-item),
+.api-method-select.method-put :deep(.el-select__placeholder) {
+  color: #2563eb;
+}
+
+.api-method-select.method-patch :deep(.el-select__selected-item),
+.api-method-select.method-patch :deep(.el-select__placeholder),
+.api-method-select.method-options :deep(.el-select__selected-item),
+.api-method-select.method-options :deep(.el-select__placeholder) {
+  color: #7c3aed;
+}
+
+.api-method-select.method-trace :deep(.el-select__selected-item),
+.api-method-select.method-trace :deep(.el-select__placeholder) {
+  color: #6b7280;
+}
+
+.api-method-select.method-head :deep(.el-select__selected-item),
+.api-method-select.method-head :deep(.el-select__placeholder) {
+  color: #15803d;
 }
 
 .api-method-select.method-delete :deep(.el-select__selected-item),
 .api-method-select.method-delete :deep(.el-select__placeholder) {
   color: #dc2626;
+}
+
+:global(.api-method-popper .method-get) {
+  color: #15803d;
+}
+
+:global(.api-method-popper .method-post) {
+  color: #ea580c;
+}
+
+:global(.api-method-popper .method-put) {
+  color: #2563eb;
+}
+
+:global(.api-method-popper .method-patch),
+:global(.api-method-popper .method-options) {
+  color: #7c3aed;
+}
+
+:global(.api-method-popper .method-trace) {
+  color: #6b7280;
+}
+
+:global(.api-method-popper .method-head) {
+  color: #15803d;
+}
+
+:global(.api-method-popper .method-delete) {
+  color: #dc2626;
+}
+
+:global(.api-method-popper.el-select-dropdown) {
+  border-radius: 4px;
 }
 
 .api-url-compose :deep(.el-input__wrapper) {
@@ -4907,21 +5231,22 @@ onBeforeUnmount(() => {
   height: 38px;
   border-color: var(--app-border-strong);
   background: #fff;
-  color: var(--app-text-secondary);
+  color: #374151;
   font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
 }
 
 .api-save-dropdown :deep(.el-button-group > .el-button:first-child) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
-  padding-inline: 14px;
+  padding: 0 14px;
 }
 
 .api-save-dropdown :deep(.el-button-group > .el-button:last-child) {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  padding-inline: 9px;
+  padding: 0 9px;
 }
 
 .api-save-dropdown :deep(.el-button:hover:not(.is-disabled)) {
@@ -4936,17 +5261,24 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.api-button-icon {
+  width: 16px;
+  height: 16px;
+}
+
 :global(.api-save-dropdown-menu .el-dropdown-menu__item) {
   gap: 6px;
-  min-height: 34px;
-  padding: 0 14px;
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
+  min-height: 32px;
+  padding: 5px 16px;
+  color: #606266;
+  font-size: 14px;
+  line-height: 22px;
 }
 
 :global(.api-save-dropdown-menu .el-dropdown-menu) {
-  min-width: 120px;
-  padding: 4px;
+  min-width: 88px;
+  padding: 5px 0;
+  border-radius: 4px;
 }
 
 :global(.api-save-dropdown-menu .el-dropdown-menu__item:hover) {
@@ -5056,10 +5388,17 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
+.api-request-body.is-params,
+.api-request-body.is-headers {
+  min-height: 320px;
+  flex-basis: 320px;
+}
+
 .api-param-table {
+  min-height: 296px;
   overflow: auto;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-lg);
   background: #fff;
 }
 
@@ -5104,28 +5443,31 @@ onBeforeUnmount(() => {
 .api-param-header,
 .api-param-row {
   display: grid;
-  min-width: 1080px;
-  grid-template-columns: 42px 1.1fr 48px 120px 1.1fr 170px 74px 1fr 64px;
+  width: 100%;
+  min-width: 100%;
+  grid-template-columns: 24px 32px 240px 150px 240px 200px 80px minmax(220px, 1fr) 90px;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   padding: 5px 10px 5px 0;
 }
 
 .api-param-table.is-header .api-param-header,
 .api-param-table.is-header .api-param-row {
-  min-width: 820px;
-  grid-template-columns: 42px 1.2fr 1.5fr 70px 1.4fr 64px;
+  min-width: 100%;
+  grid-template-columns: 24px 32px repeat(3, minmax(0, 1fr)) 80px;
 }
 
 .api-param-table.is-body-form .api-param-header,
 .api-param-table.is-body-form .api-param-row {
-  min-width: 1040px;
-  grid-template-columns: 42px 1.1fr 48px 120px 1.25fr 170px 1fr 64px;
+  min-width: 100%;
+  grid-template-columns: 24px 32px 240px 150px 240px 200px minmax(220px, 1fr) 90px;
 }
 
 .api-param-header {
+  box-sizing: border-box;
+  height: 40px;
   min-height: 40px;
-  padding-right: 10px;
+  padding: 0 10px 0 0;
   background: #f9fafb;
   color: var(--app-text-muted);
   font-size: 12px;
@@ -5134,13 +5476,111 @@ onBeforeUnmount(() => {
 }
 
 .api-param-row {
-  min-height: 40px;
+  min-height: 44px;
   border-bottom: 1px solid var(--app-border-soft);
   transition: background-color 0.15s ease;
 }
 
 .api-param-row:hover {
-  background: #f9fafb;
+  background: #fbfdff;
+}
+
+.api-drag-cell,
+.api-checkbox-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.api-drag-handle {
+  display: grid;
+  width: 14px;
+  height: 19px;
+  align-content: center;
+  justify-content: center;
+  grid-template-columns: repeat(2, 3px);
+  grid-template-rows: repeat(3, 3px);
+  gap: 2px;
+}
+
+.api-drag-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: #c0c4cc;
+}
+
+.api-param-row:hover .api-drag-dot {
+  background: #9ca3af;
+}
+
+.api-header-title {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 0;
+}
+
+.api-type-header {
+  padding-left: 30px;
+}
+
+.api-length-header {
+  padding-left: 22px;
+}
+
+.api-type-field {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+@media (max-width: 1480px) {
+  .api-param-header,
+  .api-param-row {
+    grid-template-columns: 24px 28px 220px 140px 220px 180px 72px minmax(180px, 1fr) 72px;
+  }
+
+  .api-param-table.is-header .api-param-header,
+  .api-param-table.is-header .api-param-row {
+    grid-template-columns: 24px 28px repeat(3, minmax(0, 1fr)) 64px;
+  }
+
+  .api-param-table.is-body-form .api-param-header,
+  .api-param-table.is-body-form .api-param-row {
+    grid-template-columns: 24px 28px 220px 140px 220px 180px minmax(180px, 1fr) 72px;
+  }
+}
+
+.api-required-button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #98a2b3;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.api-required-button.active {
+  background: #fff1f3;
+  color: #f04438;
+}
+
+.api-link-button {
+  justify-self: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .api-param-row:last-of-type {
@@ -5150,8 +5590,37 @@ onBeforeUnmount(() => {
 .api-param-row :deep(.el-input__wrapper),
 .api-param-row :deep(.el-select__wrapper),
 .api-param-row :deep(.el-input-number) {
-  min-height: 30px;
-  box-shadow: none;
+  min-height: 28px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+}
+
+.api-param-row :deep(.el-input) {
+  height: 30px;
+}
+
+.api-param-row :deep(.el-input__wrapper) {
+  height: 30px;
+}
+
+.api-param-row :deep(.el-input__wrapper:hover),
+.api-param-row :deep(.el-select__wrapper:hover) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #d0d5dd;
+}
+
+.api-param-row :deep(.el-input.is-focus .el-input__wrapper),
+.api-param-row :deep(.el-select.is-focus .el-select__wrapper),
+.api-param-row :deep(.el-select__wrapper.is-focused) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #3b82f6;
+}
+
+.api-param-row :deep(.el-input__inner),
+.api-param-row :deep(.el-select__placeholder),
+.api-param-row :deep(.el-select__selected-item) {
+  font-size: 12px;
 }
 
 .api-length-range {
@@ -5165,28 +5634,44 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.api-length-range :deep(.el-input-number__increase),
+.api-length-range :deep(.el-input-number__decrease) {
+  display: none;
+}
+
+.api-length-range :deep(.el-input-number .el-input__wrapper) {
+  padding: 0 8px;
+}
+
 .api-row-remove,
 .api-add-row {
-  min-height: 28px;
-  padding: 0 6px;
+  min-height: 17px;
+  padding: 0;
   border: 0;
-  border-radius: var(--app-radius-sm);
+  border-radius: 0;
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
-  font-weight: 600;
+  font-weight: 500;
+  line-height: normal;
   white-space: nowrap;
 }
 
+.api-row-remove {
+  justify-self: center;
+  width: auto;
+  min-width: 0;
+}
+
 .api-add-row {
-  height: 32px;
-  padding-left: 14px;
+  height: 37px;
+  padding: 9px 10px 11px;
 }
 
 .api-row-remove,
 .api-case-actions .is-danger {
-  color: var(--app-danger);
+  color: #ef4444;
 }
 
 .api-row-remove:hover,
@@ -5203,22 +5688,25 @@ onBeforeUnmount(() => {
 
 .api-body-modes {
   display: flex;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: 4px;
+  margin-bottom: 14px;
 }
 
 .api-body-chip {
-  height: 26px;
+  height: 24px;
   padding: 0 12px;
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-sm);
   background: #fff;
   color: var(--app-text-secondary);
   cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
 }
 
 .api-body-chip.is-active {
-  border-color: var(--app-primary);
+  border-color: #3b82f6;
   background: var(--app-primary-soft);
   color: var(--app-primary);
 }
@@ -5230,6 +5718,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: #fff;
+}
+
+.api-body-editor.is-empty {
+  border: 0;
+  border-radius: var(--app-radius-sm);
 }
 
 .api-body-editor :deep(.el-textarea),
@@ -5254,7 +5747,8 @@ onBeforeUnmount(() => {
 }
 
 .api-empty-body {
-  min-height: 100px;
+  width: 100%;
+  min-height: 300px;
   border: 0;
   border-radius: var(--app-radius-sm);
   font-size: 13px;
@@ -6445,10 +6939,11 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   min-height: 360px;
-  flex: 0 0 360px;
+  flex: 0 0 auto;
   flex-direction: column;
   border-top: 1px solid var(--app-border);
   background: #fff;
+  overflow: visible;
 }
 
 .api-response-resizer {
@@ -6477,7 +6972,8 @@ onBeforeUnmount(() => {
 
 .api-response-header {
   display: flex;
-  min-height: 40px;
+  height: 41px;
+  min-height: 41px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -6487,7 +6983,7 @@ onBeforeUnmount(() => {
 }
 
 .api-response-header strong {
-  color: var(--app-text-secondary);
+  color: var(--app-text-primary);
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
@@ -6553,7 +7049,8 @@ onBeforeUnmount(() => {
   min-height: 300px;
   flex: 1;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden;
+  background: #fff;
 }
 
 .api-response-empty {
@@ -6612,6 +7109,48 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
 }
 
+.api-response-code {
+  display: flex;
+  min-height: 326px;
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: visible;
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid #e5e6eb;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--app-text-primary);
+  font-family: Consolas, Monaco, monospace;
+  font-size: 14px;
+  line-height: 19px;
+}
+
+.api-response-code__line {
+  display: grid;
+  min-height: 19px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  white-space: pre-wrap;
+}
+
+.api-response-code__number {
+  color: var(--app-text-subtle);
+  text-align: right;
+  user-select: none;
+}
+
+.api-response-code__line code {
+  min-width: 0;
+  color: var(--app-text-primary);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .api-response-error-banner {
   margin: 10px 16px 0;
   padding: 9px 12px;
@@ -6623,7 +7162,6 @@ onBeforeUnmount(() => {
   line-height: 20px;
 }
 
-.api-directory-empty,
 .api-import-dialog {
   display: grid;
   gap: 0;
@@ -6631,9 +7169,10 @@ onBeforeUnmount(() => {
 
 .api-import-dialog-shell :deep(.el-dialog) {
   overflow: hidden;
-  padding: 0;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
-  box-shadow: var(--app-shadow-overlay);
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
 }
 
 .api-import-dialog-shell :deep(.el-dialog__header),
@@ -6644,9 +7183,12 @@ onBeforeUnmount(() => {
 
 :global(.el-dialog.api-import-dialog-shell) {
   overflow: hidden;
-  padding: 0;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
-  box-shadow: var(--app-shadow-overlay);
+  font-size: 16px;
+  line-height: 24px;
+  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
 }
 
 :global(.el-dialog.api-import-dialog-shell .el-dialog__header),
@@ -6656,12 +7198,16 @@ onBeforeUnmount(() => {
 }
 
 :global(.el-dialog.api-import-dialog-shell .el-dialog__header) {
-  display: none;
+  display: block;
+  height: 64px;
 }
 
 .api-import-dialog {
   overflow: hidden;
   background: #fff;
+  color: #374151;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .api-import-header,
@@ -6673,21 +7219,23 @@ onBeforeUnmount(() => {
 
 .api-import-header {
   padding: 20px 24px;
-  border-bottom: 1px solid var(--app-border-soft);
+  border-bottom: 1px solid #f3f4f6;
 }
 
 .api-import-title {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  color: var(--app-text-primary);
+  color: #111827;
   font-size: 16px;
   font-weight: 600;
+  line-height: 24px;
 }
 
 .api-import-title-icon {
+  width: 20px;
+  height: 20px;
   color: #3b82f6;
-  font-size: 20px;
 }
 
 .api-import-close {
@@ -6697,23 +7245,27 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
   background: transparent;
-  color: var(--app-text-subtle);
+  color: #9ca3af;
   cursor: pointer;
+  line-height: normal;
 }
 
 .api-import-close:hover {
-  background: var(--app-bg-muted);
-  color: var(--app-text-secondary);
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.api-import-close svg {
+  width: 16px;
+  height: 16px;
 }
 
 .api-import-body {
   display: grid;
   gap: 20px;
-  height: 436px;
   padding: 24px;
-  overflow: hidden;
 }
 
 .api-import-section {
@@ -6722,9 +7274,11 @@ onBeforeUnmount(() => {
 }
 
 .api-import-section-title {
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
+  color: #374151;
+  font-size: 14px;
   font-weight: 600;
+  height: 21px;
+  line-height: 21px;
 }
 
 .api-import-format-list {
@@ -6735,22 +7289,28 @@ onBeforeUnmount(() => {
 .api-import-format {
   display: grid;
   width: 100%;
-  min-height: 64px;
+  height: 64px;
   grid-template-columns: 36px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 12px;
   padding: 12px;
-  border: 2px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
   background: #fff;
   cursor: pointer;
+  font-size: 13.3333px;
+  line-height: normal;
   text-align: left;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
+.api-import-format:nth-child(3) {
+  height: 68px;
+}
+
 .api-import-format:hover {
-  border-color: var(--app-border-strong);
-  background: var(--app-bg-page);
+  border-color: #d1d5db;
+  background: #f9fafb;
 }
 
 .api-import-format.is-active.is-green {
@@ -6779,41 +7339,49 @@ onBeforeUnmount(() => {
 .api-import-format-icon {
   width: 36px;
   height: 36px;
-  background: var(--app-bg-muted);
-  color: var(--app-text-subtle);
+  background: #f3f4f6;
+  color: #9ca3af;
 }
 
 .api-import-format.is-active.is-green .api-import-format-icon {
   background: #dcfce7;
-  color: var(--app-success);
+  color: #16a34a;
 }
 
 .api-import-format.is-active.is-orange .api-import-format-icon {
   background: #ffedd5;
-  color: var(--app-warning);
+  color: #ea580c;
 }
 
 .api-import-format.is-active.is-purple .api-import-format-icon {
   background: #f3e8ff;
-  color: var(--app-purple);
+  color: #9333ea;
+}
+
+.api-import-format-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 .api-import-format-copy {
   display: grid;
   min-width: 0;
   gap: 3px;
+  line-height: normal;
 }
 
 .api-import-format-copy > span {
-  color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
+  color: #111827;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 16px;
 }
 
 .api-import-format-copy small {
   overflow: hidden;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6821,12 +7389,13 @@ onBeforeUnmount(() => {
 .api-import-check {
   width: 18px;
   height: 18px;
-  border: 2px solid var(--app-border-strong);
-  color: var(--app-primary);
+  border: 2px solid #d1d5db;
+  color: #2563eb;
 }
 
-.api-import-check :deep(.el-icon) {
-  font-size: 12px;
+.api-import-check svg {
+  width: 12px;
+  height: 12px;
 }
 
 .api-import-mode-switch {
@@ -6835,35 +7404,35 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 3px;
   border-radius: 10px;
-  background: var(--app-bg-muted);
+  background: #f3f4f6;
 }
 
 .api-import-mode-switch button {
   height: 30px;
   padding: 0 14px;
   border: 0;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
   background: transparent;
-  color: var(--app-text-secondary);
+  color: #4b5563;
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .api-import-mode-switch button.is-active {
   background: #fff;
-  color: var(--app-primary);
+  color: #2563eb;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
 }
 
 .api-import-url :deep(.el-input__wrapper) {
   min-height: 42px;
-  border-radius: var(--app-radius-md);
-  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px #d1d5db;
 }
 
 .api-import-url :deep(.el-input__wrapper.is-focus) {
-  box-shadow: inset 0 0 0 1px var(--app-primary), 0 0 0 2px rgba(37, 99, 235, 0.16);
+  box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.16);
 }
 
 .api-import-upload {
@@ -6873,10 +7442,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border: 2px dashed var(--app-border-strong);
-  border-radius: var(--app-radius-lg);
+  border: 2px dashed #d1d5db;
+  border-radius: 12px;
   background: #fff;
-  color: var(--app-text-secondary);
+  color: #4b5563;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
@@ -6891,21 +7460,22 @@ onBeforeUnmount(() => {
 }
 
 .api-import-upload-icon {
-  color: var(--app-text-subtle);
-  font-size: 24px;
+  width: 24px;
+  height: 24px;
+  color: #9ca3af;
 }
 
 .api-import-upload small {
-  color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
+  color: #9ca3af;
+  font-size: 12px;
 }
 
 .api-import-footer {
   justify-content: flex-end;
   gap: 12px;
   padding: 16px 24px;
-  border-top: 1px solid var(--app-border-soft);
-  background: var(--app-bg-page);
+  border-top: 1px solid #f3f4f6;
+  background: #f9fafb;
 }
 
 .api-import-cancel,
@@ -6913,31 +7483,32 @@ onBeforeUnmount(() => {
   height: 36px;
   padding: 0 16px;
   border: 1px solid transparent;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
   font-weight: 500;
+  line-height: normal;
 }
 
 .api-import-cancel {
-  border-color: var(--app-border-strong);
+  border-color: #d1d5db;
   background: #fff;
-  color: var(--app-text-secondary);
+  color: #374151;
 }
 
 .api-import-cancel:hover {
-  background: var(--app-bg-muted);
+  background: #f3f4f6;
 }
 
 .api-import-submit {
-  border-color: var(--app-primary);
-  background: var(--app-primary);
+  border-color: #2563eb;
+  background: #2563eb;
   color: #fff;
 }
 
 .api-import-submit:hover {
-  border-color: var(--app-primary-hover);
-  background: var(--app-primary-hover);
+  border-color: #1d4ed8;
+  background: #1d4ed8;
 }
 
 .api-soft-dialog-shell :deep(.el-dialog) {
@@ -6955,6 +7526,7 @@ onBeforeUnmount(() => {
 :global(.el-dialog.api-soft-dialog-shell) {
   overflow: hidden;
   padding: 0;
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
 }
@@ -6977,13 +7549,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 64px;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--app-border-soft);
+  height: 65px;
+  padding: 20px 28px 20px 24px;
 }
 
 .api-soft-dialog__header strong {
-  color: var(--app-text-primary);
+  color: #111827;
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
@@ -6996,32 +7567,47 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   border: 0;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
   background: transparent;
-  color: var(--app-text-muted);
+  color: #9ca3af;
   cursor: pointer;
 }
 
 .api-soft-dialog__close:hover {
-  background: var(--app-bg-muted);
-  color: var(--app-text-primary);
+  background: #f3f4f6;
+  color: #374151;
 }
 
 .api-soft-dialog__body {
-  padding: 24px;
+  min-height: 111px;
+  padding: 20px 24px;
+  color: #374151;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .api-soft-dialog__body p {
   margin: 0 0 12px;
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
-  line-height: 20px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .api-soft-dialog__body :deep(.el-input__wrapper),
 .api-soft-dialog__body :deep(.el-textarea__inner) {
-  border-radius: var(--app-radius-md);
-  box-shadow: 0 0 0 1px var(--app-border) inset;
+  min-height: 38px;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #d1d5db inset;
+}
+
+.api-soft-dialog__body :deep(.el-input__inner),
+.api-soft-dialog__body :deep(.el-textarea__inner) {
+  color: #374151;
+}
+
+.api-soft-dialog__body :deep(.el-input__wrapper.is-focus),
+.api-soft-dialog__body :deep(.el-textarea__inner:focus) {
+  box-shadow: 0 0 0 1px #2563eb inset;
 }
 
 .api-soft-dialog__body :deep(.el-textarea__inner) {
@@ -7040,47 +7626,49 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  min-height: 71px;
   padding: 16px 24px;
-  border-top: 1px solid var(--app-border-soft);
   background: #fff;
 }
 
 .api-soft-dialog__cancel,
 .api-soft-dialog__submit {
-  height: 36px;
-  padding: 0 16px;
+  min-width: 58px;
+  height: 38px;
+  padding: 0 14px;
   border: 1px solid transparent;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
   cursor: pointer;
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
 }
 
 .api-soft-dialog__cancel {
-  border-color: var(--app-border-strong);
+  border-color: #d1d5db;
   background: #fff;
-  color: var(--app-text-secondary);
+  color: #111827;
 }
 
 .api-soft-dialog__cancel:hover {
-  background: var(--app-bg-muted);
+  background: #f3f4f6;
 }
 
 .api-soft-dialog__submit {
-  border-color: var(--app-primary);
-  background: var(--app-primary);
+  border-color: #2563eb;
+  background: #2563eb;
   color: #fff;
 }
 
 .api-soft-dialog__submit:hover {
-  border-color: var(--app-primary-hover);
-  background: var(--app-primary-hover);
+  border-color: #1d4ed8;
+  background: #1d4ed8;
 }
 
 :global(.api-soft-message-box.el-message-box) {
-  width: 432px;
+  width: 420px;
   padding: 0;
-  border: 1px solid var(--app-border);
+  border: 1px solid #e5e7eb;
   border-radius: 16px;
   overflow: hidden;
   box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.12);
@@ -7089,13 +7677,12 @@ onBeforeUnmount(() => {
 :global(.api-soft-message-box .el-message-box__header) {
   display: flex;
   align-items: center;
-  min-height: 64px;
-  padding: 20px 24px;
-  border-bottom: 1px solid var(--app-border-soft);
+  min-height: 65px;
+  padding: 20px 28px 20px 24px;
 }
 
 :global(.api-soft-message-box .el-message-box__title) {
-  color: var(--app-text-primary);
+  color: #111827;
   font-size: 16px;
   font-weight: 600;
   line-height: 24px;
@@ -7103,16 +7690,18 @@ onBeforeUnmount(() => {
 
 :global(.api-soft-message-box .el-message-box__headerbtn) {
   top: 16px;
-  right: 18px;
+  right: 22px;
   width: 32px;
   height: 32px;
-  border-radius: var(--app-radius-md);
+  border-radius: 8px;
 }
 
 :global(.api-soft-message-box .el-message-box__content) {
-  padding: 24px;
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
+  min-height: 72px;
+  padding: 20px 24px;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 :global(.api-soft-message-box .el-message-box__status) {
@@ -7121,40 +7710,54 @@ onBeforeUnmount(() => {
 
 :global(.api-soft-message-box .el-message-box__message) {
   padding-left: 28px;
-  line-height: 20px;
+  line-height: 21px;
 }
 
 :global(.api-soft-message-box .el-message-box__btns) {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+  min-height: 71px;
   padding: 16px 24px;
-  border-top: 1px solid var(--app-border-soft);
   background: #fff;
 }
 
 :global(.api-soft-message-box .el-button) {
-  height: 36px;
+  min-width: 58px;
+  height: 38px;
   margin-left: 0;
-  padding: 0 16px;
-  border-radius: var(--app-radius-md);
-  font-size: var(--app-font-size-sm);
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 14px;
   font-weight: 500;
+  line-height: 20px;
+}
+
+:global(.api-soft-message-box__cancel.el-button) {
+  border-color: #d1d5db;
+  background: #fff;
+  color: #111827;
+}
+
+:global(.api-soft-message-box__cancel.el-button:hover) {
+  border-color: #d1d5db;
+  background: #f3f4f6;
+  color: #111827;
 }
 
 :global(.api-soft-message-box__primary.el-button--primary) {
-  border-color: var(--app-primary);
-  background: var(--app-primary);
+  border-color: #2563eb;
+  background: #2563eb;
 }
 
 :global(.api-soft-message-box__primary.el-button--primary:hover) {
-  border-color: var(--app-primary-hover);
-  background: var(--app-primary-hover);
+  border-color: #1d4ed8;
+  background: #1d4ed8;
 }
 
 :global(.api-soft-message-box__danger.el-button--primary) {
-  border-color: var(--app-danger);
-  background: var(--app-danger);
+  border-color: #ef4444;
+  background: #ef4444;
 }
 
 :global(.api-soft-message-box__danger.el-button--primary:hover) {
@@ -7256,11 +7859,6 @@ onBeforeUnmount(() => {
   padding: 14px 20px;
   border-top: 1px solid var(--app-border-soft);
   background: var(--app-bg-page);
-}
-
-.api-directory-empty {
-  padding: 24px 12px;
-  text-align: center;
 }
 
 .api-dialog-footer {
