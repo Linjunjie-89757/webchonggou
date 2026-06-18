@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import {
+  ArrowDown,
+  ArrowUp,
   Close,
   Fold,
   MoreFilled,
@@ -49,6 +51,7 @@ import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-prov
 import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
+import ApiCodeEditor from './ApiCodeEditor.vue'
 
 type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases'
 type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
@@ -137,7 +140,12 @@ interface ApiProcessorConfig {
   enabled?: boolean
   script?: string | null
   sql?: string | null
+  dataSourceId?: string | number | null
   dataSourceName?: string | null
+  queryTimeout?: number | null
+  variableNames?: string | null
+  resultVariable?: string | null
+  extractParams?: ApiProcessorSqlExtractParam[]
   delayMs?: number | null
   expression?: string | null
   variableName?: string | null
@@ -145,6 +153,12 @@ interface ApiProcessorConfig {
   extractType?: string | null
   description?: string | null
   extractors?: ApiProcessorExtractItem[]
+}
+
+interface ApiProcessorSqlExtractParam {
+  key?: string | null
+  value?: string | null
+  enabled?: boolean
 }
 
 interface ApiProcessorExtractItem {
@@ -234,6 +248,7 @@ const sending = ref(false)
 const batchAddVisible = ref(false)
 const batchAddTarget = ref<BatchAddTarget>('query')
 const batchAddText = ref('')
+const activeProcessorId = ref('')
 const activeAssertionId = ref('')
 const importDialogVisible = ref(false)
 const importMode = ref<ApiImportMode>('swagger')
@@ -1378,6 +1393,22 @@ function processorRowsFor(detail: ApiDefinitionDetail, stage: 'pre' | 'post'): A
   return rows
 }
 
+function activeProcessorRows() {
+  if (!activeEditor.value) return []
+  const stage = activeEditor.value.activeTab === 'pre' ? 'pre' : 'post'
+  return processorRowsFor(activeEditor.value.detail, stage)
+}
+
+function activeProcessorStage(): 'pre' | 'post' {
+  return activeEditor.value?.activeTab === 'pre' ? 'pre' : 'post'
+}
+
+const activeProcessor = computed(() => {
+  const rows = activeProcessorRows()
+  if (!rows.length) return null
+  return rows.find(item => item.id === activeProcessorId.value) || rows[0]
+})
+
 function normalizeProcessorDefaults(processor: ApiProcessorConfig, stage: 'pre' | 'post') {
   const type = processor.processorType || 'SCRIPT'
   processor.id = processor.id || `${stage}-${type.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -1392,7 +1423,12 @@ function normalizeProcessorDefaults(processor: ApiProcessorConfig, stage: 'pre' 
   if (type === 'SQL') {
     processor.sql = processor.sql ?? processor.script ?? ''
     processor.script = processor.sql
+    processor.dataSourceId = processor.dataSourceId ?? null
     processor.dataSourceName = processor.dataSourceName ?? ''
+    processor.queryTimeout = processor.queryTimeout || 30000
+    processor.variableNames = processor.variableNames ?? ''
+    processor.resultVariable = processor.resultVariable ?? ''
+    processor.extractParams = normalizeSqlExtractParams(processor.extractParams)
   }
   if (type === 'EXTRACT') {
     processor.sourceType = processor.sourceType || 'RESPONSE_BODY'
@@ -1507,12 +1543,11 @@ function removeAssertionItem(items: ApiAssertionItemConfig[], index: number, fal
   markDirty()
 }
 
-function normalizeAssertionForType(assertion: ApiAssertionConfig) {
-  assertion.assertionType = normalizeAssertionType(assertion.assertionType)
-  assertion.type = assertion.assertionType
-  assertion.name = assertion.name || defaultAssertionName(assertion.assertionType)
-  assertion.expressionType = defaultAssertionExpressionType(assertion.assertionType)
-  normalizeAssertion(assertion)
+function updateAssertionResponseTime(assertion: ApiAssertionConfig | null, value: number | undefined) {
+  if (!assertion) return
+  assertion.expectedValue = String(value || 1000)
+  assertion.condition = 'LT_OR_EQUALS'
+  assertion.operator = 'LT_OR_EQUALS'
   markDirty()
 }
 
@@ -1733,7 +1768,12 @@ function createProcessor(stage: 'pre' | 'post', type = 'SCRIPT'): ApiProcessorCo
     enabled: true,
     script: type === 'TIME_WAITING' ? null : '',
     sql: type === 'SQL' ? '' : null,
+    dataSourceId: type === 'SQL' ? null : null,
     dataSourceName: type === 'SQL' ? '' : null,
+    queryTimeout: type === 'SQL' ? 30000 : null,
+    variableNames: type === 'SQL' ? '' : null,
+    resultVariable: type === 'SQL' ? '' : null,
+    extractParams: type === 'SQL' ? [] : [],
     delayMs: type === 'TIME_WAITING' ? 1000 : null,
     sourceType: type === 'EXTRACT' ? 'RESPONSE_BODY' : null,
     extractType: type === 'EXTRACT' ? 'JSON_PATH' : null,
@@ -1787,12 +1827,43 @@ function normalizeProcessorExtractItems(items: ApiProcessorExtractItem[] | undef
   return source
 }
 
+function normalizeSqlExtractParams(items: ApiProcessorSqlExtractParam[] | undefined) {
+  const rows = Array.isArray(items) ? items : []
+  rows.forEach(row => {
+    row.key = row.key ?? ''
+    row.value = row.value ?? ''
+    row.enabled = row.enabled !== false
+  })
+  return rows
+}
+
+function addSqlExtractParam(processor: ApiProcessorConfig) {
+  processor.extractParams = normalizeSqlExtractParams(processor.extractParams)
+  processor.extractParams.push({ key: '', value: '', enabled: true })
+  syncProcessorScript(processor)
+}
+
+function removeSqlExtractParam(processor: ApiProcessorConfig, index: number) {
+  const rows = normalizeSqlExtractParams(processor.extractParams)
+  rows.splice(index, 1)
+  processor.extractParams = rows
+  syncProcessorScript(processor)
+}
+
 function processorDefaultName(stage: 'pre' | 'post', type?: string) {
   if (type === 'SCRIPT') return stage === 'pre' ? '前置脚本' : '后置脚本'
   if (type === 'SQL') return 'SQL 处理器'
   if (type === 'TIME_WAITING') return '等待处理器'
   if (type === 'EXTRACT') return '提取处理器'
   return stage === 'pre' ? '前置处理器' : '后置处理器'
+}
+
+function processorTypeLabel(type?: string | null) {
+  if (type === 'SCRIPT') return '脚本处理器'
+  if (type === 'SQL') return 'SQL 处理器'
+  if (type === 'TIME_WAITING') return '等待处理器'
+  if (type === 'EXTRACT') return '提取处理器'
+  return type || '处理器'
 }
 
 function processorConfigPlaceholder(type?: string) {
@@ -1826,7 +1897,12 @@ function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' |
     processor.sql = processor.sql ?? processor.script ?? ''
     processor.script = processor.sql
     processor.delayMs = null
+    processor.dataSourceId = processor.dataSourceId ?? null
     processor.dataSourceName = processor.dataSourceName ?? ''
+    processor.queryTimeout = processor.queryTimeout || 30000
+    processor.variableNames = processor.variableNames ?? ''
+    processor.resultVariable = processor.resultVariable ?? ''
+    processor.extractParams = normalizeSqlExtractParams(processor.extractParams)
   } else if (type === 'EXTRACT') {
     processor.expression = processor.expression ?? processor.script ?? ''
     processor.script = processor.expression
@@ -1846,7 +1922,9 @@ function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' |
 
 function addProcessor(stage: 'pre' | 'post', type = 'SCRIPT') {
   if (!activeEditor.value) return
-  processorRowsFor(activeEditor.value.detail, stage).push(createProcessor(stage, type))
+  const processor = createProcessor(stage, type)
+  processorRowsFor(activeEditor.value.detail, stage).push(processor)
+  activeProcessorId.value = processor.id || ''
   markDirty()
 }
 
@@ -1856,7 +1934,11 @@ function addProcessorFromCommand(stage: 'pre' | 'post', command: string | number
 
 function removeProcessor(stage: 'pre' | 'post', index: number) {
   if (!activeEditor.value) return
-  processorRowsFor(activeEditor.value.detail, stage).splice(index, 1)
+  const rows = processorRowsFor(activeEditor.value.detail, stage)
+  const removed = rows.splice(index, 1)
+  if (removed.some(item => item.id === activeProcessorId.value)) {
+    activeProcessorId.value = rows[Math.min(index, rows.length - 1)]?.id || ''
+  }
   markDirty()
 }
 
@@ -1871,6 +1953,7 @@ function copyProcessor(stage: 'pre' | 'post', index: number) {
     name: `${source.name || processorDefaultName(stage, source.processorType)} 副本`,
   }
   rows.splice(index + 1, 0, copied)
+  activeProcessorId.value = copied.id || ''
   markDirty()
 }
 
@@ -1881,7 +1964,12 @@ function moveProcessor(stage: 'pre' | 'post', index: number, direction: -1 | 1) 
   if (targetIndex < 0 || targetIndex >= rows.length) return
   const [row] = rows.splice(index, 1)
   rows.splice(targetIndex, 0, row)
+  activeProcessorId.value = row.id || ''
   markDirty()
+}
+
+function selectProcessor(processor: ApiProcessorConfig) {
+  activeProcessorId.value = processor.id || ''
 }
 
 function syncProcessorScript(processor: ApiProcessorConfig) {
@@ -3409,19 +3497,35 @@ onBeforeUnmount(() => {
                       <button type="button" class="api-add-row" @click="addRow(activeEditor.detail.requestConfig.body.formItems)">+ 添加一行</button>
                     </div>
                     <div v-else class="api-binary-panel">
-                      <span>File</span>
-                      <div class="api-binary-file">
-                        <label class="api-file-picker__button">
-                          选择文件
-                          <input type="file" @change="handleBinaryFileChange" />
-                        </label>
-                        <div>
-                          <strong>{{ activeEditor.detail.requestConfig.body.fileName || '未选择文件' }}</strong>
-                          <span>{{ activeEditor.detail.requestConfig.body.contentType || 'application/octet-stream' }} · {{ formatFileSize(activeEditor.detail.requestConfig.body.fileSize) }}</span>
+                      <div class="api-binary-row">
+                        <div class="api-binary-label">File</div>
+                        <div class="api-binary-actions">
+                          <label class="api-binary-pick">
+                            {{ activeEditor.detail.requestConfig.body.fileName ? '重新选择' : '选择文件' }}
+                            <input type="file" @change="handleBinaryFileChange" />
+                          </label>
+                          <button
+                            type="button"
+                            class="api-binary-clear"
+                            :disabled="!activeEditor.detail.requestConfig.body.binaryBase64"
+                            @click="clearBinaryFile"
+                          >
+                            清空
+                          </button>
                         </div>
-                        <button v-if="activeEditor.detail.requestConfig.body.fileName" type="button" class="api-row-remove" @click="clearBinaryFile">清除</button>
                       </div>
-                      <span class="api-binary-hint">调试发送会带入 Base64 内容；若后端未持久化完整内容，刷新后仅保留接口返回的元信息。</span>
+                      <div class="api-binary-row">
+                        <div class="api-binary-label">已选文件</div>
+                        <div class="api-binary-selected">
+                          <template v-if="activeEditor.detail.requestConfig.body.fileName">
+                            <span class="api-binary-file-name">{{ activeEditor.detail.requestConfig.body.fileName }}</span>
+                            <span v-if="activeEditor.detail.requestConfig.body.fileSize" class="api-binary-file-size">{{ formatFileSize(activeEditor.detail.requestConfig.body.fileSize) }}</span>
+                          </template>
+                          <template v-else>
+                            尚未选择二进制文件
+                          </template>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3462,6 +3566,11 @@ onBeforeUnmount(() => {
                   <el-input-number v-model="activeEditor.detail.requestConfig.timeoutMs" :min="1000" :step="1000" controls-position="right" @change="markDirty" />
                   <label>描述</label>
                   <el-input v-model="activeEditor.detail.description" type="textarea" :rows="4" placeholder="接口描述、调用约束或备注" @input="markDirty" />
+                  <div class="api-settings-footer">
+                    <span>写入空间 {{ props.workspaceCode || 'ALL' }}</span>
+                    <span>调试上下文 开启-UAT / 未选择变量集</span>
+                    <span>最后运行 {{ activeEditor.runResult ? '已运行' : '未运行' }}</span>
+                  </div>
                 </div>
               </template>
 
@@ -3567,6 +3676,16 @@ onBeforeUnmount(() => {
                   </div>
                   <div v-if="assertionRowsFor(activeEditor.detail).length" class="api-assertion-editor">
                     <aside class="api-assertion-list">
+                      <div class="api-assertion-toolbar">
+                        <el-dropdown trigger="click" @command="addAssertionFromCommand">
+                          <button type="button" class="api-legacy-primary">添加断言</button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item v-for="item in assertionTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </div>
                       <button
                         v-for="(assertion, index) in assertionRowsFor(activeEditor.detail)"
                         :key="assertion.id || index"
@@ -3576,53 +3695,49 @@ onBeforeUnmount(() => {
                       >
                         <span class="api-assertion-list-item__main">
                           <el-switch v-model="assertion.enabled" size="small" @click.stop @change="markDirty" />
-                          <span>{{ assertion.name || `断言 ${index + 1}` }}</span>
+                          <span class="api-assertion-list-copy">
+                            <span class="api-assertion-list-title">{{ assertion.name || `断言 ${index + 1}` }}</span>
+                            <span class="api-assertion-list-meta">{{ assertionTypeLabel(assertion.assertionType || assertion.type) }}</span>
+                          </span>
                         </span>
-                        <small>{{ index + 1 }} · {{ assertionTypeLabel(assertion.assertionType || assertion.type) }}</small>
+                        <span class="api-assertion-list-actions">
+                          <el-button text :icon="ArrowUp" :disabled="index === 0" @click.stop="moveAssertion(index, -1)" />
+                          <el-button text :icon="ArrowDown" :disabled="index === assertionRowsFor(activeEditor.detail).length - 1" @click.stop="moveAssertion(index, 1)" />
+                        </span>
                       </button>
+                      <button type="button" class="api-assertion-batch-link" @click="openBatchAdd('assertion')">批量添加</button>
                     </aside>
                     <section v-if="activeAssertion" class="api-assertion-detail">
-                      <div class="api-assertion-detail__actions">
-                        <button type="button" @click="copyAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">复制</button>
-                        <button type="button" @click="moveAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion), -1)">上移</button>
-                        <button type="button" @click="moveAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion), 1)">下移</button>
-                        <button type="button" @click="testAssertionExpression(activeAssertion)">测试表达式</button>
-                        <button type="button" @click="fillAssertionFromResponse(activeAssertion)">从最近响应提取</button>
-                        <button type="button" class="api-row-remove" @click="removeAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">删除</button>
-                      </div>
-                      <div class="api-assertion-form-grid">
-                        <label>名称</label>
-                        <el-input v-model="activeAssertion.name" placeholder="断言名称" @input="markDirty" />
-                        <label>启用</label>
-                        <el-switch v-model="activeAssertion.enabled" size="small" @change="markDirty" />
-                        <label>断言类型</label>
-                        <el-select v-model="activeAssertion.assertionType" @change="normalizeAssertionForType(activeAssertion)">
-                          <el-option v-for="item in assertionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <label>说明</label>
-                        <el-input v-model="activeAssertion.description" placeholder="说明" @input="markDirty" />
+                      <div class="api-assertion-detail-header">
+                        <div class="api-assertion-detail-fields">
+                          <el-input v-model="activeAssertion.name" placeholder="断言名称" @input="markDirty" />
+                          <el-tag size="small" effect="plain">{{ assertionTypeLabel(activeAssertion.assertionType || activeAssertion.type) }}</el-tag>
+                        </div>
+                        <div class="api-assertion-detail-actions">
+                          <button type="button" @click="copyAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">复制</button>
+                          <button type="button" class="api-row-remove" @click="removeAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">删除</button>
+                        </div>
                       </div>
 
                       <div v-if="activeAssertion.assertionType === 'RESPONSE_CODE'" class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">响应码断言</div>
                         <div class="api-assertion-form-grid">
-                          <label>条件</label>
-                          <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
-                            <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
-                          </el-select>
-                          <label>期望状态码</label>
-                          <el-input v-model="activeAssertion.expectedValue" placeholder="200" @input="markDirty" />
+                          <label>
+                            <span>条件</span>
+                            <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
+                              <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
+                            </el-select>
+                          </label>
+                          <label>
+                            <span>期望值</span>
+                            <el-input v-model="activeAssertion.expectedValue" placeholder="200" @input="markDirty" />
+                          </label>
                         </div>
                       </div>
 
                       <div v-else-if="activeAssertion.assertionType === 'RESPONSE_HEADER'" class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">
-                          <span>响应头断言</span>
-                          <button type="button" @click="addAssertionItem(activeAssertion.assertions || (activeAssertion.assertions = []), { header: '' })">+ 添加响应头</button>
-                        </div>
                         <div class="api-assertion-item-list">
                           <div v-for="(item, index) in activeAssertion.assertions" :key="`${activeAssertion.id}-header-${index}`" class="api-assertion-item-row is-header">
-                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-checkbox v-model="item.enabled" @change="markDirty" />
                             <el-input v-model="item.header" placeholder="响应头名称" @input="activeAssertion.expression = item.header || ''; markDirty()" />
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
@@ -3632,6 +3747,7 @@ onBeforeUnmount(() => {
                             <button type="button" @click="copyAssertionItem(activeAssertion.assertions || [], index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.assertions || [], index, { header: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
+                          <button type="button" class="api-assertion-add-row" @click="addAssertionItem(activeAssertion.assertions || (activeAssertion.assertions = []), { header: '' })">+ 添加响应头断言</button>
                         </div>
                       </div>
 
@@ -3653,7 +3769,7 @@ onBeforeUnmount(() => {
                         </div>
                         <div class="api-assertion-item-list">
                           <div v-for="(item, index) in activeAssertionBodyGroup(activeAssertion).assertions" :key="`${activeAssertion.id}-body-${activeAssertion.assertionBodyType}-${index}`" class="api-assertion-item-row is-body">
-                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-checkbox v-model="item.enabled" @change="markDirty" />
                             <el-input v-model="item.expression" placeholder="$.data.id / /root/id / 正则" @input="activeAssertion.expression = item.expression || ''; markDirty()" />
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
@@ -3668,27 +3784,22 @@ onBeforeUnmount(() => {
                       </div>
 
                       <div v-else-if="activeAssertion.assertionType === 'RESPONSE_TIME'" class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">响应时间断言</div>
-                        <div class="api-assertion-form-grid">
-                          <label>条件</label>
-                          <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
-                            <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
-                          </el-select>
-                          <label>耗时阈值</label>
-                          <el-input v-model="activeAssertion.expectedValue" placeholder="1000" @input="markDirty">
-                            <template #append>ms</template>
-                          </el-input>
+                        <div class="api-assertion-form-row">
+                          <span class="api-assertion-form-label">最大耗时(ms)</span>
+                          <el-input-number
+                            :model-value="Number(activeAssertion.expectedValue || 1000)"
+                            :min="1"
+                            :step="100"
+                            @update:model-value="updateAssertionResponseTime(activeAssertion, $event)"
+                          />
                         </div>
                       </div>
 
                       <div v-else-if="activeAssertion.assertionType === 'VARIABLE'" class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">
-                          <span>变量断言</span>
-                          <button type="button" @click="addAssertionItem(activeAssertion.variableAssertionItems || (activeAssertion.variableAssertionItems = []), { variableName: '' })">+ 添加变量</button>
-                        </div>
+                        <div class="api-assertion-hint">可校验后置 SQL 写入的变量，例如 firstToken / id_1 / sqlRows。</div>
                         <div class="api-assertion-item-list">
                           <div v-for="(item, index) in activeAssertion.variableAssertionItems" :key="`${activeAssertion.id}-variable-${index}`" class="api-assertion-item-row is-variable">
-                            <el-switch v-model="item.enabled" size="small" @change="markDirty" />
+                            <el-checkbox v-model="item.enabled" @change="markDirty" />
                             <el-input v-model="item.variableName" placeholder="变量名" @input="activeAssertion.expression = item.variableName || ''; markDirty()" />
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
@@ -3697,18 +3808,22 @@ onBeforeUnmount(() => {
                             <button type="button" @click="copyAssertionItem(activeAssertion.variableAssertionItems || [], index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.variableAssertionItems || [], index, { variableName: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
+                          <button type="button" class="api-assertion-add-row" @click="addAssertionItem(activeAssertion.variableAssertionItems || (activeAssertion.variableAssertionItems = []), { variableName: '' })">+ 添加变量断言</button>
                         </div>
                       </div>
 
                       <div v-else class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">脚本断言</div>
-                        <el-input
+                        <div class="api-assertion-editor-actions">
+                          <span class="api-processor-language-tag">JavaScript</span>
+                          <button type="button" @click="activeAssertion.script = ''; markDirty()">清空</button>
+                          <button type="button" @click="activeAssertion.script = (activeAssertion.script || '').trim(); markDirty()">格式化</button>
+                        </div>
+                        <ApiCodeEditor
                           v-model="activeAssertion.script"
-                          type="textarea"
-                          :rows="9"
-                          resize="none"
+                          height="360px"
+                          language="javascript"
                           placeholder="if (response.statusCode !== 200) { throw new Error('状态码不正确') }"
-                          @input="markDirty"
+                          @change="markDirty"
                         />
                         <small class="api-assertion-hint">发送时由后端执行脚本断言；当前只保存真实脚本内容，不做前端伪执行。</small>
                       </div>
@@ -3732,9 +3847,190 @@ onBeforeUnmount(() => {
                       </template>
                     </el-dropdown>
                   </div>
-                  <div class="api-processor-list">
+                  <div class="api-processor-editor">
+                    <aside class="api-processor-sidebar">
+                      <div class="api-processor-toolbar">
+                        <el-dropdown trigger="click" @command="(command: string | number | object) => addProcessorFromCommand(activeEditor?.activeTab === 'pre' ? 'pre' : 'post', command)">
+                          <button type="button" class="api-legacy-primary">添加</button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item v-for="item in processorTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </div>
+                      <div v-if="activeProcessorRows().length" class="api-processor-sidebar-list">
+                        <button
+                          v-for="(processor, index) in activeProcessorRows()"
+                          :key="processor.id || index"
+                          type="button"
+                          :class="['api-processor-list-item', { 'is-active': activeProcessor?.id === processor.id }]"
+                          @click="selectProcessor(processor)"
+                        >
+                          <span class="api-processor-list-item__main">
+                            <el-switch v-model="processor.enabled" size="small" @click.stop @change="markDirty" />
+                            <span class="api-processor-list-copy">
+                              <span class="api-processor-list-title">{{ processor.name || processorDefaultName(activeProcessorStage(), processor.processorType) }}</span>
+                              <span class="api-processor-list-meta">{{ processorTypeLabel(processor.processorType) }}</span>
+                            </span>
+                          </span>
+                          <span class="api-processor-list-actions">
+                            <el-button text :icon="ArrowUp" :disabled="index === 0" @click.stop="moveProcessor(activeProcessorStage(), index, -1)" />
+                            <el-button text :icon="ArrowDown" :disabled="index === activeProcessorRows().length - 1" @click.stop="moveProcessor(activeProcessorStage(), index, 1)" />
+                          </span>
+                        </button>
+                      </div>
+                      <div v-else class="api-processor-empty">暂无处理器</div>
+                    </aside>
+
+                    <section class="api-processor-detail">
+                      <template v-if="activeProcessor">
+                        <div class="api-processor-detail-header">
+                          <div class="api-processor-detail-fields">
+                            <el-input v-model="activeProcessor.name" placeholder="处理器名称" @input="markDirty" />
+                            <el-tag size="small" effect="plain">{{ processorTypeLabel(activeProcessor.processorType) }}</el-tag>
+                          </div>
+                          <div class="api-processor-detail-actions">
+                            <button type="button" @click="copyProcessor(activeProcessorStage(), activeProcessorRows().indexOf(activeProcessor))">复制</button>
+                            <button type="button" class="api-row-remove" @click="removeProcessor(activeProcessorStage(), activeProcessorRows().indexOf(activeProcessor))">删除</button>
+                          </div>
+                        </div>
+
+                        <template v-if="activeProcessor.processorType === 'SCRIPT'">
+                          <div class="api-processor-editor-actions">
+                            <span class="api-processor-language-tag">JavaScript</span>
+                            <button type="button" @click="activeProcessor.script = ''; markDirty()">清空</button>
+                            <button type="button" @click="activeProcessor.script = (activeProcessor.script || '').trim(); markDirty()">格式化</button>
+                          </div>
+                          <ApiCodeEditor
+                            v-model="activeProcessor.script"
+                            height="360px"
+                            language="javascript"
+                            placeholder="请输入 JavaScript 脚本"
+                            @change="markDirty"
+                          />
+                          <div class="api-processor-hint">可使用 setVar / getVar / removeVar / log / fail / request / response。</div>
+                        </template>
+
+                        <template v-else-if="activeProcessor.processorType === 'SQL'">
+                          <div class="api-processor-form-grid">
+                            <label>
+                              <span>数据库连接</span>
+                              <el-select
+                                v-model="activeProcessor.dataSourceName"
+                                filterable
+                                clearable
+                                allow-create
+                                default-first-option
+                                placeholder="选择数据库连接"
+                                @change="markDirty"
+                              />
+                            </label>
+                            <label>
+                              <span>查询超时(ms)</span>
+                              <el-input-number
+                                v-model="activeProcessor.queryTimeout"
+                                :min="1000"
+                                :step="1000"
+                                controls-position="right"
+                                @change="markDirty"
+                              />
+                            </label>
+                            <label>
+                              <span>按列存储变量</span>
+                              <el-input v-model="activeProcessor.variableNames" placeholder="id,email" @input="markDirty" />
+                            </label>
+                            <label>
+                              <span>完整结果变量</span>
+                              <el-input v-model="activeProcessor.resultVariable" placeholder="resultJson" @input="markDirty" />
+                            </label>
+                          </div>
+                          <ApiCodeEditor
+                            v-model="activeProcessor.sql"
+                            height="260px"
+                            language="sql"
+                            placeholder="请输入 SQL 语句"
+                            @change="syncProcessorScript(activeProcessor)"
+                          />
+                          <div class="api-sql-extract-table">
+                            <div class="api-sql-extract-table__header">
+                              <span>变量名</span>
+                              <span>列名</span>
+                              <span></span>
+                            </div>
+                            <div
+                              v-for="(param, sqlParamIndex) in normalizeSqlExtractParams(activeProcessor.extractParams)"
+                              :key="`${activeProcessor.id}-sql-${sqlParamIndex}`"
+                              class="api-sql-extract-table__row"
+                            >
+                              <el-input v-model="param.key" placeholder="变量名" @input="markDirty" />
+                              <el-input v-model="param.value" placeholder="列名" @input="markDirty" />
+                              <button type="button" class="api-row-remove" @click="removeSqlExtractParam(activeProcessor, sqlParamIndex)">删除</button>
+                            </div>
+                            <button type="button" class="api-sql-extract-table__add" @click="addSqlExtractParam(activeProcessor)">+ 添加提取参数</button>
+                          </div>
+                        </template>
+
+                        <template v-else-if="activeProcessor.processorType === 'EXTRACT'">
+                          <div class="api-processor-extract-panel">
+                            <div class="api-processor-extract-toolbar">
+                              <span>提取参数</span>
+                              <button type="button" @click="addProcessorExtractItem(activeProcessor)">+ 添加提取项</button>
+                            </div>
+                            <div class="api-processor-extract-scroll">
+                              <div class="api-processor-extract-grid">
+                                <div class="api-processor-extract-header">
+                                  <span>变量名</span>
+                                  <span>描述</span>
+                                  <span>变量类型</span>
+                                  <span>提取方式</span>
+                                  <span>提取范围</span>
+                                  <span>表达式</span>
+                                  <span>操作</span>
+                                </div>
+                              </div>
+                              <div
+                                v-for="(item, extractIndex) in normalizeProcessorExtractItems(activeProcessor.extractors, activeProcessor)"
+                                :key="item.id || extractIndex"
+                                class="api-processor-extract-row"
+                              >
+                                <el-input v-model="item.variableName" placeholder="例如 token" @input="syncProcessorScript(activeProcessor)" />
+                                <el-input v-model="item.description" placeholder="可选" @input="syncProcessorScript(activeProcessor)" />
+                                <el-select v-model="item.variableType" @change="syncProcessorScript(activeProcessor)">
+                                  <el-option v-for="option in processorExtractVariableTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                                </el-select>
+                                <el-select v-model="item.extractType" @change="syncProcessorScript(activeProcessor)">
+                                  <el-option v-for="option in extractorExpressionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                                </el-select>
+                                <el-select v-model="item.sourceType" @change="syncProcessorScript(activeProcessor)">
+                                  <el-option v-for="option in extractorSourceOptions" :key="option.value" :label="option.label" :value="option.value" />
+                                </el-select>
+                                <el-input v-model="item.expression" placeholder="表达式" @input="syncProcessorScript(activeProcessor)" />
+                                <span class="api-processor-extract-actions">
+                                  <button type="button" @click="copyProcessorExtractItem(activeProcessor, extractIndex)">复制</button>
+                                  <button type="button" class="api-row-remove" @click="removeProcessorExtractItem(activeProcessor, extractIndex)">删除</button>
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </template>
+
+                        <template v-else>
+                          <div class="api-processor-form-row">
+                            <span class="api-processor-form-label">等待时长(ms)</span>
+                            <el-input-number v-model="activeProcessor.delayMs" :min="1" :max="600000" :step="100" controls-position="right" @change="markDirty" />
+                          </div>
+                        </template>
+
+                        <el-input v-model="activeProcessor.description" placeholder="说明" @input="markDirty" />
+                      </template>
+                      <div v-else class="api-processor-empty api-processor-empty--inline">暂无处理器</div>
+                    </section>
+                  </div>
+
+                  <div v-if="false && activeEditor" class="api-processor-list">
                     <div
-                      v-for="(processor, index) in processorRowsFor(activeEditor.detail, activeEditor.activeTab === 'pre' ? 'pre' : 'post')"
+                      v-for="(processor, index) in activeProcessorRows()"
                       :key="processor.id || index"
                       class="api-processor-card"
                     >
@@ -3743,15 +4039,15 @@ onBeforeUnmount(() => {
                         <el-input v-model="processor.name" placeholder="处理器名称" @input="markDirty" />
                         <el-select
                           v-model="processor.processorType"
-                          @change="normalizeProcessorForType(processor, activeEditor.activeTab === 'pre' ? 'pre' : 'post')"
+                          @change="normalizeProcessorForType(processor, activeProcessorStage())"
                         >
                           <el-option v-for="item in processorTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
                         </el-select>
                         <div class="api-processor-card__actions">
-                          <button type="button" @click="copyProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index)">复制</button>
-                          <button type="button" @click="moveProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index, -1)">上移</button>
-                          <button type="button" @click="moveProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index, 1)">下移</button>
-                          <button type="button" class="api-row-remove" @click="removeProcessor(activeEditor.activeTab === 'pre' ? 'pre' : 'post', index)">删除</button>
+                          <button type="button" @click="copyProcessor(activeProcessorStage(), index)">复制</button>
+                          <button type="button" @click="moveProcessor(activeProcessorStage(), index, -1)">上移</button>
+                          <button type="button" @click="moveProcessor(activeProcessorStage(), index, 1)">下移</button>
+                          <button type="button" class="api-row-remove" @click="removeProcessor(activeProcessorStage(), index)">删除</button>
                         </div>
                       </div>
                       <el-input
@@ -3812,8 +4108,8 @@ onBeforeUnmount(() => {
                       </div>
                       <el-input v-model="processor.description" placeholder="说明" @input="markDirty" />
                     </div>
-                    <div v-if="!processorRowsFor(activeEditor.detail, activeEditor.activeTab === 'pre' ? 'pre' : 'post').length" class="api-empty-body">
-                      暂无{{ activeEditor.activeTab === 'pre' ? '前置' : '后置' }}处理器
+                    <div v-if="!activeProcessorRows().length" class="api-empty-body">
+                      暂无{{ activeProcessorStage() === 'pre' ? '前置' : '后置' }}处理器
                     </div>
                   </div>
                 </div>
@@ -4531,7 +4827,7 @@ onBeforeUnmount(() => {
 .api-interface-workspace {
   display: flex;
   min-width: 0;
-  height: max(760px, calc(100dvh - 104px));
+  height: calc(100dvh - 112px);
   min-height: 560px;
   flex-direction: column;
   overflow: hidden;
@@ -5351,6 +5647,11 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.api-content-tab:not(.is-active):hover,
+.api-response-tabs button:not(.is-active):hover {
+  color: var(--app-text-secondary);
+}
+
 .api-content-tab.is-active::after,
 .api-response-tabs button.is-active::after {
   content: none;
@@ -5372,8 +5673,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: #d4d4d8;
-  color: #fff;
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
   font-size: 12px;
   font-weight: 600;
   padding: 0 5px;
@@ -5698,8 +5999,9 @@ onBeforeUnmount(() => {
   border: 1px solid var(--app-border-strong);
   border-radius: var(--app-radius-sm);
   background: #fff;
-  color: var(--app-text-secondary);
+  color: var(--app-text-muted);
   cursor: pointer;
+  font-family: Arial, sans-serif;
   font-size: 12px;
   font-weight: 500;
   line-height: 16px;
@@ -5780,12 +6082,248 @@ onBeforeUnmount(() => {
   padding-bottom: 2px;
 }
 
+.api-processor-panel {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 360px;
+}
+
+.api-processor-panel .api-advanced-toolbar,
+.api-processor-panel .api-processor-list {
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.api-processor-panel .api-advanced-toolbar {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+.api-processor-panel .api-advanced-toolbar > div:first-child {
+  display: none;
+}
+
+.api-processor-panel .api-advanced-toolbar .el-dropdown {
+  display: flex;
+  width: 100%;
+  height: 48px;
+  align-items: center;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-processor-panel .api-advanced-toolbar .api-sidebar-primary {
+  width: auto;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: var(--app-radius-md);
+  font-size: 0;
+}
+
+.api-processor-panel .api-advanced-toolbar .api-sidebar-primary::after {
+  content: "添加";
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-processor-panel .api-advanced-toolbar::after {
+  content: "暂无处理器";
+  position: absolute;
+  inset: 48px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-subtle);
+  font-size: 13px;
+}
+
+.api-processor-panel .api-processor-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+}
+
+.api-processor-panel .api-processor-list > .api-empty-body {
+  min-height: 100%;
+  background: transparent;
+  color: transparent;
+}
+
+.api-processor-panel .api-processor-list > .api-empty-body::after {
+  content: "请选择一个处理器进行编辑";
+  color: var(--app-text-subtle);
+  font-size: 13px;
+}
+
+.api-assertion-panel {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 398px;
+}
+
+.api-assertion-panel .api-advanced-toolbar,
+.api-assertion-panel > .api-empty-body {
+  min-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.api-assertion-panel .api-advanced-toolbar {
+  position: relative;
+  display: block;
+  padding: 0;
+}
+
+.api-assertion-panel .api-advanced-toolbar > div:first-child {
+  display: none;
+}
+
+.api-assertion-panel .api-advanced-toolbar::before {
+  content: "";
+  position: absolute;
+  top: 48px;
+  right: 0;
+  left: 0;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.api-assertion-panel .api-advanced-toolbar::after {
+  content: "暂无断言";
+  position: absolute;
+  inset: 48px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-subtle);
+  font-size: 13px;
+}
+
+.api-assertion-panel .api-advanced-actions {
+  display: block;
+}
+
+.api-assertion-panel .api-advanced-actions > .el-dropdown:not(:last-child) {
+  display: none;
+}
+
+.api-assertion-panel .api-advanced-actions > .el-dropdown:last-child {
+  position: absolute;
+  top: 6px;
+  left: 12px;
+}
+
+.api-assertion-panel .api-advanced-actions > button:first-child {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.api-assertion-panel .api-advanced-actions .api-sidebar-primary {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: var(--app-radius-md);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-assertion-panel > .api-empty-body {
+  min-height: 360px;
+  background: #fff;
+  color: transparent;
+}
+
+.api-assertion-panel > .api-empty-body::after {
+  content: "请选择一个断言进行编辑";
+  display: flex;
+  width: calc(100% - 24px);
+  height: calc(100% - 24px);
+  align-items: center;
+  justify-content: center;
+  background: var(--app-bg-page);
+  color: var(--app-text-subtle);
+  font-size: 13px;
+}
+
 .api-auth-grid,
 .api-settings-panel {
   display: grid;
   grid-template-columns: 120px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
+}
+
+.api-settings-panel {
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+}
+
+.api-settings-panel > label {
+  display: flex;
+  min-height: 63px;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--app-border-soft);
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.api-settings-panel > .el-input,
+.api-settings-panel > .el-input-number,
+.api-settings-panel > .el-textarea {
+  min-height: 63px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-settings-panel > .el-input-number {
+  width: 100%;
+}
+
+.api-settings-panel :deep(.el-input-number) {
+  width: 100%;
+}
+
+.api-settings-panel > label:nth-last-of-type(1),
+.api-settings-panel > .el-textarea {
+  min-height: 126px;
+}
+
+.api-settings-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  min-height: 42px;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px;
+  border-top: 0;
+  background: var(--app-bg-page);
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .api-auth-grid label,
@@ -5796,9 +6334,116 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.api-settings-panel > label {
+  color: var(--app-text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
 .api-binary-hint {
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-sm);
+}
+
+.api-binary-panel {
+  display: block;
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+}
+
+.api-binary-row {
+  display: grid;
+  min-height: 63px;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-binary-row:last-child {
+  min-height: 84px;
+  border-bottom: 0;
+}
+
+.api-binary-label {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.api-binary-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.api-binary-pick,
+.api-binary-clear {
+  display: inline-flex;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: #fff;
+  color: var(--app-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.api-binary-pick input {
+  display: none;
+}
+
+.api-binary-pick:hover {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+}
+
+.api-binary-clear:disabled {
+  border-color: var(--app-border-soft);
+  background: var(--app-bg-muted);
+  color: var(--app-text-subtle);
+  cursor: not-allowed;
+}
+
+.api-binary-selected {
+  display: flex;
+  min-height: 58px;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-page);
+  color: var(--app-text-subtle);
+  font-size: 14px;
+}
+
+.api-binary-file-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-binary-file-size {
+  flex: 0 0 auto;
+  color: var(--app-text-muted);
+  font-size: 12px;
 }
 
 .api-file-picker,
@@ -5880,6 +6525,22 @@ onBeforeUnmount(() => {
   margin-bottom: 12px;
 }
 
+.api-cases-panel {
+  position: relative;
+  display: block;
+  min-height: 362px;
+}
+
+.api-cases-toolbar {
+  justify-content: flex-start;
+  margin-bottom: 14px;
+}
+
+.api-cases-toolbar > span,
+.api-cases-ai-entry > span {
+  display: none;
+}
+
 .api-cases-ai-entry,
 .api-cases-toolbar__actions {
   display: inline-flex;
@@ -5888,13 +6549,23 @@ onBeforeUnmount(() => {
 }
 
 .api-cases-ai-entry {
-  justify-content: space-between;
-  padding: 8px 10px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-page);
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  position: absolute;
+  top: 2px;
+  left: 94px;
+  justify-content: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.api-cases-panel > .api-empty-body {
+  min-height: 58px;
+  margin-top: 14px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-lg);
+  background: #fff;
+  color: var(--app-text-subtle);
+  font-size: 13px;
 }
 
 .api-case-actions {
@@ -6625,41 +7296,63 @@ onBeforeUnmount(() => {
 
 .api-assertion-editor {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  min-height: 312px;
-  overflow: hidden;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 360px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .api-assertion-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   padding: 8px;
   overflow: auto;
-  border-right: 1px solid var(--app-border-soft);
-  background: var(--app-bg-page);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-xs);
+}
+
+.api-assertion-batch-link {
+  width: fit-content;
+  margin-top: auto;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+  text-align: left;
 }
 
 .api-assertion-list-item {
-  display: grid;
-  gap: 4px;
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   width: 100%;
-  padding: 7px 9px;
+  padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: var(--app-radius-md);
-  background: transparent;
+  background: var(--app-bg-panel);
   color: var(--app-text-primary);
   text-align: left;
   cursor: pointer;
 }
 
-.api-assertion-list-item:hover,
+.api-assertion-list-item:hover {
+  background: var(--app-bg-page);
+}
+
 .api-assertion-list-item.is-active {
-  border-color: var(--app-primary);
-  background: var(--app-bg-subtle);
+  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .api-assertion-list-item__main {
@@ -6668,57 +7361,144 @@ onBeforeUnmount(() => {
   gap: 8px;
   min-width: 0;
   font-size: var(--app-font-size-sm);
-  font-weight: 700;
+  font-weight: 500;
 }
 
-.api-assertion-list-item__main span:last-child {
+.api-assertion-list-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.api-assertion-list-title,
+.api-assertion-list-meta {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.api-assertion-list-item small {
+.api-assertion-list-title {
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-assertion-list-meta {
   color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  font-size: 12px;
+}
+
+.api-assertion-list-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
 }
 
 .api-assertion-detail {
-  display: grid;
-  align-content: start;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
+  min-height: 0;
+  padding: 12px;
   overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-xs);
 }
 
-.api-assertion-detail__actions {
+.api-assertion-detail-header,
+.api-assertion-detail-fields,
+.api-assertion-detail-actions {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+.api-assertion-detail-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-assertion-detail-fields {
+  flex: 1;
+  min-width: 280px;
+}
+
+.api-assertion-detail-fields :deep(.el-input) {
+  flex: 1;
+}
+
+.api-assertion-detail-fields :deep(.el-input__wrapper) {
+  min-height: 32px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-assertion-detail-actions button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 13px;
 }
 
 .api-assertion-form-grid {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+  gap: 12px;
 }
 
 .api-assertion-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
-  font-weight: 700;
+  font-weight: 400;
+}
+
+.api-assertion-form-grid :deep(.el-input__wrapper),
+.api-assertion-form-grid :deep(.el-select__wrapper),
+.api-assertion-form-row :deep(.el-input__wrapper),
+.api-assertion-item-row :deep(.el-input__wrapper),
+.api-assertion-item-row :deep(.el-select__wrapper) {
+  min-height: 32px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-assertion-form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.api-assertion-form-label {
+  min-width: 72px;
+}
+
+.api-assertion-form-row :deep(.el-input-number) {
+  width: 150px;
 }
 
 .api-assertion-type-panel {
   display: grid;
-  gap: 8px;
+  gap: 12px;
   min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .api-assertion-subtitle,
@@ -6749,8 +7529,13 @@ onBeforeUnmount(() => {
 
 .api-assertion-item-list {
   display: grid;
-  gap: 6px;
+  gap: 0;
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
 }
 
 .api-assertion-item-row {
@@ -6758,26 +7543,48 @@ onBeforeUnmount(() => {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--app-border-soft);
+  border-radius: 0;
   background: var(--app-bg-panel);
 }
 
+.api-assertion-item-row:last-child {
+  border-bottom: 0;
+}
+
 .api-assertion-item-row.is-header {
+  min-width: 720px;
   grid-template-columns: 48px minmax(120px, 1fr) 132px minmax(120px, 1fr) repeat(3, auto);
 }
 
 .api-assertion-item-row.is-body {
+  min-width: 820px;
   grid-template-columns: 48px minmax(180px, 1.4fr) 132px minmax(120px, 1fr) repeat(4, auto);
 }
 
 .api-assertion-item-row.is-variable {
+  min-width: 640px;
   grid-template-columns: 48px minmax(140px, 1fr) 132px minmax(120px, 1fr) repeat(2, auto);
 }
 
 .api-assertion-item-row .api-row-remove {
   color: var(--app-danger);
+}
+
+.api-assertion-add-row {
+  align-self: flex-start;
+  width: fit-content;
+  margin: 6px 10px 8px 196px;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .api-assertion-format-select {
@@ -6831,6 +7638,293 @@ onBeforeUnmount(() => {
 .api-assertion-result-pill.is-failed {
   background: var(--app-danger-soft);
   color: var(--app-danger);
+}
+
+.api-assertion-panel {
+  grid-template-columns: 1fr;
+}
+
+.api-assertion-panel:has(.api-assertion-editor) > .api-advanced-toolbar {
+  display: none;
+}
+
+.api-assertion-toolbar {
+  display: flex;
+  height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-start;
+  margin: -8px -8px 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+  background: var(--app-bg-panel);
+}
+
+.api-processor-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.api-processor-panel > .api-advanced-toolbar {
+  display: none;
+}
+
+.api-processor-editor {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 360px;
+  color: var(--app-text-primary);
+}
+
+.api-processor-sidebar,
+.api-processor-detail {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+  box-shadow: var(--app-shadow-xs);
+}
+
+.api-processor-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.api-processor-toolbar {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+  background: var(--app-bg-panel);
+}
+
+.api-legacy-primary {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--app-primary);
+  border-radius: var(--app-radius-md);
+  background: var(--app-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-legacy-primary:hover {
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
+}
+
+.api-processor-sidebar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow-x: hidden;
+}
+
+.api-processor-list-item {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.api-processor-list-item:hover {
+  background: var(--app-bg-page);
+}
+
+.api-processor-list-item.is-active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.api-processor-list-item__main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-processor-list-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.api-processor-list-title,
+.api-processor-list-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-processor-list-title {
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-processor-list-meta,
+.api-processor-form-label,
+.api-processor-hint,
+.api-processor-form-grid span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-processor-list-actions,
+.api-processor-detail-actions,
+.api-processor-detail-fields,
+.api-processor-detail-header,
+.api-processor-form-row,
+.api-processor-editor-actions,
+.api-assertion-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-processor-list-actions {
+  gap: 4px;
+}
+
+.api-processor-list-actions :deep(.el-button),
+.api-assertion-list-actions :deep(.el-button) {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--app-text-muted);
+}
+
+.api-processor-list-actions :deep(.el-button:hover),
+.api-assertion-list-actions :deep(.el-button:hover) {
+  color: var(--app-primary);
+  background: transparent;
+}
+
+.api-processor-list-actions :deep(.el-button.is-disabled),
+.api-assertion-list-actions :deep(.el-button.is-disabled) {
+  color: var(--app-text-subtle);
+  background: transparent;
+}
+
+.api-processor-detail-actions button,
+.api-processor-editor-actions button,
+.api-assertion-editor-actions button {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.api-processor-list-actions button:disabled {
+  color: var(--app-text-subtle);
+  cursor: not-allowed;
+}
+
+.api-processor-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-x: hidden;
+  padding: 12px;
+}
+
+.api-processor-detail-header {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-processor-detail-fields {
+  flex: 1;
+  min-width: 280px;
+}
+
+.api-processor-detail-fields :deep(.el-input) {
+  flex: 1;
+}
+
+.api-processor-detail-fields :deep(.el-input__wrapper),
+.api-processor-form-grid :deep(.el-input__wrapper),
+.api-processor-form-grid :deep(.el-select__wrapper),
+.api-processor-form-grid :deep(.el-input-number),
+.api-processor-extract-row :deep(.el-input__wrapper),
+.api-processor-extract-row :deep(.el-select__wrapper),
+.api-sql-extract-table__row :deep(.el-input__wrapper) {
+  min-height: 32px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-processor-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.api-processor-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.api-processor-form-grid :deep(.el-input-number) {
+  width: 100%;
+}
+
+.api-processor-form-grid :deep(.el-input-number .el-input__wrapper) {
+  min-height: 32px;
+  box-shadow: none;
+}
+
+.api-processor-language-tag {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--app-radius-sm);
+  background: #eff6ff;
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-processor-empty {
+  display: flex;
+  min-height: 240px;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-subtle);
+  font-size: 13px;
+}
+
+.api-processor-empty--inline {
+  min-height: 160px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-page);
 }
 
 .api-processor-card {
@@ -6898,27 +7992,99 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.api-processor-extract-list {
-  display: grid;
-  gap: 6px;
+.api-processor-extract-scroll {
   min-width: 0;
-  overflow: auto;
+  overflow-x: auto;
+}
+
+.api-processor-extract-grid,
+.api-processor-extract-row {
+  min-width: 980px;
+}
+
+.api-processor-extract-header,
+.api-processor-extract-row {
+  display: grid;
+  grid-template-columns: 140px 140px 116px 118px 118px minmax(220px, 1fr) 86px;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-processor-extract-header {
+  min-height: 28px;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .api-processor-extract-row {
-  display: grid;
-  min-width: 1180px;
-  grid-template-columns: 48px 130px 130px 118px 130px 128px minmax(180px, 1fr) minmax(140px, 0.8fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
+  min-height: 34px;
+  margin-top: 8px;
 }
 
 .api-processor-extract-row .api-row-remove {
   color: var(--app-danger);
+}
+
+.api-processor-extract-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.api-sql-extract-table {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.api-sql-extract-table__header,
+.api-sql-extract-table__row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) 72px;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-sql-extract-table__header {
+  min-height: 34px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--app-border-soft);
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-sql-extract-table__row {
+  min-height: 42px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
+.api-sql-extract-table__row .api-row-remove,
+.api-sql-extract-table__add {
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.api-sql-extract-table__row .api-row-remove {
+  color: var(--app-danger);
+}
+
+.api-sql-extract-table__add {
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .api-wait-row {
@@ -6927,6 +8093,23 @@ onBeforeUnmount(() => {
   gap: 12px;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
+}
+
+.api-assertion-panel .api-advanced-actions .api-sidebar-primary {
+  min-height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--app-primary);
+  border-radius: var(--app-radius-md);
+  background: var(--app-primary);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.api-assertion-panel .api-advanced-actions .api-sidebar-primary:hover {
+  border-color: var(--app-primary-hover);
+  background: var(--app-primary-hover);
+  color: #fff;
 }
 
 .api-json-panel p {
