@@ -9,7 +9,6 @@ import {
   Plus,
   Search,
   VideoPlay,
-  Upload,
 } from '@element-plus/icons-vue'
 import {
   Check as LucideCheck,
@@ -542,6 +541,12 @@ const processorTypeOptions = [
   { label: '等待', value: 'TIME_WAITING' },
   { label: '提取', value: 'EXTRACT' },
 ]
+
+function processorTypeOptionsFor(stage: 'pre' | 'post') {
+  return stage === 'pre'
+    ? processorTypeOptions.filter(item => item.value !== 'EXTRACT')
+    : processorTypeOptions
+}
 
 const processorExtractVariableTypeOptions = [
   { label: '临时变量', value: 'TEMPORARY' },
@@ -1929,7 +1934,11 @@ function addProcessor(stage: 'pre' | 'post', type = 'SCRIPT') {
 }
 
 function addProcessorFromCommand(stage: 'pre' | 'post', command: string | number | object) {
-  addProcessor(stage, String(command))
+  const type = String(command)
+  if (stage === 'pre' && type === 'EXTRACT') {
+    return
+  }
+  addProcessor(stage, type)
 }
 
 function removeProcessor(stage: 'pre' | 'post', index: number) {
@@ -3136,7 +3145,7 @@ onBeforeUnmount(() => {
             新建请求
           </button>
           <button type="button" class="api-sidebar-secondary" @click="openImportDialog">
-            <el-icon><Upload /></el-icon>
+            <LucideUpload class="api-sidebar-button-icon" />
             导入
           </button>
         </div>
@@ -3366,8 +3375,8 @@ onBeforeUnmount(() => {
                     </div>
                     <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markDirty" />
                     <div class="api-length-range">
-                      <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="min" @change="markDirty" />
-                      <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="max" @change="markDirty" />
+                      <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="最小" @change="markDirty" />
+                      <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="最大" @change="markDirty" />
                     </div>
                     <el-switch v-model="row.encode" size="small" @change="markDirty" />
                     <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
@@ -3488,8 +3497,8 @@ onBeforeUnmount(() => {
                         </div>
                         <el-input v-else v-model="row.value" placeholder="参数值" @input="markDirty" />
                         <div class="api-length-range">
-                          <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="min" @change="markDirty" />
-                          <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="max" @change="markDirty" />
+                          <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="最小" @change="markDirty" />
+                          <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="最大" @change="markDirty" />
                         </div>
                         <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
                         <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.body.formItems, index)">删除</button>
@@ -3581,7 +3590,7 @@ onBeforeUnmount(() => {
                     <span>当前接口下 {{ activeDefinitionCases.length }} 条用例</span>
                   </div>
                   <div class="api-cases-ai-entry">
-                    <button type="button" class="api-sidebar-secondary" :disabled="!activeEditor.definitionId" @click="openAiCaseDrawer">AI 生成用例</button>
+                    <button type="button" class="api-sidebar-secondary" :disabled="!activeEditor.definitionId" @click="openAiCaseDrawer">AI生成用例</button>
                     <span>基于当前接口定义生成接口用例，生成结果需采纳后才会保存。</span>
                   </div>
                   <el-table v-if="activeDefinitionCases.length" :data="activeDefinitionCases" size="small" height="300">
@@ -3674,7 +3683,7 @@ onBeforeUnmount(() => {
                       </el-dropdown>
                     </div>
                   </div>
-                  <div v-if="assertionRowsFor(activeEditor.detail).length" class="api-assertion-editor">
+                  <div class="api-assertion-editor">
                     <aside class="api-assertion-list">
                       <div class="api-assertion-toolbar">
                         <el-dropdown trigger="click" @command="addAssertionFromCommand">
@@ -3705,6 +3714,7 @@ onBeforeUnmount(() => {
                           <el-button text :icon="ArrowDown" :disabled="index === assertionRowsFor(activeEditor.detail).length - 1" @click.stop="moveAssertion(index, 1)" />
                         </span>
                       </button>
+                      <div v-if="!assertionRowsFor(activeEditor.detail).length" class="api-assertion-empty">暂无断言</div>
                       <button type="button" class="api-assertion-batch-link" @click="openBatchAdd('assertion')">批量添加</button>
                     </aside>
                     <section v-if="activeAssertion" class="api-assertion-detail">
@@ -3828,8 +3838,8 @@ onBeforeUnmount(() => {
                         <small class="api-assertion-hint">发送时由后端执行脚本断言；当前只保存真实脚本内容，不做前端伪执行。</small>
                       </div>
                     </section>
+                    <section v-else class="api-assertion-detail api-assertion-empty api-assertion-empty--inline">请选择一个断言进行编辑</section>
                   </div>
-                  <div v-else class="api-empty-body">当前请求未配置断言</div>
                 </div>
 
                 <div v-else class="api-processor-panel">
@@ -3842,7 +3852,7 @@ onBeforeUnmount(() => {
                       <button type="button" class="api-sidebar-primary">添加处理器</button>
                       <template #dropdown>
                         <el-dropdown-menu>
-                          <el-dropdown-item v-for="item in processorTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                          <el-dropdown-item v-for="item in processorTypeOptionsFor(activeEditor?.activeTab === 'pre' ? 'pre' : 'post')" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
                         </el-dropdown-menu>
                       </template>
                     </el-dropdown>
@@ -3854,7 +3864,7 @@ onBeforeUnmount(() => {
                           <button type="button" class="api-legacy-primary">添加</button>
                           <template #dropdown>
                             <el-dropdown-menu>
-                              <el-dropdown-item v-for="item in processorTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
+                              <el-dropdown-item v-for="item in processorTypeOptionsFor(activeEditor?.activeTab === 'pre' ? 'pre' : 'post')" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
                             </el-dropdown-menu>
                           </template>
                         </el-dropdown>
@@ -4024,7 +4034,7 @@ onBeforeUnmount(() => {
 
                         <el-input v-model="activeProcessor.description" placeholder="说明" @input="markDirty" />
                       </template>
-                      <div v-else class="api-processor-empty api-processor-empty--inline">暂无处理器</div>
+                      <div v-else class="api-processor-empty api-processor-empty--inline">请选择一个处理器进行编辑</div>
                     </section>
                   </div>
 
@@ -4977,6 +4987,12 @@ onBeforeUnmount(() => {
   font-size: 16px;
 }
 
+.api-sidebar-button-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .api-sidebar-search {
   position: relative;
   padding: 12px 16px 0;
@@ -5079,7 +5095,8 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-tree :deep(.el-tree-node__content) {
-  height: 32px;
+  min-height: 32px;
+  height: auto;
   border-radius: var(--app-radius-md);
   transition: background-color 0.15s ease;
 }
@@ -5098,12 +5115,14 @@ onBeforeUnmount(() => {
 
 .api-directory-node {
   display: flex;
+  min-height: 30px;
   min-width: 0;
   width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: var(--app-font-size-sm);
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .api-directory-node__main {
@@ -5169,6 +5188,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--app-text-primary);
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .api-directory-node__folder {
@@ -5193,6 +5214,7 @@ onBeforeUnmount(() => {
 .api-directory-node__count {
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
+  line-height: 16px;
 }
 
 .api-method {
@@ -7330,6 +7352,20 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 
+.api-assertion-empty {
+  display: flex;
+  min-height: 160px;
+  align-items: center;
+  justify-content: center;
+  color: var(--app-text-subtle);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.api-assertion-empty--inline {
+  min-height: 100%;
+}
+
 .api-assertion-list-item {
   display: flex;
   min-height: 44px;
@@ -7833,6 +7869,23 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
   cursor: pointer;
   font-size: 13px;
+}
+
+.api-processor-editor-actions button,
+.api-assertion-editor-actions button {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  color: var(--app-text-primary);
+}
+
+.api-processor-editor-actions button:hover,
+.api-assertion-editor-actions button:hover {
+  border-color: var(--app-primary);
+  color: var(--app-primary);
+  background: var(--app-bg-panel);
 }
 
 .api-processor-list-actions button:disabled {
