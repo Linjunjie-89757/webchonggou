@@ -493,11 +493,12 @@ export const apiAutomationApi = {
     return normalizeRunResult(unwrapApiResponse(payload))
   },
 
-  async getCaseRunHistory(workspaceCode = 'ALL', caseId: number) {
+  async getCaseRunHistory(workspaceCode = 'ALL', caseId: number, query?: { pageNo?: number; pageSize?: number }) {
     const payload = await httpGet<ApiResponse<PageResponse<ApiRunHistoryItem>>>(
       `/automation/api/cases/${caseId}/run-history`,
       {
         headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery(query),
       },
     )
 

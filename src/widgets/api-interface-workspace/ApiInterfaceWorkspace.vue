@@ -54,6 +54,7 @@ import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import ApiCodeEditor from './ApiCodeEditor.vue'
+import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
 import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
 import type { FastExtractionConfig, FastExtractionMode, FastExtractionResponseFormat } from './fastExtraction'
 
@@ -65,6 +66,7 @@ type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' 
 type ApiCaseDialogMode = 'create' | 'edit'
 type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
 type ApiCaseDetailRequestTab = 'headers' | 'body' | 'params' | 'auth' | 'pre' | 'post' | 'tests' | 'settings'
+type ApiCaseHistoryView = 'list' | 'detail'
 type ApiCaseHistoryResponseTab = Exclude<ResponseTab, 'actualRequest'>
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
 type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
@@ -78,6 +80,9 @@ type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
   | { kind: 'processorExtract', processor: ApiProcessorConfig, item: ApiProcessorExtractItem }
 
+const CASE_RUN_HISTORY_LIMIT = 10
+const CASE_RUN_HISTORY_TABLE_HEADER_HEIGHT = 40
+const CASE_RUN_HISTORY_TABLE_ROW_HEIGHT = 54
 const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
 
@@ -294,6 +299,7 @@ const caseDetailDrawerVisible = ref(false)
 const caseDetailDrawerTab = ref<ApiCaseDrawerTab>('detail')
 const caseDetailRequestTab = ref<ApiCaseDetailRequestTab>('headers')
 const caseDetailResponseTab = ref<ResponseTab>('body')
+const caseHistoryView = ref<ApiCaseHistoryView>('list')
 const caseHistoryRequestTab = ref<'header' | 'body'>('header')
 const caseHistoryResponseTab = ref<ApiCaseHistoryResponseTab>('body')
 const caseListCurrentPage = ref(1)
@@ -751,6 +757,10 @@ const pagedDefinitionCases = computed(() => {
   const start = (caseListCurrentPage.value - 1) * caseListPageSize.value
   return activeDefinitionCases.value.slice(start, start + caseListPageSize.value)
 })
+const caseRunHistoryTableHeight = computed(() => (
+  CASE_RUN_HISTORY_TABLE_HEADER_HEIGHT
+  + Math.max(caseRunHistories.value.length, 1) * CASE_RUN_HISTORY_TABLE_ROW_HEIGHT
+))
 
 watch(
   () => [activeEditor.value?.definitionId, activeDefinitionCases.value.length, caseListPageSize.value] as const,
@@ -1238,6 +1248,7 @@ const responseSize = computed(() => {
   return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
 })
 const showResponseEmpty = computed(() => !currentStep.value && !activeEditor.value?.runError)
+const shouldShowResponsePanel = computed(() => activeEditor.value?.activeTab !== 'cases')
 const latestResponseBody = computed(() => String(currentStep.value?.response?.body || ''))
 const hasLatestResponseBody = computed(() => Boolean(latestResponseBody.value.trim()))
 const fastExtractionTitle = computed(() => (hasLatestResponseBody.value ? '从最近响应快速提取' : '请先发送请求，再使用快速提取'))
@@ -1509,6 +1520,21 @@ function runResultClass(result?: string | null) {
   if (['PASSED', 'SUCCESS', 'DONE'].includes(normalized)) return 'is-passed'
   if (['FAILED', 'FAILURE', 'ERROR'].includes(normalized)) return 'is-failed'
   return 'is-neutral'
+}
+
+function hasBodyContent(body: ApiDefinitionDetail['requestConfig']['body']) {
+  if (body.type === 'NONE') return false
+  if (['FORM_DATA', 'FORM_URLENCODED'].includes(body.type)) return body.formItems.some(row => row.key || row.value || row.fileName)
+  if (body.type === 'BINARY') return Boolean(body.fileName)
+  return Boolean(body.rawText || body.jsonText || body.xmlText || body.plainText)
+}
+
+function pickCaseDetailDefaultRequestTab(detail: ApiDefinitionCaseDetail): ApiCaseDetailRequestTab {
+  if (detail.requestConfig.queryParams.some(row => row.key || row.value)) return 'params'
+  if (hasBodyContent(detail.requestConfig.body)) return 'body'
+  if (detail.requestConfig.headers.some(row => row.key || row.value)) return 'headers'
+  if (detail.requestConfig.authConfig.authType !== 'NONE') return 'auth'
+  return 'params'
 }
 
 function toPrettyJson(value: unknown) {
@@ -3376,6 +3402,12 @@ function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {
   aiCaseDetailVisible.value = true
 }
 
+function latestCaseRunHistories(items: ApiRunHistoryItem[]) {
+  return [...items]
+    .sort((left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime())
+    .slice(0, CASE_RUN_HISTORY_LIMIT)
+}
+
 function aiGeneratedDraftExtra(result: ApiAiGeneratedCaseResult | null, key: string) {
   if (!result) return null
   return (result.draft as unknown as Record<string, unknown>)[key] ?? null
@@ -3469,6 +3501,7 @@ async function openCaseDetailDrawer(item: ApiDefinitionCaseItem) {
   caseDetailDrawerTab.value = 'detail'
   caseDetailRequestTab.value = 'headers'
   caseDetailResponseTab.value = 'body'
+  caseHistoryView.value = 'list'
   caseHistoryRequestTab.value = 'header'
   caseHistoryResponseTab.value = 'body'
   caseDetailDrawerVisible.value = true
@@ -3479,7 +3512,9 @@ async function loadViewingCaseDetail(caseId: number) {
   viewingCaseDetailLoading.value = true
   viewingCaseDetailErrorMessage.value = ''
   try {
-    viewingCaseDetail.value = await apiAutomationApi.getCaseDetail(props.workspaceCode, caseId)
+    const detail = await apiAutomationApi.getCaseDetail(props.workspaceCode, caseId)
+    viewingCaseDetail.value = detail
+    caseDetailRequestTab.value = pickCaseDetailDefaultRequestTab(detail)
   } catch (error) {
     viewingCaseDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
@@ -3491,11 +3526,16 @@ async function loadCaseRunHistories(caseId: number) {
   caseRunHistoryLoading.value = true
   caseRunHistoryErrorMessage.value = ''
   try {
-    const page = await apiAutomationApi.getCaseRunHistory(props.workspaceCode, caseId)
-    caseRunHistories.value = page.items
-    if (page.items.length) {
-      await openCaseRunHistoryDetail(page.items[0])
-    }
+    const page = await apiAutomationApi.getCaseRunHistory(props.workspaceCode, caseId, {
+      pageNo: 1,
+      pageSize: CASE_RUN_HISTORY_LIMIT,
+    })
+    const recentHistories = latestCaseRunHistories(page.items)
+    caseRunHistories.value = recentHistories
+    caseHistoryView.value = 'list'
+    selectedCaseRunHistoryId.value = null
+    selectedCaseRunHistoryDetail.value = null
+    caseRunHistoryDetailErrorMessage.value = ''
   } catch (error) {
     caseRunHistoryErrorMessage.value = getRequestErrorMessage(error)
   } finally {
@@ -3515,6 +3555,15 @@ async function openCaseRunHistoryDetail(item: ApiRunHistoryItem) {
   } finally {
     caseRunHistoryDetailLoading.value = false
   }
+}
+
+async function openCaseRunHistorySecondaryDetail(item: ApiRunHistoryItem) {
+  caseHistoryView.value = 'detail'
+  await openCaseRunHistoryDetail(item)
+}
+
+function backToCaseRunHistoryList() {
+  caseHistoryView.value = 'list'
 }
 
 async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
@@ -4763,7 +4812,7 @@ onBeforeUnmount(() => {
               </template>
             </div>
 
-            <div class="api-response-shell" :style="{ minHeight: `${responsePanelHeight}px` }">
+            <div v-if="shouldShowResponsePanel" class="api-response-shell" :style="{ minHeight: `${responsePanelHeight}px` }">
               <div class="api-response-resizer" title="拖拽调整响应区高度" @pointerdown="startResponseResize"></div>
               <div class="api-response-header">
                 <strong>响应内容</strong>
@@ -5044,43 +5093,23 @@ onBeforeUnmount(() => {
       </div>
     </el-dialog>
 
-    <el-drawer
+    <ApiCaseDetailDrawer
       v-model="caseDetailDrawerVisible"
-      size="894px"
-      class="api-case-detail-drawer"
-      modal-class="api-case-drawer-modal"
-      append-to-body
-      :with-header="false"
-      :show-close="false"
+      :title="viewingCaseItem?.name || '用例详情'"
+      :subtitle="viewingCaseItem?.definitionName || activeEditor?.detail.name || '-'"
+      :method="viewingCaseItem?.method || '-'"
+      :path="viewingCaseItem?.path || '未设置路径'"
+      @request-close="caseDetailDrawerVisible = false"
     >
-      <div class="api-case-drawer-shell">
-        <div class="api-case-drawer-top">
-          <div class="api-case-drawer-header">
-            <div class="api-case-drawer-title">{{ viewingCaseItem?.name || '用例详情' }}</div>
-            <div class="api-case-drawer-subtitle">{{ viewingCaseItem?.definitionName || activeEditor?.detail.name || '-' }}</div>
-          </div>
-          <button type="button" class="api-case-drawer-close" @click="caseDetailDrawerVisible = false">
-            <LucideX />
-          </button>
+      <div class="api-case-drawer-tabs">
+        <div class="ms-like-top-tabs case-drawer-view-tabs">
+          <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'detail' }]" @click="caseDetailDrawerTab = 'detail'">详情</button>
+          <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'history' }]" @click="caseDetailDrawerTab = 'history'">执行历史</button>
+          <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'changes' }]" @click="caseDetailDrawerTab = 'changes'">变更历史</button>
         </div>
+      </div>
 
-        <div class="api-case-drawer-scroll">
-          <div class="api-case-drawer-summary-card">
-            <div class="api-case-drawer-summary-meta">
-              <span :class="['case-drawer-method-tag', `request-method-${String(viewingCaseItem?.method || 'GET').toLowerCase()}`]">{{ viewingCaseItem?.method || '-' }}</span>
-              <span class="api-case-drawer-summary-path">{{ viewingCaseItem?.path || '未设置路径' }}</span>
-            </div>
-          </div>
-
-          <div class="api-case-drawer-tabs">
-            <div class="ms-like-top-tabs case-drawer-view-tabs">
-              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'detail' }]" @click="caseDetailDrawerTab = 'detail'">详情</button>
-              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'history' }]" @click="caseDetailDrawerTab = 'history'">执行历史</button>
-              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'changes' }]" @click="caseDetailDrawerTab = 'changes'">变更历史</button>
-            </div>
-          </div>
-
-          <div v-if="caseDetailDrawerTab === 'detail'" class="api-case-detail-panel" v-loading="viewingCaseDetailLoading">
+      <div v-if="caseDetailDrawerTab === 'detail'" class="api-case-detail-panel" v-loading="viewingCaseDetailLoading">
             <div v-if="viewingCaseDetailErrorMessage" class="api-empty-body">{{ viewingCaseDetailErrorMessage }}</div>
             <template v-else-if="viewingCaseDetail">
               <div class="ms-like-top-tabs case-drawer-top-tabs">
@@ -5394,22 +5423,27 @@ onBeforeUnmount(() => {
 
           <div v-else-if="caseDetailDrawerTab === 'history'" class="case-drawer-history-panel">
             <div v-if="caseRunHistoryErrorMessage" class="api-empty-body">{{ caseRunHistoryErrorMessage }}</div>
-            <el-table
-              v-else
-              v-loading="caseRunHistoryLoading"
-              :data="caseRunHistories"
-              size="small"
-              class="case-drawer-history-table"
-              row-key="id"
-              highlight-current-row
-              @row-click="openCaseRunHistoryDetail"
-            >
+            <template v-else-if="caseHistoryView === 'list'">
+              <div class="case-drawer-history-toolbar">
+                <span class="case-drawer-history-limit-note">仅展示最近 10 次执行历史</span>
+              </div>
+              <div class="case-drawer-history-table-section" :style="{ height: `${caseRunHistoryTableHeight}px` }">
+              <el-table
+                v-loading="caseRunHistoryLoading"
+                :data="caseRunHistories"
+                size="small"
+                class="case-drawer-history-table"
+                :height="caseRunHistoryTableHeight"
+                row-key="id"
+                highlight-current-row
+                @row-click="openCaseRunHistorySecondaryDetail"
+              >
               <el-table-column label="执行时间" min-width="162" show-overflow-tooltip>
                 <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
               </el-table-column>
               <el-table-column label="结果" width="78">
                 <template #default="{ row }">
-                  <span :class="['case-drawer-history-result', `is-${runResultClass(row.result)}`]">{{ runResultLabel(row.result) }}</span>
+                  <span :class="['case-drawer-history-result', runResultClass(row.result)]">{{ runResultLabel(row.result) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="状态码" width="78" align="center">
@@ -5433,13 +5467,19 @@ onBeforeUnmount(() => {
               <template #empty>
                 <div class="case-drawer-history-table-empty">暂无执行历史</div>
               </template>
-            </el-table>
+              </el-table>
+              </div>
+            </template>
 
-            <div class="ms-like-response-shell case-drawer-history-detail-shell" v-loading="caseRunHistoryDetailLoading">
+            <div v-else class="ms-like-response-shell case-drawer-history-detail-shell" v-loading="caseRunHistoryDetailLoading">
+              <div class="case-drawer-history-detail-nav">
+                <button type="button" class="case-drawer-history-back" @click="backToCaseRunHistoryList">← 执行历史</button>
+                <span v-if="selectedCaseRunHistoryDetail" class="case-drawer-history-detail-time">{{ formatDateTime(selectedCaseRunHistoryDetail.createdAt) }}</span>
+              </div>
               <div class="ms-like-response-header">
                 <div class="ms-like-response-title">历史详情</div>
                 <div v-if="selectedCaseRunHistoryDetail" class="ms-like-response-metrics">
-                  <span :class="['ms-like-result-pill', `is-${runResultClass(selectedCaseRunHistoryDetail.result)}`]">{{ runResultLabel(selectedCaseRunHistoryDetail.result) }}</span>
+                  <span :class="['ms-like-result-pill', runResultClass(selectedCaseRunHistoryDetail.result)]">{{ runResultLabel(selectedCaseRunHistoryDetail.result) }}</span>
                   <span class="ms-like-response-metric">状态 {{ selectedCaseRunHistoryDetail.statusCode ?? '-' }}</span>
                   <span class="ms-like-response-metric">耗时 {{ formatDuration(selectedCaseRunHistoryDetail.durationMs) }}</span>
                   <span>大小 {{ formatResponseSize(selectedCaseRunHistoryDetail.responseSize) }}</span>
@@ -5564,9 +5604,7 @@ onBeforeUnmount(() => {
           <div v-else class="case-drawer-history-panel">
             <div class="api-empty-body">当前后端暂未提供接口用例变更历史接口，本轮不伪造变更记录。</div>
           </div>
-        </div>
-      </div>
-    </el-drawer>
+    </ApiCaseDetailDrawer>
 
     <el-drawer v-model="aiCaseDrawerVisible" size="820px" class="api-ai-case-drawer" append-to-body>
       <template #header>
@@ -6489,10 +6527,24 @@ onBeforeUnmount(() => {
 .api-method-select :deep(.el-select__wrapper) {
   min-height: 38px;
   padding: 0 10px;
-  border-right: 1px solid var(--app-border);
+  border-color: var(--app-border);
+  border-style: solid;
+  border-width: 0 1px 0 0;
   border-radius: var(--app-radius-md);
   background: #f9fafb;
   box-shadow: none;
+  color: var(--app-text-primary);
+}
+
+.api-method-select :deep(.el-select__wrapper:hover),
+.api-method-select :deep(.el-select__wrapper.is-focused),
+.api-method-select.is-focus :deep(.el-select__wrapper) {
+  border-color: var(--app-border);
+  border-style: solid;
+  border-width: 0 1px 0 0;
+  background: #f9fafb;
+  box-shadow: none;
+  color: var(--app-text-primary);
 }
 
 .api-method-select {
@@ -6519,29 +6571,14 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
-.api-method-select.method-get :deep(.el-select__wrapper) {
-  border-color: #86efac;
-  background: #dcfce7;
-}
-
 .api-method-select.method-post :deep(.el-select__selected-item),
 .api-method-select.method-post :deep(.el-select__placeholder) {
   color: #ea580c;
 }
 
-.api-method-select.method-post :deep(.el-select__wrapper) {
-  border-color: #fdba74;
-  background: #ffedd5;
-}
-
 .api-method-select.method-put :deep(.el-select__selected-item),
 .api-method-select.method-put :deep(.el-select__placeholder) {
   color: #2563eb;
-}
-
-.api-method-select.method-put :deep(.el-select__wrapper) {
-  border-color: #93c5fd;
-  background: #dbeafe;
 }
 
 .api-method-select.method-patch :deep(.el-select__selected-item),
@@ -6551,20 +6588,9 @@ onBeforeUnmount(() => {
   color: #7c3aed;
 }
 
-.api-method-select.method-patch :deep(.el-select__wrapper),
-.api-method-select.method-options :deep(.el-select__wrapper) {
-  border-color: #c4b5fd;
-  background: #ede9fe;
-}
-
 .api-method-select.method-trace :deep(.el-select__selected-item),
 .api-method-select.method-trace :deep(.el-select__placeholder) {
   color: #6b7280;
-}
-
-.api-method-select.method-trace :deep(.el-select__wrapper) {
-  border-color: #d1d5db;
-  background: #f3f4f6;
 }
 
 .api-method-select.method-head :deep(.el-select__selected-item),
@@ -6572,19 +6598,9 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
-.api-method-select.method-head :deep(.el-select__wrapper) {
-  border-color: #86efac;
-  background: #dcfce7;
-}
-
 .api-method-select.method-delete :deep(.el-select__selected-item),
 .api-method-select.method-delete :deep(.el-select__placeholder) {
   color: #dc2626;
-}
-
-.api-method-select.method-delete :deep(.el-select__wrapper) {
-  border-color: #fca5a5;
-  background: #fee2e2;
 }
 
 :global(.api-method-popper .el-select-dropdown__item) {
@@ -6842,6 +6858,13 @@ onBeforeUnmount(() => {
   min-height: 320px;
   flex: 0 0 auto;
   overflow: visible;
+}
+
+.api-request-body.is-cases {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 14px 16px;
 }
 
 .api-param-table {
@@ -7826,17 +7849,6 @@ onBeforeUnmount(() => {
   color: var(--app-danger);
 }
 
-.api-case-detail-drawer :deep(.el-drawer__header) {
-  margin-bottom: 0;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--app-border);
-}
-
-.api-case-detail-drawer :deep(.el-drawer__body) {
-  padding: 0;
-  background: var(--app-bg-panel);
-}
-
 .api-case-drawer-header {
   display: grid;
   gap: 4px;
@@ -8083,11 +8095,14 @@ onBeforeUnmount(() => {
 }
 
 .case-list-request-body {
+  display: flex;
+  min-height: 0;
   padding: 0;
 }
 
 .case-list-panel {
-  min-height: 362px;
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 0;
   border: 0;
   background: transparent;
@@ -8228,155 +8243,9 @@ onBeforeUnmount(() => {
   background: rgba(15, 23, 42, 0.28);
 }
 
-.api-case-detail-drawer :deep(.el-drawer) {
-  max-width: calc(100vw - 24px);
-  overflow: hidden;
-  background: #fff;
-  border-left: 1px solid #e5e7eb;
-  border-radius: 16px 0 0 16px;
-  box-shadow: -24px 0 56px rgba(15, 23, 42, 0.16);
-}
-
-.api-case-detail-drawer :deep(.el-drawer__body) {
-  padding: 0;
-  overflow: hidden;
-  background: #fff;
-}
-
-.api-case-drawer-shell {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  overflow: hidden;
-  background: #fff;
-}
-
-.api-case-drawer-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 20px 24px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fff;
-}
-
-.api-case-drawer-title {
-  overflow: hidden;
-  color: #111827;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-drawer-subtitle {
-  overflow: hidden;
-  color: #6b7280;
-  font-size: 13px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-drawer-close {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #9ca3af;
-  cursor: pointer;
-}
-
-.api-case-drawer-close:hover {
-  background: #f3f4f6;
-  color: #374151;
-}
-
-.api-case-drawer-close svg {
-  width: 16px;
-  height: 16px;
-}
-
-.api-case-drawer-scroll {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-  padding: 20px 24px 24px;
-}
-
-.api-case-drawer-summary-card {
-  padding: 0;
-}
-
-.api-case-drawer-summary-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.case-drawer-method-tag {
-  display: inline-flex;
-  min-width: 52px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 12px;
-  border: 1px solid currentColor;
-  border-radius: 8px;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.case-drawer-method-tag.request-method-get,
-.case-drawer-method-tag.request-method-head {
-  color: #15803d;
-}
-
-.case-drawer-method-tag.request-method-post {
-  color: #ea580c;
-}
-
-.case-drawer-method-tag.request-method-put {
-  color: #2563eb;
-}
-
-.case-drawer-method-tag.request-method-delete {
-  color: #dc2626;
-}
-
-.case-drawer-method-tag.request-method-patch,
-.case-drawer-method-tag.request-method-options {
-  color: #7c3aed;
-}
-
-.case-drawer-method-tag.request-method-trace {
-  color: #6b7280;
-}
-
-.api-case-drawer-summary-path {
-  min-width: 0;
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 20px;
-  word-break: break-all;
-}
-
 .case-drawer-history-panel {
   display: grid;
+  align-content: start;
   gap: 12px;
   min-height: 420px;
 }
@@ -8558,134 +8427,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-:global(.api-case-detail-drawer .ms-like-top-tabs),
-:global(.api-case-detail-drawer .ms-like-response-tabs) {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  min-width: 0;
-  height: 40px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-:global(.api-case-detail-drawer .ms-like-top-tabs::-webkit-scrollbar),
-:global(.api-case-detail-drawer .ms-like-response-tabs::-webkit-scrollbar) {
-  display: none;
-}
-
-:global(.api-case-detail-drawer .ms-like-top-tab) {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  height: 40px;
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-:global(.api-case-detail-drawer .ms-like-top-tab:hover) {
-  color: #111827;
-}
-
-:global(.api-case-detail-drawer .ms-like-top-tab.active) {
-  border-bottom-color: #2563eb;
-  color: #2563eb;
-  font-weight: 600;
-}
-
-:global(.api-case-detail-drawer .ms-like-tab-badge) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  margin-left: 5px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #2563eb;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-shell) {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-header) {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-title) {
-  color: #111827;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-metrics) {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  color: #667085;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-metric),
-:global(.api-case-detail-drawer .ms-like-result-pill) {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 48px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: #f3f4f6;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-:global(.api-case-detail-drawer .ms-like-result-pill.is-success),
-:global(.api-case-detail-drawer .ms-like-result-pill.is-passed),
-:global(.api-case-detail-drawer .ms-like-response-metric.is-success) {
-  background: #f0fdf4;
-  color: #16a34a;
-}
-
-:global(.api-case-detail-drawer .ms-like-result-pill.is-failed),
-:global(.api-case-detail-drawer .ms-like-response-metric.is-danger) {
-  background: #fef2f2;
-  color: #dc2626;
-}
-
-:global(.api-case-detail-drawer .ms-like-response-body) {
-  min-width: 0;
-  padding: 10px 0 12px;
-}
-
 .api-case-readonly-body {
   padding: 0;
 }
@@ -8717,6 +8458,53 @@ onBeforeUnmount(() => {
 
 .api-case-code-section {
   min-height: 260px;
+}
+
+.case-drawer-history-toolbar,
+.case-drawer-history-detail-nav {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.case-drawer-history-limit-note,
+.case-drawer-history-detail-time {
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.case-drawer-history-back {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
+  cursor: pointer;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.case-drawer-history-back:hover,
+.case-drawer-history-back:focus-visible {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.case-drawer-history-table-section {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #fff;
+  contain: layout paint;
 }
 
 .case-drawer-history-table {
@@ -8768,6 +8556,13 @@ onBeforeUnmount(() => {
 .case-drawer-history-detail-shell,
 .case-drawer-response-shell {
   min-height: 260px;
+}
+
+.case-drawer-history-detail-shell {
+  position: relative;
+  z-index: 0;
+  margin-top: 2px;
+  background: #fff;
 }
 
 .case-drawer-history-section,
@@ -11221,154 +11016,5 @@ onBeforeUnmount(() => {
   .api-interface-shell {
     grid-template-columns: 260px minmax(0, 1fr);
   }
-}
-</style>
-
-<style>
-.el-drawer.api-case-detail-drawer {
-  max-width: calc(100vw - 24px);
-  overflow: hidden;
-  border-left: 1px solid #e5e7eb;
-  background: #fff;
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
-}
-
-.api-case-detail-drawer .el-drawer__body {
-  padding: 0;
-  overflow: hidden;
-  background: #fff;
-}
-
-.api-case-detail-drawer .el-button,
-.api-case-detail-drawer .el-input__inner {
-  font-family: inherit;
-}
-
-.api-case-detail-drawer .ms-like-top-tabs,
-.api-case-detail-drawer .ms-like-response-tabs {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  min-width: 0;
-  height: 40px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fff;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.api-case-detail-drawer .ms-like-top-tabs::-webkit-scrollbar,
-.api-case-detail-drawer .ms-like-response-tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.api-case-detail-drawer .ms-like-top-tab {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  height: 40px;
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-.api-case-detail-drawer .ms-like-top-tab:hover {
-  color: #111827;
-}
-
-.api-case-detail-drawer .ms-like-top-tab.active {
-  border-bottom-color: #2563eb;
-  color: #2563eb;
-  font-weight: 600;
-}
-
-.api-case-detail-drawer .ms-like-tab-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  margin-left: 5px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #2563eb;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.api-case-detail-drawer .ms-like-response-shell {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  border-top: 1px solid #e5e7eb;
-  background: #fff;
-}
-
-.api-case-detail-drawer .ms-like-response-header {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.api-case-detail-drawer .ms-like-response-title {
-  color: #111827;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.api-case-detail-drawer .ms-like-response-metrics {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  color: #667085;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.api-case-detail-drawer .ms-like-response-metric,
-.api-case-detail-drawer .ms-like-result-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 48px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: #f3f4f6;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.api-case-detail-drawer .ms-like-result-pill.is-success,
-.api-case-detail-drawer .ms-like-result-pill.is-passed,
-.api-case-detail-drawer .ms-like-response-metric.is-success {
-  background: #f0fdf4;
-  color: #16a34a;
-}
-
-.api-case-detail-drawer .ms-like-result-pill.is-failed,
-.api-case-detail-drawer .ms-like-response-metric.is-danger {
-  background: #fef2f2;
-  color: #dc2626;
-}
-
-.api-case-detail-drawer .ms-like-response-body {
-  min-width: 0;
-  padding: 10px 0 12px;
 }
 </style>
