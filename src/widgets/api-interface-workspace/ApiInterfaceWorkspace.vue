@@ -9,7 +9,7 @@ import {
   MoreFilled,
   Plus,
   Search,
-  VideoPlay,
+  Setting,
 } from '@element-plus/icons-vue'
 import {
   Check as LucideCheck,
@@ -19,6 +19,7 @@ import {
   FolderOpen as LucideFolderOpen,
   Link as LucideLink,
   MoreHorizontal as LucideMoreHorizontal,
+  Play as LucidePlay,
   Plus as LucidePlus,
   Save as LucideSave,
   Upload as LucideUpload,
@@ -63,6 +64,8 @@ type BodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML
 type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
 type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
+type ApiCaseDetailRequestTab = 'headers' | 'body' | 'params' | 'auth' | 'pre' | 'post' | 'tests' | 'settings'
+type ApiCaseHistoryResponseTab = Exclude<ResponseTab, 'actualRequest'>
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
 type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
 type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
@@ -289,6 +292,12 @@ const editingCaseDetail = ref<ApiDefinitionCaseDetail | null>(null)
 const caseRunningId = ref<number | null>(null)
 const caseDetailDrawerVisible = ref(false)
 const caseDetailDrawerTab = ref<ApiCaseDrawerTab>('detail')
+const caseDetailRequestTab = ref<ApiCaseDetailRequestTab>('headers')
+const caseDetailResponseTab = ref<ResponseTab>('body')
+const caseHistoryRequestTab = ref<'header' | 'body'>('header')
+const caseHistoryResponseTab = ref<ApiCaseHistoryResponseTab>('body')
+const caseListCurrentPage = ref(1)
+const caseListPageSize = ref(10)
 const viewingCaseItem = ref<ApiDefinitionCaseItem | null>(null)
 const viewingCaseDetail = ref<ApiDefinitionCaseDetail | null>(null)
 const viewingCaseDetailLoading = ref(false)
@@ -342,10 +351,6 @@ const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'raw', value: 'RAW_TEXT' },
   { label: 'binary', value: 'BINARY' },
 ]
-
-function bodyModeLabel(type?: string | null) {
-  return bodyModes.find(item => item.value === type)?.label || type || 'none'
-}
 
 const aiCaseGenerationOptions: ApiAiCaseGenerationOptionPayload[] = [
   { id: 'positive-basic', key: 'positive-basic', group: 'positive', groupLabel: '正向场景', label: '基础成功路径' },
@@ -535,30 +540,152 @@ function extractionResultText(value: unknown) {
   return JSON.stringify(value)
 }
 
-function formatExtractionResults(rows: unknown[]) {
-  if (!rows.length) return ''
-  const lines = ['提取结果']
+function extractionResultNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function pickPreferredRunStep(steps: ApiRunStepResult[]) {
+  if (!steps.length) {
+    return null
+  }
+  return steps.find(item => !item.success) ?? steps[steps.length - 1]
+}
+
+function appendProcessorConsoleLines(lines: string[], rows: unknown[]) {
   rows.forEach((row, index) => {
-    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'variableName') ?? `提取器 ${index + 1}`)
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'processorName') ?? `Processor ${index + 1}`)
+    const stage = extractionResultText(extractionResultValue(row, 'stage') ?? extractionResultValue(row, 'processorStage'))
+    const success = extractionResultValue(row, 'success')
+    const duration = extractionResultNumber(extractionResultValue(row, 'durationMs'))
+    const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage') ?? extractionResultValue(row, 'result'))
+    lines.push(`[Processor ${index + 1}] ${stage !== '-' ? `${stage} / ` : ''}${name} / ${success === false ? 'FAIL' : 'PASS'}${duration !== null ? ` / ${duration} ms` : ''}`)
+    if (message !== '-') {
+      lines.push(`  ${message}`)
+    }
+    const outputVariables = extractionResultValue(row, 'outputVariables')
+    if (outputVariables && typeof outputVariables === 'object' && Object.keys(outputVariables).length) {
+      lines.push(`  outputVariables: ${JSON.stringify(outputVariables)}`)
+    }
+    const logs = extractionResultValue(row, 'logs')
+    if (Array.isArray(logs)) {
+      logs.forEach(log => lines.push(`  ${String(log)}`))
+    }
+  })
+}
+
+function appendAssertionConsoleLines(lines: string[], rows: ApiRunStepResult['assertionResults']) {
+  rows.forEach((item, index) => {
+    lines.push(`[Assertion ${index + 1}] ${(item.name || item.type)} / ${item.success ? 'PASS' : 'FAIL'}`)
+    if (item.message) {
+      lines.push(`  ${item.message}`)
+    }
+    if (item.expectedValue !== undefined || item.actualValue !== undefined) {
+      lines.push(`  expected: ${item.expectedValue ?? ''}`)
+      lines.push(`  actual: ${item.actualValue ?? ''}`)
+    }
+  })
+}
+
+function appendExtractionConsoleLines(lines: string[], rows: unknown[]) {
+  rows.forEach((row, index) => {
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'variableName') ?? `Extraction ${index + 1}`)
     const success = extractionResultValue(row, 'success')
     const value = extractionResultText(extractionResultValue(row, 'value') ?? extractionResultValue(row, 'actualValue'))
     const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage'))
-    lines.push(`[${index + 1}] ${name} / ${success === false ? '失败' : '成功'} / ${value}${message !== '-' ? ` / ${message}` : ''}`)
+    lines.push(`[Extraction ${index + 1}] ${name} / ${success === false ? 'FAIL' : 'OK'}`)
+    lines.push(`  ${value !== '-' ? value : message}`)
   })
-  return lines.join('\n')
 }
 
-function formatProcessorResults(rows: unknown[]) {
-  if (!rows.length) return ''
-  const lines = ['处理器结果']
-  rows.forEach((row, index) => {
-    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'processorName') ?? `处理器 ${index + 1}`)
-    const type = extractionResultText(extractionResultValue(row, 'type') ?? extractionResultValue(row, 'processorType'))
-    const success = extractionResultValue(row, 'success')
-    const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage') ?? extractionResultValue(row, 'result'))
-    lines.push(`[${index + 1}] ${name}${type !== '-' ? ` / ${type}` : ''} / ${success === false ? '失败' : '成功'}${message !== '-' ? ` / ${message}` : ''}`)
-  })
-  return lines.join('\n')
+function buildRunConsolePreview(
+  debugError: string,
+  processorResults: unknown[],
+  assertionResults: ApiRunStepResult['assertionResults'],
+  extractionResults: unknown[],
+) {
+  const lines: string[] = []
+  if (debugError) {
+    lines.push(`[Error] ${debugError}`)
+  }
+  appendProcessorConsoleLines(lines, processorResults)
+  appendAssertionConsoleLines(lines, assertionResults)
+  appendExtractionConsoleLines(lines, extractionResults)
+  return lines.length ? lines.join('\n') : '暂无控制台内容'
+}
+
+function requestBodyPreview(config: ApiRequestConfigInput) {
+  const body = config.body
+  if (body.type === 'NONE') return null
+  if (isRawBodyType(body.type)) return getModeBodyText(body) || null
+  if (body.type === 'BINARY') {
+    return body.fileName
+      ? {
+          fileName: body.fileName,
+          fileSize: body.fileSize ?? null,
+          contentType: body.contentType ?? null,
+        }
+      : null
+  }
+  const rows = enabledRows(body.formItems)
+  if (!rows.length) return null
+  return Object.fromEntries(rows.map(row => [row.key, row.fileName || row.value || '']))
+}
+
+function actualRequestPreviewFromConfig(config: ApiRequestConfigInput, method?: string | null, path?: string | null) {
+  return {
+    method: config.method || method || 'GET',
+    url: config.path || path || '',
+    headers: Object.fromEntries(enabledRows(config.headers).map(row => [row.key, row.value])),
+    body: requestBodyPreview(config),
+  }
+}
+
+function actualRequestPreviewFallback() {
+  const detail = activeEditor.value?.detail
+  if (!detail) {
+    return null
+  }
+  return actualRequestPreviewFromConfig(detail.requestConfig, detail.method, detail.path)
+}
+
+function actualRequestPreview(request: ApiRunStepResult['request']) {
+  if (!request) {
+    return actualRequestPreviewFallback()
+  }
+  return {
+    method: request.method || 'GET',
+    url: request.url || '',
+    headers: request.headers ?? {},
+    body: request.body ?? null,
+  }
+}
+
+function runStepDebugError(step: ApiRunStepResult | null, runError?: string | null, failureSummary?: string | null) {
+  const explicitError = step?.errorMessage || runError || failureSummary || ''
+  if (explicitError) return explicitError
+  if (!step || step.success !== false) return ''
+  if (step.assertionResults?.some(item => !item.success)) return ''
+  if (!step.response) return '请求执行失败，未获取到响应内容'
+  if (typeof step.response.statusCode === 'number' && step.response.statusCode >= 400) {
+    return `请求返回 HTTP ${step.response.statusCode}`
+  }
+  return '请求执行失败'
+}
+
+function assertionRunResultPresentation(rows: ApiRunStepResult['assertionResults'], errorMessage?: string | null) {
+  if (!rows.length) {
+    if (errorMessage) {
+      return { visible: true, label: '执行失败', tone: 'failed' }
+    }
+    return { visible: false, label: '', tone: 'empty' }
+  }
+  if (rows.some(item => !item.success)) {
+    return { visible: true, label: '断言失败', tone: 'failed' }
+  }
+  if (errorMessage) {
+    return { visible: true, label: '执行失败', tone: 'failed' }
+  }
+  return { visible: true, label: '断言通过', tone: 'success' }
 }
 
 const processorTypeOptions = [
@@ -619,6 +746,40 @@ const activeDefinitionCases = computed(() => {
   const id = activeEditor.value?.definitionId
   return id ? cases.value.filter(item => item.definitionId === id) : []
 })
+const caseListTotalPages = computed(() => Math.max(1, Math.ceil(activeDefinitionCases.value.length / caseListPageSize.value)))
+const pagedDefinitionCases = computed(() => {
+  const start = (caseListCurrentPage.value - 1) * caseListPageSize.value
+  return activeDefinitionCases.value.slice(start, start + caseListPageSize.value)
+})
+
+watch(
+  () => [activeEditor.value?.definitionId, activeDefinitionCases.value.length, caseListPageSize.value] as const,
+  () => {
+    if (caseListCurrentPage.value > caseListTotalPages.value) {
+      caseListCurrentPage.value = caseListTotalPages.value
+    }
+    if (caseListCurrentPage.value < 1) {
+      caseListCurrentPage.value = 1
+    }
+  },
+)
+
+function caseProtocolLabel() {
+  const path = activeEditor.value?.detail.requestConfig.path || ''
+  return /^https:\/\//i.test(path) ? 'HTTPS' : 'HTTP'
+}
+
+function casePriorityLabel(_row?: ApiDefinitionCaseItem) {
+  return 'P0'
+}
+
+function caseStatusLabel(_row?: ApiDefinitionCaseItem) {
+  return '进行中'
+}
+
+function formatCaseTags(tags?: string[] | null) {
+  return Array.isArray(tags) && tags.length ? tags.join(', ') : '-'
+}
 const aiCaseAvailableProviders = computed(() =>
   aiCaseProviders.value.filter(item => item.status !== 0 && Boolean(item.modelName)),
 )
@@ -688,6 +849,29 @@ const aiCaseResultTypeOptions = computed(() => {
 const selectedPendingAiCaseResults = computed(() =>
   aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id)),
 )
+
+const currentDefinitionWorkspaceLabel = computed(() => {
+  const editor = activeEditor.value
+  const targetWorkspaceCode = editor?.detail.workspaceCode || props.workspaceCode
+  if (!targetWorkspaceCode) {
+    return props.workspaceCode === 'ALL' ? '未选择空间' : '当前空间'
+  }
+
+  if (targetWorkspaceCode === 'ALL') return '未选择空间'
+
+  const workspace = (props.workspaces || []).find(item =>
+    item.workspaceCode === targetWorkspaceCode || item.code === targetWorkspaceCode,
+  )
+  const workspaceName = workspace?.workspaceName || workspace?.name
+  if (workspaceName) return workspaceName
+
+  const detailWorkspaceName = editor?.detail.workspaceName?.trim()
+  if (detailWorkspaceName && detailWorkspaceName !== targetWorkspaceCode && detailWorkspaceName !== 'ALL') {
+    return detailWorkspaceName
+  }
+
+  return targetWorkspaceCode
+})
 
 const filteredDefinitions = computed(() => {
   const keyword = directoryKeyword.value.trim().toLowerCase()
@@ -950,53 +1134,101 @@ watch(
   { immediate: true },
 )
 
-const currentStep = computed<ApiRunStepResult | null>(() => activeEditor.value?.runResult?.stepResults?.[0] || null)
-const caseDetailPreviewStep = computed<ApiRunStepResult | null>(() => selectedCaseRunHistoryDetail.value?.stepResults?.[0] || null)
+const currentStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(activeEditor.value?.runResult?.stepResults ?? []))
+const caseDetailPreviewStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(selectedCaseRunHistoryDetail.value?.stepResults ?? []))
+const selectedCaseHistoryStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(selectedCaseRunHistoryDetail.value?.stepResults ?? []))
 const selectedEnvironment = computed(() => environments.value.find(item => item.id === selectedEnvironmentId.value) || null)
 const selectedVariableSet = computed(() => variableSets.value.find(item => item.id === selectedVariableSetId.value) || null)
+const currentEnvironmentName = computed(() => selectedEnvironment.value?.name || '未选择环境')
+const currentVariableSetName = computed(() => selectedVariableSet.value?.name || '未选择变量集')
 const responseStatus = computed(() => currentStep.value?.response?.statusCode ?? null)
 const responseDuration = computed(() => currentStep.value?.durationMs ?? null)
 const responseBody = computed(() => currentStep.value?.response?.body ?? '')
 const responseBodyPretty = computed(() => {
-  if (!currentStep.value && activeEditor.value?.runError) {
-    return activeEditor.value.runError
-  }
   if (!responseBody.value) {
     return ''
   }
   return toPrettyJson(responseBody.value)
 })
+const responseBodyLanguage = computed<'json' | 'xml' | 'text'>(() =>
+  inferResponseBodyLanguage(currentStep.value?.response?.contentType, responseBody.value),
+)
 const responseHeaders = computed(() => JSON.stringify(currentStep.value?.response?.headers ?? {}, null, 2))
-const actualRequest = computed(() => JSON.stringify({
-  request: currentStep.value?.request ?? null,
-  runOptions: {
-    environmentId: selectedEnvironmentId.value,
-    environmentName: selectedEnvironment.value?.name ?? null,
-    variableSetId: selectedVariableSetId.value,
-    variableSetName: selectedVariableSet.value?.name ?? null,
-  },
-}, null, 2))
-const responseConsole = computed(() => {
-  if (activeEditor.value?.runError) {
-    return activeEditor.value.runError
-  }
-  if (!currentStep.value) {
-    return ''
-  }
-  const lines = [currentStep.value.errorMessage || activeEditor.value?.runResult?.failureSummary || '请求执行完成']
-  const extractionText = formatExtractionResults(currentStep.value.extractionResults ?? [])
-  if (extractionText) {
-    lines.push('', extractionText)
-  }
-  const processorText = formatProcessorResults(currentStep.value.processorResults ?? [])
-  if (processorText) {
-    lines.push('', processorText)
-  }
-  return lines.join('\n')
-})
+const actualRequest = computed(() => JSON.stringify(actualRequestPreview(currentStep.value?.request ?? null), null, 2))
+const responseDebugError = computed(() =>
+  runStepDebugError(currentStep.value, activeEditor.value?.runError, activeEditor.value?.runResult?.failureSummary),
+)
+const responseConsole = computed(() => buildRunConsolePreview(
+  responseDebugError.value,
+  currentStep.value?.processorResults ?? [],
+  currentStep.value?.assertionResults ?? [],
+  currentStep.value?.extractionResults ?? [],
+))
 const assertionRows = computed(() => currentStep.value?.assertionResults ?? [])
-const extractionRows = computed(() => currentStep.value?.extractionResults ?? [])
-const processorRows = computed(() => currentStep.value?.processorResults ?? [])
+const responseAssertionPresentation = computed(() =>
+  assertionRunResultPresentation(assertionRows.value, responseDebugError.value),
+)
+const caseDetailBodyRawText = computed(() => viewingCaseDetail.value ? getModeBodyText(viewingCaseDetail.value.requestConfig.body) : '')
+const caseDetailBodyLanguage = computed<ApiBodyLanguage>(() => bodyLanguage(viewingCaseDetail.value?.requestConfig.body.type))
+const caseDetailResponseStatus = computed(() => caseDetailPreviewStep.value?.response?.statusCode ?? null)
+const caseDetailResponseDuration = computed(() => caseDetailPreviewStep.value?.durationMs ?? null)
+const caseDetailResponseBody = computed(() => toPrettyJson(caseDetailPreviewStep.value?.response?.body || caseDetailPreviewStep.value?.errorMessage || ''))
+const caseDetailResponseBodyLanguage = computed<'json' | 'xml' | 'text'>(() =>
+  inferResponseBodyLanguage(caseDetailPreviewStep.value?.response?.contentType, String(caseDetailPreviewStep.value?.response?.body || '')),
+)
+const caseDetailResponseHeaders = computed(() => JSON.stringify(caseDetailPreviewStep.value?.response?.headers ?? {}, null, 2))
+const caseDetailResponseDebugError = computed(() => runStepDebugError(caseDetailPreviewStep.value))
+const caseDetailResponseConsole = computed(() => buildRunConsolePreview(
+  caseDetailResponseDebugError.value,
+  caseDetailPreviewStep.value?.processorResults ?? [],
+  caseDetailPreviewStep.value?.assertionResults ?? [],
+  caseDetailPreviewStep.value?.extractionResults ?? [],
+))
+const caseDetailAssertionRows = computed(() => caseDetailPreviewStep.value?.assertionResults ?? [])
+const caseDetailAssertionPresentation = computed(() =>
+  assertionRunResultPresentation(caseDetailAssertionRows.value, caseDetailResponseDebugError.value),
+)
+const caseDetailResponseSize = computed(() => formatResponseSize(caseDetailPreviewStep.value?.response?.body ? new Blob([caseDetailPreviewStep.value.response.body]).size : 0))
+const caseDetailActualRequest = computed(() => {
+  if (caseDetailPreviewStep.value?.request) {
+    return JSON.stringify(actualRequestPreview(caseDetailPreviewStep.value.request), null, 2)
+  }
+  if (!viewingCaseDetail.value) {
+    return '-'
+  }
+  return JSON.stringify(actualRequestPreviewFromConfig(viewingCaseDetail.value.requestConfig, viewingCaseDetail.value.method, viewingCaseDetail.value.path), null, 2)
+})
+const caseHistoryRequestHeaders = computed(() => JSON.stringify(selectedCaseHistoryStep.value?.request?.headers ?? {}, null, 2))
+const caseHistoryRequestBody = computed(() => {
+  const request = selectedCaseHistoryStep.value?.request
+  if (!request) return '-'
+  return toPrettyJson({
+    queryParams: request.queryParams ?? [],
+    cookies: request.cookies ?? [],
+    bodyType: request.bodyType ?? null,
+    bodyContentType: request.bodyContentType ?? null,
+    bodyFormItems: request.bodyFormItems ?? [],
+    bodyFileName: request.bodyFileName ?? null,
+    bodyFileContentType: request.bodyFileContentType ?? null,
+    body: request.body ?? null,
+  })
+})
+const caseHistoryRequestBodyLanguage = computed<'json' | 'xml' | 'text'>(() =>
+  inferResponseBodyLanguage(selectedCaseHistoryStep.value?.request?.bodyFileContentType, String(selectedCaseHistoryStep.value?.request?.body || '')),
+)
+const caseHistoryResponseBody = computed(() => toPrettyJson(selectedCaseHistoryStep.value?.response?.body || selectedCaseHistoryStep.value?.errorMessage || ''))
+const caseHistoryResponseBodyLanguage = computed<'json' | 'xml' | 'text'>(() =>
+  inferResponseBodyLanguage(selectedCaseHistoryStep.value?.response?.contentType, String(selectedCaseHistoryStep.value?.response?.body || '')),
+)
+const caseHistoryResponseHeaders = computed(() => JSON.stringify(selectedCaseHistoryStep.value?.response?.headers ?? {}, null, 2))
+const caseHistoryDebugError = computed(() => runStepDebugError(selectedCaseHistoryStep.value, null, selectedCaseRunHistoryDetail.value?.failureSummary))
+const caseHistoryConsole = computed(() => buildRunConsolePreview(
+  caseHistoryDebugError.value,
+  selectedCaseHistoryStep.value?.processorResults ?? [],
+  selectedCaseHistoryStep.value?.assertionResults ?? [],
+  selectedCaseHistoryStep.value?.extractionResults ?? [],
+))
+const caseHistoryAssertionRows = computed(() => selectedCaseHistoryStep.value?.assertionResults ?? [])
 const responseSize = computed(() => {
   const text = responseBody.value || ''
   if (!text) {
@@ -1245,8 +1477,21 @@ function formatResponseSize(value?: number | null) {
   return formatFileSize(value)
 }
 
-function responseCodeLines(value: string) {
-  return value ? value.split('\n') : ['']
+function inferResponseBodyLanguage(contentType?: string | null, bodyText = ''): 'json' | 'xml' | 'text' {
+  const normalizedContentType = String(contentType || '').toLowerCase()
+  const text = bodyText.trim()
+  if (normalizedContentType.includes('json')) return 'json'
+  if (normalizedContentType.includes('xml') || normalizedContentType.includes('html')) return 'xml'
+  if ((text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))) {
+    try {
+      JSON.parse(text)
+      return 'json'
+    } catch {
+      return 'text'
+    }
+  }
+  if (text.startsWith('<') && text.endsWith('>')) return 'xml'
+  return 'text'
 }
 
 function runResultLabel(result?: string | null) {
@@ -3222,6 +3467,10 @@ async function openCaseDetailDrawer(item: ApiDefinitionCaseItem) {
   selectedCaseRunHistoryDetail.value = null
   caseRunHistoryDetailErrorMessage.value = ''
   caseDetailDrawerTab.value = 'detail'
+  caseDetailRequestTab.value = 'headers'
+  caseDetailResponseTab.value = 'body'
+  caseHistoryRequestTab.value = 'header'
+  caseHistoryResponseTab.value = 'body'
   caseDetailDrawerVisible.value = true
   await Promise.all([loadViewingCaseDetail(item.id), loadCaseRunHistories(item.id)])
 }
@@ -3379,8 +3628,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="api-sidebar-search">
-          <el-icon><Search /></el-icon>
-          <el-input v-model="directoryKeyword" clearable placeholder="搜索模块或请求" />
+          <el-input v-model="directoryKeyword" clearable placeholder="搜索模块或请求" :prefix-icon="Search" />
         </div>
 
         <div class="api-directory-title">
@@ -3530,7 +3778,7 @@ onBeforeUnmount(() => {
               :disabled="sending || !activeEditor.detail.requestConfig.path.trim()"
               @click="sendActiveEditor"
             >
-              <el-icon><VideoPlay /></el-icon>
+              <LucidePlay class="api-send-button__icon" />
               发送
             </button>
             <el-dropdown
@@ -3811,50 +4059,119 @@ onBeforeUnmount(() => {
                   <el-input :model-value="activeEditor.detail.tags.join(', ')" placeholder="标签，逗号分隔" @update:model-value="(value: string | number) => { activeEditor!.detail.tags = String(value).split(',').map(item => item.trim()).filter(Boolean); markDirty() }" />
                   <label>超时时间</label>
                   <div class="api-settings-control-cell">
-                    <el-input-number v-model="activeEditor.detail.requestConfig.timeoutMs" :min="1000" :step="1000" class="api-settings-timeout-number" @change="markDirty" />
+                    <el-input-number
+                      v-model="activeEditor.detail.requestConfig.timeoutMs"
+                      :min="1000"
+                      :step="1000"
+                      class="api-settings-timeout-number"
+                      @change="markDirty"
+                    />
                   </div>
                   <label>描述</label>
                   <el-input v-model="activeEditor.detail.description" type="textarea" :rows="4" placeholder="接口描述、调用约束或备注" @input="markDirty" />
                   <div class="api-settings-footer">
-                    <span>写入空间 {{ props.workspaceCode || 'ALL' }}</span>
-                    <span>调试上下文 开启-UAT / 未选择变量集</span>
+                    <span>写入空间 {{ currentDefinitionWorkspaceLabel }}</span>
+                    <span>调试上下文 {{ currentEnvironmentName }} / {{ currentVariableSetName }}</span>
                     <span>最后运行 {{ activeEditor.runResult ? '已运行' : '未运行' }}</span>
                   </div>
                 </div>
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'cases'">
-                <div class="api-cases-panel">
-                  <div class="api-cases-toolbar">
-                    <button type="button" class="api-sidebar-primary" :disabled="!activeEditor.definitionId" @click="openCreateCaseDialog">新建用例</button>
-                    <span>当前接口下 {{ activeDefinitionCases.length }} 条用例</span>
+                <div class="ms-like-request-body case-list-request-body">
+                  <div class="request-section case-list-panel">
+                    <div class="editor-actions left">
+                      <el-button
+                        type="primary"
+                        :title="activeEditor.definitionId ? '新建用例' : '请先保存接口，再创建用例'"
+                        :disabled="!activeEditor.definitionId"
+                        @click="openCreateCaseDialog"
+                      >
+                        新建用例
+                      </el-button>
+                      <button
+                        type="button"
+                        class="case-ai-generate-button"
+                        :disabled="!activeEditor.definitionId"
+                        :title="activeEditor.definitionId ? 'AI 生成接口用例' : '请先保存接口，再使用 AI 生成用例'"
+                        @click="openAiCaseDrawer"
+                      >
+                        <el-icon><MagicStick /></el-icon>
+                        <span>AI生成用例</span>
+                      </button>
+                    </div>
+
+                    <div v-if="!activeDefinitionCases.length" class="empty-hint">当前接口下还没有用例</div>
+                    <div v-else class="case-list-table-wrap">
+                      <el-table :data="pagedDefinitionCases" size="small" class="case-list-table">
+                        <el-table-column prop="id" label="ID" width="92" />
+                        <el-table-column prop="name" label="用例名称" min-width="200" show-overflow-tooltip />
+                        <el-table-column label="协议" width="90">
+                          <template #default>
+                            {{ caseProtocolLabel() }}
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="用例等级" width="100">
+                          <template #default="{ row }">
+                            {{ casePriorityLabel(row) }}
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="状态" width="110">
+                          <template #default="{ row }">
+                            {{ caseStatusLabel(row) }}
+                          </template>
+                        </el-table-column>
+                        <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
+                        <el-table-column label="标签" min-width="160" show-overflow-tooltip>
+                          <template #default="{ row }">
+                            {{ formatCaseTags(row.tags) }}
+                          </template>
+                        </el-table-column>
+                        <el-table-column label="创建人" width="110">
+                          <template #default>-</template>
+                        </el-table-column>
+                        <el-table-column width="148" fixed="right" align="center" header-align="center">
+                          <template #header>
+                            <div class="case-list-operation-header">
+                              <span>操作</span>
+                              <el-button text class="table-settings-trigger case-list-settings-trigger" title="表格设置">
+                                <el-icon><Setting /></el-icon>
+                              </el-button>
+                            </div>
+                          </template>
+                          <template #default="{ row }">
+                            <div class="case-list-actions">
+                              <el-button text type="primary" size="small" class="case-list-action-button" @click="openEditCaseDialog(row)">编辑</el-button>
+                              <el-button text size="small" type="primary" :loading="caseRunningId === row.id" @click="runCase(row)">执行</el-button>
+                              <el-dropdown trigger="click" placement="bottom-end">
+                                <el-button text type="primary" size="small" class="case-list-more-button">
+                                  <el-icon><MoreFilled /></el-icon>
+                                </el-button>
+                                <template #dropdown>
+                                  <el-dropdown-menu class="case-list-more-menu">
+                                    <el-dropdown-item class="case-list-menu-item" @click="openCaseDetailDrawer(row)">查看详情</el-dropdown-item>
+                                    <el-dropdown-item class="case-list-menu-item" @click="duplicateCase(row)">复制</el-dropdown-item>
+                                    <el-dropdown-item class="case-list-menu-item is-danger" @click="deleteCase(row)">删除</el-dropdown-item>
+                                  </el-dropdown-menu>
+                                </template>
+                              </el-dropdown>
+                            </div>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                      <div class="case-list-pagination">
+                        <div class="case-list-pagination-summary">共 {{ activeDefinitionCases.length }} 条 / {{ caseListTotalPages }} 页</div>
+                        <el-pagination
+                          v-model:current-page="caseListCurrentPage"
+                          v-model:page-size="caseListPageSize"
+                          :page-sizes="[10, 20, 30, 40, 50]"
+                          size="small"
+                          layout="sizes, prev, pager, next"
+                          :total="activeDefinitionCases.length"
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div class="api-cases-ai-entry">
-                    <button type="button" class="api-sidebar-secondary" :disabled="!activeEditor.definitionId" @click="openAiCaseDrawer">AI生成用例</button>
-                    <span>基于当前接口定义生成接口用例，生成结果需采纳后才会保存。</span>
-                  </div>
-                  <el-table v-if="activeDefinitionCases.length" :data="activeDefinitionCases" size="small" height="300">
-                    <el-table-column prop="name" label="用例名称" min-width="180" show-overflow-tooltip />
-                    <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
-                    <el-table-column label="方法" width="80">
-                      <template #default="{ row }">
-                        <span :class="['api-method', requestMethodClass(row.method)]">{{ row.method }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column prop="lastRunResult" label="最近结果" width="100" />
-                    <el-table-column label="操作" width="280" fixed="right">
-                      <template #default="{ row }">
-                        <div class="api-case-actions">
-                          <button type="button" @click="openCaseDetailDrawer(row)">查看详情</button>
-                          <button type="button" @click="openEditCaseDialog(row)">编辑</button>
-                          <button type="button" :disabled="caseRunningId === row.id" @click="runCase(row)">执行</button>
-                          <button type="button" @click="duplicateCase(row)">复制</button>
-                          <button type="button" class="is-danger" @click="deleteCase(row)">删除</button>
-                        </div>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                  <div v-else class="api-empty-body">当前接口下还没有用例</div>
                 </div>
               </template>
 
@@ -3934,6 +4251,7 @@ onBeforeUnmount(() => {
                             </el-dropdown-menu>
                           </template>
                         </el-dropdown>
+                        <button type="button" class="api-assertion-batch-link" @click="openBatchAdd('assertion')">批量添加</button>
                       </div>
                       <button
                         v-for="(assertion, index) in assertionRowsFor(activeEditor.detail)"
@@ -3950,12 +4268,11 @@ onBeforeUnmount(() => {
                           </span>
                         </span>
                         <span class="api-assertion-list-actions">
-                          <el-button text :icon="ArrowUp" :disabled="index === 0" @click.stop="moveAssertion(index, -1)" />
-                          <el-button text :icon="ArrowDown" :disabled="index === assertionRowsFor(activeEditor.detail).length - 1" @click.stop="moveAssertion(index, 1)" />
+                          <button type="button" class="api-assertion-ghost-action" :disabled="index === 0" @click.stop="moveAssertion(index, -1)">上移</button>
+                          <button type="button" class="api-assertion-ghost-action" :disabled="index === assertionRowsFor(activeEditor.detail).length - 1" @click.stop="moveAssertion(index, 1)">下移</button>
                         </span>
                       </button>
                       <div v-if="!assertionRowsFor(activeEditor.detail).length" class="api-assertion-empty">暂无断言</div>
-                      <button type="button" class="api-assertion-batch-link" @click="openBatchAdd('assertion')">批量添加</button>
                     </aside>
                     <section v-if="activeAssertion" class="api-assertion-detail">
                       <div class="api-assertion-detail-header">
@@ -4247,12 +4564,11 @@ onBeforeUnmount(() => {
                                   <span>表达式</span>
                                   <span>操作</span>
                                 </div>
-                              </div>
-                              <div
-                                v-for="(item, extractIndex) in normalizeProcessorExtractItems(activeProcessor.extractors, activeProcessor)"
-                                :key="item.id || extractIndex"
-                                class="api-processor-extract-row"
-                              >
+                                <div
+                                  v-for="(item, extractIndex) in normalizeProcessorExtractItems(activeProcessor.extractors, activeProcessor)"
+                                  :key="item.id || extractIndex"
+                                  class="api-processor-extract-row"
+                                >
                                 <el-input v-model="item.variableName" placeholder="例如 token" @input="syncProcessorScript(activeProcessor)" />
                                 <el-input v-model="item.description" placeholder="可选" @input="syncProcessorScript(activeProcessor)" />
                                 <el-select v-model="item.variableType" @change="syncProcessorScript(activeProcessor)">
@@ -4328,6 +4644,7 @@ onBeforeUnmount(() => {
                                   </el-popover>
                                   <button type="button" class="api-row-remove api-processor-extract-delete" aria-label="删除提取项" @click="removeProcessorExtractItem(activeProcessor, extractIndex)">删除</button>
                                 </span>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -4452,6 +4769,12 @@ onBeforeUnmount(() => {
                 <strong>响应内容</strong>
                 <div class="api-response-header__right">
                   <div v-if="!showResponseEmpty" class="api-response-metrics">
+                    <span
+                      v-if="responseAssertionPresentation.visible"
+                      :class="['api-response-result-pill', `is-${responseAssertionPresentation.tone}`]"
+                    >
+                      {{ responseAssertionPresentation.label }}
+                    </span>
                     <span :class="['api-response-pill', `is-${statusTone(responseStatus)}`]">状态 {{ responseStatus ?? '-' }}</span>
                     <span>耗时 {{ responseDuration ?? '-' }}<template v-if="responseDuration !== null"> ms</template></span>
                     <span>大小 {{ responseSize }}</span>
@@ -4464,47 +4787,73 @@ onBeforeUnmount(() => {
                   <p>点击 <b>发送</b> 获取响应内容</p>
                 </div>
                 <template v-else>
-                  <div v-if="activeEditor.runError" class="api-response-error-banner">
-                    {{ activeEditor.runError }}
-                  </div>
                   <div class="api-response-tabs">
                     <button :class="{ 'is-active': activeEditor.responseTab === 'body' }" @click="activeEditor.responseTab = 'body'">Body</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'header' }" @click="activeEditor.responseTab = 'header'">Header</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台{{ extractionRows.length ? ` · 提取${extractionRows.length}` : '' }}{{ processorRows.length ? ` · 处理${processorRows.length}` : '' }}</button>
+                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'actualRequest' }" @click="activeEditor.responseTab = 'actualRequest'">实际请求</button>
                     <button :class="{ 'is-active': activeEditor.responseTab === 'assertions' }" @click="activeEditor.responseTab = 'assertions'">断言</button>
                   </div>
                   <div v-if="activeEditor.responseTab === 'body'" class="api-response-code">
-                    <div v-for="(line, index) in responseCodeLines(responseBodyPretty)" :key="`body-${index}`" class="api-response-code__line">
-                      <span class="api-response-code__number">{{ index + 1 }}</span>
-                      <code>{{ line || ' ' }}</code>
-                    </div>
+                    <ApiCodeEditor
+                      :model-value="responseBodyPretty"
+                      :language="responseBodyLanguage"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
                   </div>
                   <div v-else-if="activeEditor.responseTab === 'header'" class="api-response-code">
-                    <div v-for="(line, index) in responseCodeLines(responseHeaders)" :key="`header-${index}`" class="api-response-code__line">
-                      <span class="api-response-code__number">{{ index + 1 }}</span>
-                      <code>{{ line || ' ' }}</code>
-                    </div>
+                    <ApiCodeEditor
+                      :model-value="responseHeaders"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
                   </div>
                   <div v-else-if="activeEditor.responseTab === 'console'" class="api-response-code is-text">
-                    <div v-for="(line, index) in responseCodeLines(responseConsole)" :key="`console-${index}`" class="api-response-code__line">
-                      <span class="api-response-code__number">{{ index + 1 }}</span>
-                      <code>{{ line || ' ' }}</code>
-                    </div>
+                    <ApiCodeEditor
+                      :model-value="responseConsole"
+                      language="api-console"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
                   </div>
                   <div v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-code">
-                    <div v-for="(line, index) in responseCodeLines(actualRequest)" :key="`actual-${index}`" class="api-response-code__line">
-                      <span class="api-response-code__number">{{ index + 1 }}</span>
-                      <code>{{ line || ' ' }}</code>
-                    </div>
+                    <ApiCodeEditor
+                      :model-value="actualRequest"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
                   </div>
                   <el-table v-else-if="assertionRows.length" :data="assertionRows" size="small">
-                    <el-table-column prop="name" label="断言名称" min-width="140" />
+                    <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
+                    </el-table-column>
+                    <el-table-column label="断言对象" width="96">
+                      <template #default="{ row }">{{ assertionTypeLabel(row.type) }}</template>
+                    </el-table-column>
                     <el-table-column label="条件" width="100">
                       <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                     </el-table-column>
-                    <el-table-column prop="expectedValue" label="期望值" min-width="120" />
-                    <el-table-column prop="actualValue" label="实际值" min-width="120" />
+                    <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.expectedValue ?? '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.actualValue ?? '-' }}</template>
+                    </el-table-column>
                     <el-table-column label="结果" width="90">
                       <template #default="{ row }">
                         <span :class="['api-assertion-result-pill', assertionResultClass(row.success)]">
@@ -4512,7 +4861,9 @@ onBeforeUnmount(() => {
                         </span>
                       </template>
                     </el-table-column>
-                    <el-table-column prop="message" label="失败原因" min-width="160" />
+                    <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                    </el-table-column>
                   </el-table>
                   <div v-else class="api-empty-body">当前请求未配置断言</div>
                 </template>
@@ -4693,206 +5044,525 @@ onBeforeUnmount(() => {
       </div>
     </el-dialog>
 
-    <el-drawer v-model="caseDetailDrawerVisible" size="760px" class="api-case-detail-drawer" append-to-body>
-      <template #header>
-        <div class="api-case-drawer-header">
-          <strong>{{ viewingCaseItem?.name || '用例详情' }}</strong>
-          <span v-if="viewingCaseItem">{{ viewingCaseItem.method }} {{ viewingCaseItem.path }}</span>
+    <el-drawer
+      v-model="caseDetailDrawerVisible"
+      size="894px"
+      class="api-case-detail-drawer"
+      modal-class="api-case-drawer-modal"
+      append-to-body
+      :with-header="false"
+      :show-close="false"
+    >
+      <div class="api-case-drawer-shell">
+        <div class="api-case-drawer-top">
+          <div class="api-case-drawer-header">
+            <div class="api-case-drawer-title">{{ viewingCaseItem?.name || '用例详情' }}</div>
+            <div class="api-case-drawer-subtitle">{{ viewingCaseItem?.definitionName || activeEditor?.detail.name || '-' }}</div>
+          </div>
+          <button type="button" class="api-case-drawer-close" @click="caseDetailDrawerVisible = false">
+            <LucideX />
+          </button>
         </div>
-      </template>
 
-      <div class="api-case-drawer-body">
-        <div class="api-case-drawer-tabs">
-          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'detail' }" @click="caseDetailDrawerTab = 'detail'">详情</button>
-          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'history' }" @click="caseDetailDrawerTab = 'history'">运行历史</button>
-          <button type="button" :class="{ 'is-active': caseDetailDrawerTab === 'changes' }" @click="caseDetailDrawerTab = 'changes'">变更历史</button>
-        </div>
-
-        <div v-if="caseDetailDrawerTab === 'detail'" class="api-case-detail-panel" v-loading="viewingCaseDetailLoading">
-          <div v-if="viewingCaseDetailErrorMessage" class="api-empty-body">{{ viewingCaseDetailErrorMessage }}</div>
-          <template v-else-if="viewingCaseDetail">
-            <div class="api-case-summary-grid">
-              <div><span>用例名称</span><strong>{{ viewingCaseDetail.name }}</strong></div>
-              <div><span>接口</span><strong>{{ viewingCaseDetail.definitionName }}</strong></div>
-              <div><span>方法</span><strong>{{ viewingCaseDetail.method }}</strong></div>
-              <div><span>路径</span><strong>{{ viewingCaseDetail.path }}</strong></div>
-              <div><span>最近结果</span><strong :class="['api-run-result-pill', runResultClass(viewingCaseDetail.lastRunResult)]">{{ runResultLabel(viewingCaseDetail.lastRunResult) }}</strong></div>
-              <div><span>最近执行</span><strong>{{ formatDateTime(viewingCaseDetail.lastRunAt) }}</strong></div>
+        <div class="api-case-drawer-scroll">
+          <div class="api-case-drawer-summary-card">
+            <div class="api-case-drawer-summary-meta">
+              <span :class="['case-drawer-method-tag', `request-method-${String(viewingCaseItem?.method || 'GET').toLowerCase()}`]">{{ viewingCaseItem?.method || '-' }}</span>
+              <span class="api-case-drawer-summary-path">{{ viewingCaseItem?.path || '未设置路径' }}</span>
             </div>
-            <div class="api-case-detail-section">
-              <strong>请求配置</strong>
-              <div class="api-case-config-blocks">
-                <section class="api-case-config-block">
-                  <div><strong>Params</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.queryParams).length }} 项</span></div>
-                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.queryParams).length" class="api-case-kv-list">
-                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.queryParams)" :key="`query-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
-                  </div>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>Header</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.headers).length }} 项</span></div>
-                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.headers).length" class="api-case-kv-list">
-                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.headers)" :key="`header-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
-                  </div>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>Cookie</strong><span>{{ enabledRows(viewingCaseDetail.requestConfig.cookies).length }} 项</span></div>
-                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.cookies).length" class="api-case-kv-list">
-                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.cookies)" :key="`cookie-${row.key}`">{{ row.key }} = {{ row.value || '-' }}</span>
-                  </div>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>Body</strong><span>{{ bodyModeLabel(viewingCaseDetail.requestConfig.body.type) }}</span></div>
-                  <div v-if="enabledRows(viewingCaseDetail.requestConfig.body.formItems).length" class="api-case-kv-list">
-                    <span v-for="row in enabledRows(viewingCaseDetail.requestConfig.body.formItems)" :key="`body-${row.key}`">{{ row.key }} = {{ row.fileName || row.value || '-' }}</span>
-                  </div>
-                  <pre v-else-if="viewingCaseDetail.requestConfig.body.rawText">{{ toPrettyJson(viewingCaseDetail.requestConfig.body.rawText) }}</pre>
-                  <div v-else-if="viewingCaseDetail.requestConfig.body.fileName" class="api-case-config-empty">{{ viewingCaseDetail.requestConfig.body.fileName }} · {{ formatFileSize(viewingCaseDetail.requestConfig.body.fileSize) }}</div>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>Auth</strong><span>{{ viewingCaseDetail.requestConfig.authConfig.authType || 'NONE' }}</span></div>
-                  <div v-if="viewingCaseDetail.requestConfig.authConfig.authType === 'BASIC'" class="api-case-kv-list">
-                    <span>用户名 = {{ viewingCaseDetail.requestConfig.authConfig.basicAuth?.userName || '-' }}</span>
-                    <span>密码 = {{ viewingCaseDetail.requestConfig.authConfig.basicAuth?.password ? '已配置' : '-' }}</span>
-                  </div>
-                  <div v-else-if="viewingCaseDetail.requestConfig.authConfig.authType === 'DIGEST'" class="api-case-kv-list">
-                    <span>用户名 = {{ viewingCaseDetail.requestConfig.authConfig.digestAuth?.userName || '-' }}</span>
-                    <span>密码 = {{ viewingCaseDetail.requestConfig.authConfig.digestAuth?.password ? '已配置' : '-' }}</span>
-                  </div>
-                  <div v-else class="api-case-config-empty">No Auth</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>前置处理</strong><span>{{ viewingCaseDetail.preProcessors.length }} 项</span></div>
-                  <pre v-if="viewingCaseDetail.preProcessors.length">{{ toPrettyJson(viewingCaseDetail.preProcessors) }}</pre>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>后置处理</strong><span>{{ viewingCaseDetail.postProcessors.length }} 项</span></div>
-                  <pre v-if="viewingCaseDetail.postProcessors.length">{{ toPrettyJson(viewingCaseDetail.postProcessors) }}</pre>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>断言</strong><span>{{ viewingCaseDetail.assertions.length }} 项</span></div>
-                  <pre v-if="viewingCaseDetail.assertions.length">{{ toPrettyJson(viewingCaseDetail.assertions) }}</pre>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
-                <section class="api-case-config-block">
-                  <div><strong>提取器</strong><span>{{ viewingCaseDetail.extractors.length }} 项</span></div>
-                  <pre v-if="viewingCaseDetail.extractors.length">{{ toPrettyJson(viewingCaseDetail.extractors) }}</pre>
-                  <div v-else class="api-case-config-empty">未配置</div>
-                </section>
+          </div>
+
+          <div class="api-case-drawer-tabs">
+            <div class="ms-like-top-tabs case-drawer-view-tabs">
+              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'detail' }]" @click="caseDetailDrawerTab = 'detail'">详情</button>
+              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'history' }]" @click="caseDetailDrawerTab = 'history'">执行历史</button>
+              <button :class="['ms-like-top-tab', { active: caseDetailDrawerTab === 'changes' }]" @click="caseDetailDrawerTab = 'changes'">变更历史</button>
+            </div>
+          </div>
+
+          <div v-if="caseDetailDrawerTab === 'detail'" class="api-case-detail-panel" v-loading="viewingCaseDetailLoading">
+            <div v-if="viewingCaseDetailErrorMessage" class="api-empty-body">{{ viewingCaseDetailErrorMessage }}</div>
+            <template v-else-if="viewingCaseDetail">
+              <div class="ms-like-top-tabs case-drawer-top-tabs">
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'headers' }]" @click="caseDetailRequestTab = 'headers'">请求头</button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'body' }]" @click="caseDetailRequestTab = 'body'">请求体</button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'params' }]" @click="caseDetailRequestTab = 'params'">
+                  Params
+                  <span v-if="enabledRows(viewingCaseDetail.requestConfig.queryParams).length" class="ms-like-tab-badge">{{ enabledRows(viewingCaseDetail.requestConfig.queryParams).length }}</span>
+                </button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'auth' }]" @click="caseDetailRequestTab = 'auth'">Auth</button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'pre' }]" @click="caseDetailRequestTab = 'pre'">前置处理</button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'post' }]" @click="caseDetailRequestTab = 'post'">后置处理</button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'tests' }]" @click="caseDetailRequestTab = 'tests'">
+                  断言
+                  <span v-if="viewingCaseDetail.assertions.length" class="ms-like-tab-badge">{{ viewingCaseDetail.assertions.length }}</span>
+                </button>
+                <button :class="['ms-like-top-tab', { active: caseDetailRequestTab === 'settings' }]" @click="caseDetailRequestTab = 'settings'">设置</button>
               </div>
-            </div>
-            <div class="api-case-detail-section">
-              <strong>最近响应预览</strong>
-              <template v-if="caseDetailPreviewStep">
-                <div class="api-case-step-meta">
-                  <span>状态码 {{ caseDetailPreviewStep.response?.statusCode ?? '-' }}</span>
-                  <span>耗时 {{ formatDuration(caseDetailPreviewStep.durationMs) }}</span>
-                  <span v-if="caseDetailPreviewStep.errorMessage">失败原因：{{ caseDetailPreviewStep.errorMessage }}</span>
-                </div>
-                <div class="api-case-history-snapshots">
-                  <div>
-                    <span>Body</span>
-                    <pre>{{ toPrettyJson(caseDetailPreviewStep.response?.body) }}</pre>
-                  </div>
-                  <div>
-                    <span>Header</span>
-                    <pre>{{ toPrettyJson(caseDetailPreviewStep.response?.headers || {}) }}</pre>
-                  </div>
-                </div>
-                <div class="api-case-history-snapshots">
-                  <div>
-                    <span>实际请求</span>
-                    <pre>{{ toPrettyJson(caseDetailPreviewStep.request) }}</pre>
-                  </div>
-                  <div>
-                    <span>断言 / 提取 / 处理器</span>
-                    <pre>{{ toPrettyJson({
-                      assertionResults: caseDetailPreviewStep.assertionResults,
-                      extractionResults: caseDetailPreviewStep.extractionResults,
-                      processorResults: caseDetailPreviewStep.processorResults,
-                    }) }}</pre>
-                  </div>
-                </div>
-              </template>
-              <div v-else class="api-empty-body">暂无最近响应预览，执行一次用例后展示。</div>
-            </div>
-          </template>
-          <div v-else class="api-empty-body">暂无用例详情</div>
-        </div>
 
-        <div v-else-if="caseDetailDrawerTab === 'history'" class="api-case-history-panel">
-          <div class="api-case-history-list" v-loading="caseRunHistoryLoading">
+              <div class="api-request-body api-case-readonly-body">
+                <template v-if="caseDetailRequestTab === 'headers'">
+                  <div class="api-param-table is-header is-readonly">
+                    <div class="api-param-header">
+                      <span class="api-drag-cell"></span>
+                      <span class="api-checkbox-cell"></span>
+                      <span class="api-header-title">参数名称</span>
+                      <span>参数值</span>
+                      <span>描述</span>
+                    </div>
+                    <div v-for="(row, index) in viewingCaseDetail.requestConfig.headers" :key="`case-header-${index}`" class="api-param-row">
+                      <span class="api-drag-cell"></span>
+                      <span class="api-checkbox-cell"><el-checkbox :model-value="row.enabled !== false" disabled /></span>
+                      <el-input :model-value="row.key" disabled placeholder="参数名称" />
+                      <el-input :model-value="row.value" disabled placeholder="参数值" />
+                      <el-input :model-value="row.description" disabled placeholder="描述" />
+                    </div>
+                    <div v-if="!viewingCaseDetail.requestConfig.headers.length" class="api-empty-body">暂无请求头</div>
+                  </div>
+                </template>
+
+                <template v-else-if="caseDetailRequestTab === 'params'">
+                  <div class="api-param-table is-query is-readonly">
+                    <div class="api-param-header">
+                      <span class="api-drag-cell"></span>
+                      <span class="api-checkbox-cell"></span>
+                      <span class="api-header-title">Query 参数</span>
+                      <span class="api-type-header">类型</span>
+                      <span>参数值</span>
+                      <span class="api-length-header">长度范围</span>
+                      <span>编码</span>
+                      <span>描述</span>
+                    </div>
+                    <div v-for="(row, index) in viewingCaseDetail.requestConfig.queryParams" :key="`case-query-${index}`" class="api-param-row">
+                      <span class="api-drag-cell"></span>
+                      <span class="api-checkbox-cell"><el-checkbox :model-value="row.enabled !== false" disabled /></span>
+                      <el-input :model-value="row.key" disabled placeholder="参数名称" />
+                      <div class="api-type-field">
+                        <button type="button" :class="['api-required-button', { active: row.required }]" disabled>*</button>
+                        <el-select :model-value="row.paramType" disabled>
+                          <el-option v-for="type in paramTypeOptions.filter(item => item !== 'file')" :key="type" :label="type" :value="type" />
+                        </el-select>
+                      </div>
+                      <el-input :model-value="row.value" disabled placeholder="参数值" />
+                      <div class="api-length-range">
+                        <el-input-number :model-value="row.minLength" :controls="false" disabled placeholder="最小" />
+                        <span>至</span>
+                        <el-input-number :model-value="row.maxLength" :controls="false" disabled placeholder="最大" />
+                      </div>
+                      <el-switch :model-value="row.encode" size="small" disabled />
+                      <el-input :model-value="row.description" disabled placeholder="描述" />
+                    </div>
+                    <div v-if="!viewingCaseDetail.requestConfig.queryParams.length" class="api-empty-body">暂无 Query 参数</div>
+                  </div>
+                </template>
+
+                <template v-else-if="caseDetailRequestTab === 'body'">
+                  <div class="api-body-section">
+                    <div class="api-body-modes">
+                      <button
+                        v-for="mode in bodyModes"
+                        :key="mode.value"
+                        :class="['api-body-chip', { 'is-active': viewingCaseDetail.requestConfig.body.type === mode.value }]"
+                        type="button"
+                        disabled
+                      >
+                        {{ mode.label }}
+                      </button>
+                    </div>
+                    <div :class="['api-body-editor', { 'is-empty': viewingCaseDetail.requestConfig.body.type === 'NONE', 'is-code': isRawBodyType(viewingCaseDetail.requestConfig.body.type) }]">
+                      <div v-if="viewingCaseDetail.requestConfig.body.type === 'NONE'" class="api-empty-body">请求没有 Body</div>
+                      <ApiCodeEditor
+                        v-else-if="isRawBodyType(viewingCaseDetail.requestConfig.body.type)"
+                        :model-value="caseDetailBodyRawText"
+                        :language="caseDetailBodyLanguage"
+                        read-only
+                        :show-format-button="false"
+                        height="300px"
+                      />
+                      <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(viewingCaseDetail.requestConfig.body.type)" class="api-param-table is-body-form is-readonly">
+                        <div class="api-param-header">
+                          <span class="api-drag-cell"></span>
+                          <span class="api-checkbox-cell"></span>
+                          <span class="api-header-title">参数名称</span>
+                          <span class="api-type-header">类型</span>
+                          <span>参数值</span>
+                          <span class="api-length-header">长度范围</span>
+                          <span>描述</span>
+                        </div>
+                        <div v-for="(row, index) in viewingCaseDetail.requestConfig.body.formItems" :key="`case-body-${index}`" class="api-param-row">
+                          <span class="api-drag-cell"></span>
+                          <span class="api-checkbox-cell"><el-checkbox :model-value="row.enabled !== false" disabled /></span>
+                          <el-input :model-value="row.key" disabled placeholder="参数名称" />
+                          <div class="api-type-field">
+                            <button type="button" :class="['api-required-button', { active: row.required }]" disabled>*</button>
+                            <el-select :model-value="row.paramType" disabled>
+                              <el-option v-for="type in paramTypeOptions" :key="type" :label="type" :value="type" />
+                            </el-select>
+                          </div>
+                          <el-input :model-value="row.fileName || row.value" disabled placeholder="参数值" />
+                          <div class="api-length-range">
+                            <el-input-number :model-value="row.minLength" :controls="false" disabled placeholder="最小" />
+                            <span>至</span>
+                            <el-input-number :model-value="row.maxLength" :controls="false" disabled placeholder="最大" />
+                          </div>
+                          <el-input :model-value="row.description" disabled placeholder="描述" />
+                        </div>
+                        <div v-if="!viewingCaseDetail.requestConfig.body.formItems.length" class="api-empty-body">暂无表单参数</div>
+                      </div>
+                      <div v-else class="api-binary-panel is-readonly">
+                        <div class="api-binary-row">
+                          <div class="api-binary-label">File</div>
+                          <div class="api-binary-actions">
+                            <button type="button" class="api-binary-pick" disabled>{{ viewingCaseDetail.requestConfig.body.fileName ? '重新选择' : '选择文件' }}</button>
+                            <button type="button" class="api-binary-clear" disabled>清空</button>
+                          </div>
+                        </div>
+                        <div class="api-binary-row">
+                          <div class="api-binary-label">已选文件</div>
+                          <div class="api-binary-selected">
+                            <template v-if="viewingCaseDetail.requestConfig.body.fileName">
+                              <span class="api-binary-file-name">{{ viewingCaseDetail.requestConfig.body.fileName }}</span>
+                              <span v-if="viewingCaseDetail.requestConfig.body.fileSize" class="api-binary-file-size">{{ formatFileSize(viewingCaseDetail.requestConfig.body.fileSize) }}</span>
+                            </template>
+                            <template v-else>尚未选择二进制文件</template>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <template v-else-if="caseDetailRequestTab === 'auth'">
+                  <div class="api-auth-panel">
+                    <span class="api-form-label">认证方式</span>
+                    <el-radio-group :model-value="viewingCaseDetail.requestConfig.authConfig.authType" disabled>
+                      <el-radio-button value="NONE">No Auth</el-radio-button>
+                      <el-radio-button value="BASIC">Basic Auth</el-radio-button>
+                      <el-radio-button value="DIGEST">Digest Auth</el-radio-button>
+                    </el-radio-group>
+                    <div v-if="viewingCaseDetail.requestConfig.authConfig.authType === 'BASIC'" class="api-auth-grid">
+                      <label>Username</label>
+                      <el-input :model-value="viewingCaseDetail.requestConfig.authConfig.basicAuth?.userName" class="api-auth-form-control" disabled />
+                      <label>Password</label>
+                      <el-input :model-value="viewingCaseDetail.requestConfig.authConfig.basicAuth?.password ? '已配置' : ''" class="api-auth-form-control" disabled />
+                    </div>
+                    <div v-else-if="viewingCaseDetail.requestConfig.authConfig.authType === 'DIGEST'" class="api-auth-grid">
+                      <label>Username</label>
+                      <el-input :model-value="viewingCaseDetail.requestConfig.authConfig.digestAuth?.userName" class="api-auth-form-control" disabled />
+                      <label>Password</label>
+                      <el-input :model-value="viewingCaseDetail.requestConfig.authConfig.digestAuth?.password ? '已配置' : ''" class="api-auth-form-control" disabled />
+                    </div>
+                  </div>
+                </template>
+
+                <template v-else-if="caseDetailRequestTab === 'settings'">
+                  <div class="api-settings-panel is-readonly">
+                    <label>用例名称</label>
+                    <el-input :model-value="viewingCaseDetail.name" disabled />
+                    <label>所属接口</label>
+                    <el-input :model-value="viewingCaseDetail.definitionName" disabled />
+                    <label>标签</label>
+                    <el-input :model-value="formatCaseTags(viewingCaseDetail.tags)" disabled />
+                    <label>超时时间</label>
+                    <div class="api-settings-control-cell">
+                      <el-input-number :model-value="viewingCaseDetail.requestConfig.timeoutMs" class="api-settings-timeout-number" disabled />
+                    </div>
+                    <label>描述</label>
+                    <el-input :model-value="viewingCaseDetail.description || ''" type="textarea" :rows="4" disabled />
+                    <div class="api-settings-footer">
+                      <span>写入空间 {{ viewingCaseDetail.workspaceName || viewingCaseDetail.workspaceCode || '未选择' }}</span>
+                      <span>最近结果 {{ runResultLabel(viewingCaseDetail.lastRunResult) }}</span>
+                      <span>最后运行 {{ formatDateTime(viewingCaseDetail.lastRunAt) }}</span>
+                    </div>
+                  </div>
+                </template>
+
+                <template v-else>
+                  <div class="request-section api-case-code-section">
+                    <ApiCodeEditor
+                      :model-value="caseDetailRequestTab === 'pre' ? toPrettyJson(viewingCaseDetail.preProcessors) : caseDetailRequestTab === 'post' ? toPrettyJson(viewingCaseDetail.postProcessors) : toPrettyJson(viewingCaseDetail.assertions)"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                  </div>
+                </template>
+              </div>
+
+              <div class="ms-like-response-shell case-drawer-response-shell">
+                <div class="ms-like-response-header">
+                  <div class="ms-like-response-title">响应内容</div>
+                  <div v-if="caseDetailPreviewStep" class="ms-like-response-metrics">
+                    <span v-if="caseDetailAssertionPresentation.visible" :class="['ms-like-result-pill', `is-${caseDetailAssertionPresentation.tone}`]">{{ caseDetailAssertionPresentation.label }}</span>
+                    <span :class="['ms-like-response-metric', `is-${statusTone(caseDetailResponseStatus)}`]">状态 {{ caseDetailResponseStatus ?? '-' }}</span>
+                    <span class="ms-like-response-metric">耗时 {{ caseDetailResponseDuration ?? '-' }}<template v-if="caseDetailResponseDuration !== null"> ms</template></span>
+                    <span>大小 {{ caseDetailResponseSize }}</span>
+                  </div>
+                </div>
+                <div v-if="!caseDetailPreviewStep" class="ms-like-response-empty">
+                  <div class="ms-like-response-empty-card">
+                    <div class="ms-like-response-empty-visual">
+                      <div class="ms-like-response-empty-window"><span></span><span></span><span></span></div>
+                    </div>
+                    <div class="ms-like-response-empty-text">点击 <span>执行</span> 获取响应内容</div>
+                  </div>
+                </div>
+                <template v-else>
+                  <div class="ms-like-response-tabs">
+                    <button :class="['ms-like-top-tab', { active: caseDetailResponseTab === 'body' }]" @click="caseDetailResponseTab = 'body'">Body</button>
+                    <button :class="['ms-like-top-tab', { active: caseDetailResponseTab === 'header' }]" @click="caseDetailResponseTab = 'header'">Header</button>
+                    <button :class="['ms-like-top-tab', { active: caseDetailResponseTab === 'console' }]" @click="caseDetailResponseTab = 'console'">控制台</button>
+                    <button :class="['ms-like-top-tab', { active: caseDetailResponseTab === 'actualRequest' }]" @click="caseDetailResponseTab = 'actualRequest'">实际请求</button>
+                    <button :class="['ms-like-top-tab', { active: caseDetailResponseTab === 'assertions' }]" @click="caseDetailResponseTab = 'assertions'">断言</button>
+                  </div>
+                  <div class="ms-like-response-body">
+                    <ApiCodeEditor
+                      v-if="caseDetailResponseTab === 'body'"
+                      :model-value="caseDetailResponseBody"
+                      :language="caseDetailResponseBodyLanguage"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                    <ApiCodeEditor
+                      v-else-if="caseDetailResponseTab === 'header'"
+                      :model-value="caseDetailResponseHeaders"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                    <ApiCodeEditor
+                      v-else-if="caseDetailResponseTab === 'console'"
+                      :model-value="caseDetailResponseConsole"
+                      language="api-console"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                    <ApiCodeEditor
+                      v-else-if="caseDetailResponseTab === 'actualRequest'"
+                      :model-value="caseDetailActualRequest"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                    <el-table v-else-if="caseDetailAssertionRows.length" :data="caseDetailAssertionRows" size="small" class="assertion-result-table">
+                      <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
+                      </el-table-column>
+                      <el-table-column label="断言对象" width="96">
+                        <template #default="{ row }">{{ assertionTypeLabel(row.type) }}</template>
+                      </el-table-column>
+                      <el-table-column label="条件" width="92">
+                        <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
+                      </el-table-column>
+                      <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
+                      </el-table-column>
+                      <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.actualValue || '-' }}</template>
+                      </el-table-column>
+                      <el-table-column label="结果" width="78">
+                        <template #default="{ row }">
+                          <span :class="['case-drawer-history-result', assertionResultClass(row.success)]">{{ assertionResultLabel(row.success) }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                      </el-table-column>
+                    </el-table>
+                    <div v-else class="api-empty-body">当前请求未配置断言</div>
+                  </div>
+                </template>
+              </div>
+            </template>
+            <div v-else class="api-empty-body">暂无用例详情</div>
+          </div>
+
+          <div v-else-if="caseDetailDrawerTab === 'history'" class="case-drawer-history-panel">
             <div v-if="caseRunHistoryErrorMessage" class="api-empty-body">{{ caseRunHistoryErrorMessage }}</div>
-            <template v-else>
-              <button
-                v-for="item in caseRunHistories"
-                :key="item.id"
-                type="button"
-                :class="['api-case-history-item', { 'is-active': selectedCaseRunHistoryId === item.id }]"
-                @click="openCaseRunHistoryDetail(item)"
-              >
-                <span :class="['api-run-result-pill', runResultClass(item.result)]">{{ runResultLabel(item.result) }}</span>
-                <strong>{{ formatDateTime(item.createdAt) }}</strong>
-                <small>{{ item.statusCode ?? '-' }} / {{ formatDuration(item.durationMs) }} / {{ formatResponseSize(item.responseSize) }}</small>
-              </button>
-            </template>
-            <div v-if="!caseRunHistoryLoading && !caseRunHistoryErrorMessage && !caseRunHistories.length" class="api-empty-body">暂无运行历史</div>
-          </div>
+            <el-table
+              v-else
+              v-loading="caseRunHistoryLoading"
+              :data="caseRunHistories"
+              size="small"
+              class="case-drawer-history-table"
+              row-key="id"
+              highlight-current-row
+              @row-click="openCaseRunHistoryDetail"
+            >
+              <el-table-column label="执行时间" min-width="162" show-overflow-tooltip>
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column label="结果" width="78">
+                <template #default="{ row }">
+                  <span :class="['case-drawer-history-result', `is-${runResultClass(row.result)}`]">{{ runResultLabel(row.result) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="状态码" width="78" align="center">
+                <template #default="{ row }">{{ row.statusCode ?? '-' }}</template>
+              </el-table-column>
+              <el-table-column label="耗时" width="92">
+                <template #default="{ row }">{{ formatDuration(row.durationMs) }}</template>
+              </el-table-column>
+              <el-table-column label="大小" width="92">
+                <template #default="{ row }">{{ formatResponseSize(row.responseSize) }}</template>
+              </el-table-column>
+              <el-table-column label="环境" min-width="108" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.environmentName || '默认' }}</template>
+              </el-table-column>
+              <el-table-column label="变量集" min-width="108" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.variableSetName || '未选择' }}</template>
+              </el-table-column>
+              <el-table-column label="执行人" min-width="96" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.operator || '-' }}</template>
+              </el-table-column>
+              <template #empty>
+                <div class="case-drawer-history-table-empty">暂无执行历史</div>
+              </template>
+            </el-table>
 
-          <div class="api-case-history-detail" v-loading="caseRunHistoryDetailLoading">
-            <div v-if="caseRunHistoryDetailErrorMessage" class="api-empty-body">{{ caseRunHistoryDetailErrorMessage }}</div>
-            <template v-else-if="selectedCaseRunHistoryDetail">
-              <div class="api-case-summary-grid">
-                <div><span>执行结果</span><strong :class="['api-run-result-pill', runResultClass(selectedCaseRunHistoryDetail.result)]">{{ runResultLabel(selectedCaseRunHistoryDetail.result) }}</strong></div>
-                <div><span>状态码</span><strong>{{ selectedCaseRunHistoryDetail.statusCode ?? '-' }}</strong></div>
-                <div><span>耗时</span><strong>{{ formatDuration(selectedCaseRunHistoryDetail.durationMs) }}</strong></div>
-                <div><span>响应大小</span><strong>{{ formatResponseSize(selectedCaseRunHistoryDetail.responseSize) }}</strong></div>
-                <div><span>环境</span><strong>{{ selectedCaseRunHistoryDetail.environmentName || '-' }}</strong></div>
-                <div><span>变量集</span><strong>{{ selectedCaseRunHistoryDetail.variableSetName || '-' }}</strong></div>
-              </div>
-              <div v-if="selectedCaseRunHistoryDetail.failureSummary" class="api-case-failure-box">{{ selectedCaseRunHistoryDetail.failureSummary }}</div>
-              <div v-for="(step, index) in selectedCaseRunHistoryDetail.stepResults" :key="step.id || index" class="api-case-detail-section">
-                <strong>{{ step.stepName || `步骤 ${index + 1}` }}</strong>
-                <div class="api-case-step-meta">
-                  <span>状态码 {{ step.response?.statusCode ?? '-' }}</span>
-                  <span>耗时 {{ formatDuration(step.durationMs) }}</span>
-                  <span v-if="step.errorMessage">失败原因：{{ step.errorMessage }}</span>
-                </div>
-                <div class="api-case-history-snapshots">
-                  <div>
-                    <span>请求快照</span>
-                    <pre>{{ toPrettyJson(step.request) }}</pre>
-                  </div>
-                  <div>
-                    <span>响应快照</span>
-                    <pre>{{ toPrettyJson(step.response) }}</pre>
-                  </div>
-                </div>
-                <div class="api-case-history-snapshots">
-                  <div>
-                    <span>断言结果</span>
-                    <pre>{{ toPrettyJson(step.assertionResults) }}</pre>
-                  </div>
-                  <div>
-                    <span>处理器 / 提取结果</span>
-                    <pre>{{ toPrettyJson({ extractionResults: step.extractionResults, processorResults: step.processorResults }) }}</pre>
-                  </div>
+            <div class="ms-like-response-shell case-drawer-history-detail-shell" v-loading="caseRunHistoryDetailLoading">
+              <div class="ms-like-response-header">
+                <div class="ms-like-response-title">历史详情</div>
+                <div v-if="selectedCaseRunHistoryDetail" class="ms-like-response-metrics">
+                  <span :class="['ms-like-result-pill', `is-${runResultClass(selectedCaseRunHistoryDetail.result)}`]">{{ runResultLabel(selectedCaseRunHistoryDetail.result) }}</span>
+                  <span class="ms-like-response-metric">状态 {{ selectedCaseRunHistoryDetail.statusCode ?? '-' }}</span>
+                  <span class="ms-like-response-metric">耗时 {{ formatDuration(selectedCaseRunHistoryDetail.durationMs) }}</span>
+                  <span>大小 {{ formatResponseSize(selectedCaseRunHistoryDetail.responseSize) }}</span>
                 </div>
               </div>
-              <div v-if="!selectedCaseRunHistoryDetail.stepResults.length" class="api-empty-body">该历史暂无步骤详情</div>
-            </template>
-            <div v-else class="api-empty-body">请选择一条运行历史</div>
-          </div>
-        </div>
+              <div v-if="caseRunHistoryDetailErrorMessage" class="api-empty-body">{{ caseRunHistoryDetailErrorMessage }}</div>
+              <div v-else-if="!selectedCaseRunHistoryDetail" class="api-empty-body">选择一条执行记录查看详情</div>
+              <div v-else-if="!selectedCaseRunHistoryDetail.stepResults.length" class="api-empty-body">该历史暂无步骤详情</div>
+              <div v-else class="case-drawer-history-section">
+                <div class="case-drawer-history-meta">
+                  <span>执行环境 {{ selectedCaseRunHistoryDetail.environmentName || '默认' }}</span>
+                  <span>变量集 {{ selectedCaseRunHistoryDetail.variableSetName || '未选择' }}</span>
+                  <span>执行人 {{ selectedCaseRunHistoryDetail.operator || '-' }}</span>
+                </div>
 
-        <div v-else class="api-case-detail-panel">
-          <div class="api-empty-body">
-            当前后端暂未提供接口用例变更历史接口，本轮不伪造变更记录。
+                <div class="case-drawer-history-step">
+                  <div class="case-drawer-history-section-title">实际请求</div>
+                  <div class="case-drawer-history-request-summary">
+                    <span :class="['case-drawer-method-tag', `request-method-${String(selectedCaseHistoryStep?.request?.method || viewingCaseItem?.method || 'GET').toLowerCase()}`]">{{ selectedCaseHistoryStep?.request?.method || viewingCaseItem?.method || '-' }}</span>
+                    <span>{{ selectedCaseHistoryStep?.request?.url || viewingCaseItem?.path || '-' }}</span>
+                  </div>
+                  <div class="ms-like-response-tabs case-drawer-history-request-tabs">
+                    <button :class="['ms-like-top-tab', { active: caseHistoryRequestTab === 'header' }]" @click="caseHistoryRequestTab = 'header'">Header</button>
+                    <button :class="['ms-like-top-tab', { active: caseHistoryRequestTab === 'body' }]" @click="caseHistoryRequestTab = 'body'">Body</button>
+                  </div>
+                  <div class="ms-like-response-body case-drawer-history-request-body">
+                    <ApiCodeEditor
+                      v-if="caseHistoryRequestTab === 'header'"
+                      :model-value="caseHistoryRequestHeaders"
+                      language="json"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                    <ApiCodeEditor
+                      v-else
+                      :model-value="caseHistoryRequestBody"
+                      :language="caseHistoryRequestBodyLanguage"
+                      read-only
+                      :show-format-button="false"
+                      fit-content
+                      :max-fit-content-height="1000"
+                      height="100%"
+                    />
+                  </div>
+                </div>
+
+                <div class="case-drawer-history-step">
+                  <div class="case-drawer-history-section-title">响应结果</div>
+                  <div v-if="caseHistoryDebugError" class="response-error-inline">{{ caseHistoryDebugError }}</div>
+                  <div class="ms-like-response-tabs">
+                    <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'body' }]" @click="caseHistoryResponseTab = 'body'">Body</button>
+                    <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'header' }]" @click="caseHistoryResponseTab = 'header'">Header</button>
+                    <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'console' }]" @click="caseHistoryResponseTab = 'console'">控制台</button>
+                    <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'assertions' }]" @click="caseHistoryResponseTab = 'assertions'">断言</button>
+                  </div>
+                  <div class="ms-like-response-body">
+                  <ApiCodeEditor
+                    v-if="caseHistoryResponseTab === 'body'"
+                    :model-value="caseHistoryResponseBody"
+                    :language="caseHistoryResponseBodyLanguage"
+                    read-only
+                    :show-format-button="false"
+                    fit-content
+                    :max-fit-content-height="1000"
+                    height="100%"
+                  />
+                  <ApiCodeEditor
+                    v-else-if="caseHistoryResponseTab === 'header'"
+                    :model-value="caseHistoryResponseHeaders"
+                    language="json"
+                    read-only
+                    :show-format-button="false"
+                    fit-content
+                    :max-fit-content-height="1000"
+                    height="100%"
+                  />
+                  <ApiCodeEditor
+                    v-else-if="caseHistoryResponseTab === 'console'"
+                    :model-value="caseHistoryConsole"
+                    language="api-console"
+                    read-only
+                    :show-format-button="false"
+                    fit-content
+                    :max-fit-content-height="1000"
+                    height="100%"
+                  />
+                  <el-table v-else-if="caseHistoryAssertionRows.length" :data="caseHistoryAssertionRows" size="small" class="assertion-result-table">
+                    <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
+                    </el-table-column>
+                    <el-table-column label="断言对象" width="96">
+                      <template #default="{ row }">{{ assertionTypeLabel(row.type) }}</template>
+                    </el-table-column>
+                    <el-table-column label="条件" width="92">
+                      <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
+                    </el-table-column>
+                    <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.actualValue || '-' }}</template>
+                    </el-table-column>
+                    <el-table-column label="结果" width="78">
+                      <template #default="{ row }">
+                        <span :class="['case-drawer-history-result', assertionResultClass(row.success)]">{{ assertionResultLabel(row.success) }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                      <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                    </el-table-column>
+                  </el-table>
+                  <div v-else class="api-empty-body">当前请求未配置断言</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div v-else class="case-drawer-history-panel">
+            <div class="api-empty-body">当前后端暂未提供接口用例变更历史接口，本轮不伪造变更记录。</div>
           </div>
         </div>
       </div>
@@ -5162,6 +5832,8 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .api-interface-workspace {
+  --api-workspace-font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+
   display: flex;
   min-width: 0;
   height: calc(100dvh - 112px);
@@ -5174,6 +5846,66 @@ onBeforeUnmount(() => {
   box-shadow: none;
   transform: translate(8px, -8px);
   width: calc(100% - 8px);
+  font-family: var(--api-workspace-font-family);
+}
+
+.api-interface-workspace button,
+.api-interface-workspace input,
+.api-interface-workspace textarea,
+.api-interface-workspace select {
+  font-family: inherit;
+}
+
+.api-interface-workspace :deep(.el-button),
+.api-interface-workspace :deep(.el-input__inner),
+.api-interface-workspace :deep(.el-textarea__inner),
+.api-interface-workspace :deep(.el-select),
+.api-interface-workspace :deep(.el-select__placeholder),
+.api-interface-workspace :deep(.el-select__selected-item),
+.api-interface-workspace :deep(.el-dropdown-menu),
+.api-interface-workspace :deep(.el-table) {
+  font-family: inherit;
+}
+
+:global(.api-method-popper),
+:global(.api-save-dropdown-menu),
+:global(.api-soft-message-box),
+:global(.el-dialog.api-import-dialog-shell),
+:global(.el-dialog.api-soft-dialog-shell),
+:global(.el-dialog.api-batch-dialog-shell),
+:global(.api-case-detail-drawer),
+:global(.api-ai-case-drawer),
+:global(.el-dialog.api-ai-case-detail-dialog) {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+}
+
+:global(.api-method-popper .el-select-dropdown__item),
+:global(.api-save-dropdown-menu .el-dropdown-menu__item),
+:global(.api-soft-message-box .el-message-box__title),
+:global(.api-soft-message-box .el-message-box__content),
+:global(.api-soft-message-box .el-button),
+:global(.el-dialog.api-import-dialog-shell .el-button),
+:global(.el-dialog.api-import-dialog-shell .el-input__inner),
+:global(.el-dialog.api-import-dialog-shell .el-upload),
+:global(.el-dialog.api-soft-dialog-shell .el-button),
+:global(.el-dialog.api-soft-dialog-shell .el-input__inner),
+:global(.el-dialog.api-batch-dialog-shell .el-button),
+:global(.api-case-detail-drawer .el-button),
+:global(.api-case-detail-drawer .el-input__inner),
+:global(.api-ai-case-drawer .el-button),
+:global(.api-ai-case-drawer .el-input__inner),
+:global(.api-ai-case-drawer .el-textarea__inner),
+:global(.api-ai-case-drawer .el-select),
+:global(.el-dialog.api-ai-case-detail-dialog .el-button) {
+  font-family: inherit;
+}
+
+:global(.el-dialog.api-soft-dialog-shell .el-textarea__inner),
+:global(.el-dialog.api-batch-dialog-shell .el-textarea__inner),
+:global(.el-dialog.api-batch-dialog-shell code),
+:global(.api-ai-case-drawer .api-ai-case-log),
+:global(.el-dialog.api-ai-case-detail-dialog pre) {
+  font-family: Consolas, Monaco, monospace;
 }
 
 .api-interface-tabs {
@@ -5314,6 +6046,13 @@ onBeforeUnmount(() => {
   font-size: 16px;
 }
 
+.api-send-button__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke-width: 2.25;
+}
+
 .api-sidebar-button-icon {
   width: 16px;
   height: 16px;
@@ -5326,21 +6065,16 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.api-sidebar-search > .el-icon {
-  position: absolute;
-  top: 30px;
-  left: 30px;
-  z-index: 2;
-  color: var(--app-text-subtle);
-}
-
 .api-sidebar-search :deep(.el-input__wrapper) {
   height: 38px;
   min-height: 38px;
-  padding-left: 34px;
   border-radius: var(--app-radius-md);
   background: var(--app-bg-page);
   box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-sidebar-search :deep(.el-input__prefix) {
+  color: var(--app-text-subtle);
 }
 
 .api-directory-title {
@@ -5514,7 +6248,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--app-text-primary);
+  color: #374151;
   font-size: 14px;
   line-height: 21px;
 }
@@ -5753,8 +6487,10 @@ onBeforeUnmount(() => {
 }
 
 .api-method-select :deep(.el-select__wrapper) {
+  min-height: 38px;
   padding: 0 10px;
   border-right: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
   background: #f9fafb;
   box-shadow: none;
 }
@@ -5783,14 +6519,29 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
+.api-method-select.method-get :deep(.el-select__wrapper) {
+  border-color: #86efac;
+  background: #dcfce7;
+}
+
 .api-method-select.method-post :deep(.el-select__selected-item),
 .api-method-select.method-post :deep(.el-select__placeholder) {
   color: #ea580c;
 }
 
+.api-method-select.method-post :deep(.el-select__wrapper) {
+  border-color: #fdba74;
+  background: #ffedd5;
+}
+
 .api-method-select.method-put :deep(.el-select__selected-item),
 .api-method-select.method-put :deep(.el-select__placeholder) {
   color: #2563eb;
+}
+
+.api-method-select.method-put :deep(.el-select__wrapper) {
+  border-color: #93c5fd;
+  background: #dbeafe;
 }
 
 .api-method-select.method-patch :deep(.el-select__selected-item),
@@ -5800,9 +6551,20 @@ onBeforeUnmount(() => {
   color: #7c3aed;
 }
 
+.api-method-select.method-patch :deep(.el-select__wrapper),
+.api-method-select.method-options :deep(.el-select__wrapper) {
+  border-color: #c4b5fd;
+  background: #ede9fe;
+}
+
 .api-method-select.method-trace :deep(.el-select__selected-item),
 .api-method-select.method-trace :deep(.el-select__placeholder) {
   color: #6b7280;
+}
+
+.api-method-select.method-trace :deep(.el-select__wrapper) {
+  border-color: #d1d5db;
+  background: #f3f4f6;
 }
 
 .api-method-select.method-head :deep(.el-select__selected-item),
@@ -5810,9 +6572,25 @@ onBeforeUnmount(() => {
   color: #15803d;
 }
 
+.api-method-select.method-head :deep(.el-select__wrapper) {
+  border-color: #86efac;
+  background: #dcfce7;
+}
+
 .api-method-select.method-delete :deep(.el-select__selected-item),
 .api-method-select.method-delete :deep(.el-select__placeholder) {
   color: #dc2626;
+}
+
+.api-method-select.method-delete :deep(.el-select__wrapper) {
+  border-color: #fca5a5;
+  background: #fee2e2;
+}
+
+:global(.api-method-popper .el-select-dropdown__item) {
+  height: 34px;
+  font-weight: 600;
+  line-height: 34px;
 }
 
 :global(.api-method-popper .method-get) {
@@ -5851,6 +6629,14 @@ onBeforeUnmount(() => {
 .api-url-compose :deep(.el-input__wrapper) {
   padding-inline: 14px;
   box-shadow: none;
+}
+
+.api-url-compose :deep(.el-input__inner) {
+  color: #111827;
+}
+
+.api-url-compose :deep(.el-input__inner::placeholder) {
+  color: #9ca3af;
 }
 
 .api-curl-button {
@@ -6048,6 +6834,12 @@ onBeforeUnmount(() => {
 .api-request-body.is-post,
 .api-request-body.is-tests {
   min-height: 360px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.api-request-body.is-settings {
+  min-height: 320px;
   flex: 0 0 auto;
   overflow: visible;
 }
@@ -6638,7 +7430,7 @@ onBeforeUnmount(() => {
 }
 
 .api-settings-panel {
-  grid-template-columns: 148px minmax(0, 1fr);
+  grid-template-columns: 128px minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--app-border);
@@ -6648,19 +7440,19 @@ onBeforeUnmount(() => {
 
 .api-settings-panel > label {
   display: flex;
-  min-height: 63px;
+  min-height: 0;
   align-items: center;
-  padding: 0 18px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--app-border-soft);
-  color: var(--app-text-secondary);
-  font-size: 14px;
+  color: var(--app-text-muted);
+  font-size: 12px;
   font-weight: 500;
 }
 
 .api-settings-panel > .el-input,
 .api-settings-panel > .el-input-number,
 .api-settings-panel > .el-textarea {
-  min-height: 63px;
+  min-height: 0;
   padding: 12px 18px;
   border-bottom: 1px solid var(--app-border-soft);
 }
@@ -6671,7 +7463,7 @@ onBeforeUnmount(() => {
 
 .api-settings-panel > .api-settings-control-cell {
   display: flex;
-  min-height: 63px;
+  min-height: 0;
   align-items: center;
   padding: 12px 18px;
   border-bottom: 1px solid var(--app-border-soft);
@@ -6683,13 +7475,17 @@ onBeforeUnmount(() => {
 
 .api-settings-timeout-number {
   width: 100%;
-  line-height: 34px;
+  line-height: 32px;
 }
 
 .api-settings-timeout-number :deep(.el-input__wrapper) {
-  min-height: 34px;
+  min-height: 32px;
   border-radius: var(--app-radius-md);
   box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-settings-timeout-number :deep(.el-input__inner) {
+  text-align: center;
 }
 
 .api-settings-timeout-number :deep(.el-input__wrapper:hover) {
@@ -6700,23 +7496,69 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
-.api-settings-panel > label:nth-last-of-type(1),
+.api-assertion-form-row :deep(.el-input-number__increase),
+.api-assertion-form-row :deep(.el-input-number__decrease),
+.api-processor-form-grid :deep(.el-input-number__increase),
+.api-processor-form-grid :deep(.el-input-number__decrease),
+.api-processor-form-row :deep(.el-input-number__increase),
+.api-processor-form-row :deep(.el-input-number__decrease) {
+  width: 24px;
+  height: 16px;
+  line-height: 16px;
+  color: var(--app-text-muted);
+  font-size: 10px;
+}
+
+.api-settings-timeout-number :deep(.el-input-number__decrease),
+.api-settings-timeout-number :deep(.el-input-number__increase) {
+  top: 1px;
+  width: 32px;
+  height: 30px;
+  border-color: var(--app-border);
+  background: var(--app-bg-panel);
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 30px;
+}
+
+.api-settings-timeout-number :deep(.el-input-number__decrease) {
+  left: 1px;
+  right: auto;
+  border-radius: 7px 0 0 7px;
+}
+
+.api-settings-timeout-number :deep(.el-input-number__increase) {
+  right: 1px;
+  left: auto;
+  border-radius: 0 7px 7px 0;
+}
+
+.api-settings-timeout-number :deep(.el-input-number__decrease:hover),
+.api-settings-timeout-number :deep(.el-input-number__increase:hover) {
+  background: var(--app-bg-page);
+  color: var(--app-primary);
+}
+
+.api-settings-panel > label:nth-of-type(5) {
+  align-items: flex-start;
+  padding-top: 18px;
+}
+
 .api-settings-panel > .el-textarea {
-  min-height: 126px;
+  min-height: 104px;
 }
 
 .api-settings-footer {
   display: flex;
   grid-column: 1 / -1;
-  min-height: 42px;
-  align-items: center;
-  gap: 18px;
-  padding: 0 18px;
-  border-top: 0;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--app-border-soft);
   background: var(--app-bg-page);
   color: var(--app-text-muted);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .api-auth-grid label,
@@ -6745,12 +7587,6 @@ onBeforeUnmount(() => {
   box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
-.api-settings-panel > label {
-  color: var(--app-text-secondary);
-  font-size: 14px;
-  font-weight: 500;
-}
-
 .api-binary-hint {
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-sm);
@@ -6758,10 +7594,10 @@ onBeforeUnmount(() => {
 
 .api-binary-panel {
   display: block;
-  min-height: 300px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
+  border-radius: var(--app-radius-lg);
   background: #fff;
 }
 
@@ -6829,15 +7665,15 @@ onBeforeUnmount(() => {
 
 .api-binary-selected {
   display: flex;
-  min-height: 58px;
+  min-height: 0;
   min-width: 0;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 10px;
-  padding: 18px;
-  border: 1px dashed var(--app-border-strong);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-page);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--app-text-subtle);
   font-size: 13px;
 }
@@ -7027,32 +7863,8 @@ onBeforeUnmount(() => {
 }
 
 .api-case-drawer-tabs {
-  display: inline-flex;
-  width: fit-content;
-  overflow: hidden;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
-}
-
-.api-case-drawer-tabs button {
-  height: 32px;
-  padding: 0 14px;
-  border: 0;
-  border-right: 1px solid var(--app-border);
-  background: transparent;
-  color: var(--app-text-secondary);
-  cursor: pointer;
-}
-
-.api-case-drawer-tabs button:last-child {
-  border-right: 0;
-}
-
-.api-case-drawer-tabs button.is-active {
-  background: var(--app-primary-soft);
-  color: var(--app-primary);
-  font-weight: 600;
+  display: block;
+  min-width: 0;
 }
 
 .api-case-detail-panel {
@@ -7268,6 +8080,745 @@ onBeforeUnmount(() => {
   background: var(--app-danger-soft);
   color: var(--app-danger);
   font-size: var(--app-font-size-sm);
+}
+
+.case-list-request-body {
+  padding: 0;
+}
+
+.case-list-panel {
+  min-height: 362px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.case-list-panel .editor-actions.left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.case-ai-generate-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #374151;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 30px;
+}
+
+.case-ai-generate-button:hover:not(:disabled) {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+
+.case-ai-generate-button:disabled {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+.case-ai-generate-button .el-icon {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+}
+
+.case-list-panel .empty-hint {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.case-list-table-wrap {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.case-list-table :deep(.el-table__header th) {
+  height: 38px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.case-list-table :deep(.el-table__row td) {
+  height: 42px;
+  color: #374151;
+  font-size: 13px;
+}
+
+.case-list-operation-header,
+.case-list-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.case-list-settings-trigger {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #6b7280;
+}
+
+.case-list-action-button,
+.case-list-more-button,
+.case-drawer-history-detail-button {
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.case-list-more-button {
+  width: 26px;
+  padding: 0;
+}
+
+.case-list-menu-item {
+  height: 32px;
+  font-size: 13px;
+}
+
+.case-list-menu-item.is-danger {
+  color: #dc2626;
+}
+
+.case-list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid #f3f4f6;
+  background: #fff;
+}
+
+.case-list-pagination-summary {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+:global(.api-case-drawer-modal) {
+  background: rgba(15, 23, 42, 0.28);
+}
+
+.api-case-detail-drawer :deep(.el-drawer) {
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  background: #fff;
+  border-left: 1px solid #e5e7eb;
+  border-radius: 16px 0 0 16px;
+  box-shadow: -24px 0 56px rgba(15, 23, 42, 0.16);
+}
+
+.api-case-detail-drawer :deep(.el-drawer__body) {
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.api-case-drawer-shell {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+}
+
+.api-case-drawer-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 24px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fff;
+}
+
+.api-case-drawer-title {
+  overflow: hidden;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-case-drawer-subtitle {
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-case-drawer-close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.api-case-drawer-close:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.api-case-drawer-close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.api-case-drawer-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding: 20px 24px 24px;
+}
+
+.api-case-drawer-summary-card {
+  padding: 0;
+}
+
+.api-case-drawer-summary-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.case-drawer-method-tag {
+  display: inline-flex;
+  min-width: 52px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.case-drawer-method-tag.request-method-get,
+.case-drawer-method-tag.request-method-head {
+  color: #15803d;
+}
+
+.case-drawer-method-tag.request-method-post {
+  color: #ea580c;
+}
+
+.case-drawer-method-tag.request-method-put {
+  color: #2563eb;
+}
+
+.case-drawer-method-tag.request-method-delete {
+  color: #dc2626;
+}
+
+.case-drawer-method-tag.request-method-patch,
+.case-drawer-method-tag.request-method-options {
+  color: #7c3aed;
+}
+
+.case-drawer-method-tag.request-method-trace {
+  color: #6b7280;
+}
+
+.api-case-drawer-summary-path {
+  min-width: 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 20px;
+  word-break: break-all;
+}
+
+.case-drawer-history-panel {
+  display: grid;
+  gap: 12px;
+  min-height: 420px;
+}
+
+.ms-like-top-tabs,
+.ms-like-response-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 40px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.ms-like-top-tabs::-webkit-scrollbar,
+.ms-like-response-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ms-like-top-tab {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.ms-like-top-tab:hover {
+  color: #111827;
+}
+
+.ms-like-top-tab.active {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.ms-like-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ms-like-response-shell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.ms-like-response-header {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 0;
+}
+
+.ms-like-response-title {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ms-like-response-metrics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.ms-like-response-metric,
+.ms-like-result-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ms-like-result-pill.is-success,
+.ms-like-result-pill.is-passed,
+.ms-like-response-metric.is-success {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.ms-like-result-pill.is-failed,
+.ms-like-response-metric.is-danger {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.ms-like-response-metric.is-warning {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.ms-like-response-body {
+  min-width: 0;
+  padding: 10px 0 12px;
+}
+
+.ms-like-response-empty {
+  padding: 18px 0 20px;
+}
+
+.ms-like-response-empty-card {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 116px;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ms-like-response-empty-window {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 58px;
+  height: 36px;
+  padding: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.ms-like-response-empty-window span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #9ca3af;
+}
+
+.ms-like-response-empty-text {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.ms-like-response-empty-text span {
+  color: #2563eb;
+  font-weight: 600;
+}
+
+:global(.api-case-detail-drawer .ms-like-top-tabs),
+:global(.api-case-detail-drawer .ms-like-response-tabs) {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 40px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+:global(.api-case-detail-drawer .ms-like-top-tabs::-webkit-scrollbar),
+:global(.api-case-detail-drawer .ms-like-response-tabs::-webkit-scrollbar) {
+  display: none;
+}
+
+:global(.api-case-detail-drawer .ms-like-top-tab) {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+:global(.api-case-detail-drawer .ms-like-top-tab:hover) {
+  color: #111827;
+}
+
+:global(.api-case-detail-drawer .ms-like-top-tab.active) {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+:global(.api-case-detail-drawer .ms-like-tab-badge) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-shell) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-header) {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-title) {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-metrics) {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-metric),
+:global(.api-case-detail-drawer .ms-like-result-pill) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.api-case-detail-drawer .ms-like-result-pill.is-success),
+:global(.api-case-detail-drawer .ms-like-result-pill.is-passed),
+:global(.api-case-detail-drawer .ms-like-response-metric.is-success) {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+:global(.api-case-detail-drawer .ms-like-result-pill.is-failed),
+:global(.api-case-detail-drawer .ms-like-response-metric.is-danger) {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+:global(.api-case-detail-drawer .ms-like-response-body) {
+  min-width: 0;
+  padding: 10px 0 12px;
+}
+
+.api-case-readonly-body {
+  padding: 0;
+}
+
+.api-case-readonly-body .api-param-table {
+  margin: 0;
+}
+
+.api-case-readonly-body .api-param-table.is-readonly .api-param-row {
+  cursor: default;
+}
+
+.api-case-readonly-body .api-param-table.is-readonly :deep(.el-input__wrapper),
+.api-case-readonly-body .api-param-table.is-readonly :deep(.el-select__wrapper) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #e5e7eb;
+}
+
+.api-case-readonly-body .api-body-chip:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.api-case-readonly-body .api-body-chip.is-active:disabled {
+  color: #2563eb;
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.api-case-code-section {
+  min-height: 260px;
+}
+
+.case-drawer-history-table {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.case-drawer-history-table :deep(.el-table__header th) {
+  height: 38px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.case-drawer-history-table :deep(.el-table__row td) {
+  height: 42px;
+  font-size: 13px;
+}
+
+.case-drawer-history-result {
+  display: inline-flex;
+  min-width: 44px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.case-drawer-history-result.is-passed {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.case-drawer-history-result.is-failed {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.case-drawer-history-result.is-neutral {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.case-drawer-history-detail-shell,
+.case-drawer-response-shell {
+  min-height: 260px;
+}
+
+.case-drawer-history-section,
+.case-drawer-history-step {
+  display: grid;
+  gap: 10px;
+}
+
+.case-drawer-history-meta,
+.case-drawer-history-request-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.case-drawer-history-request-summary {
+  color: #374151;
+  font-size: 13px;
+}
+
+.case-drawer-history-request-summary > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.response-error-inline {
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.case-drawer-history-section-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.case-drawer-history-table-empty {
+  padding: 28px 0;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .api-ai-case-drawer :deep(.el-drawer__header) {
@@ -7719,8 +9270,8 @@ onBeforeUnmount(() => {
 .api-assertion-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 0;
+  padding: 0;
   overflow-x: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
@@ -7729,16 +9280,25 @@ onBeforeUnmount(() => {
 }
 
 .api-assertion-batch-link {
-  width: fit-content;
-  margin-top: auto;
-  padding: 6px 0;
-  border: 0;
-  background: transparent;
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
-  font-weight: 700;
-  text-align: left;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.api-assertion-batch-link:hover {
+  border-color: var(--app-primary);
+  background: #eff6ff;
+  color: var(--app-primary-hover);
 }
 
 .api-assertion-empty {
@@ -7751,6 +9311,10 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 
+.api-assertion-list > .api-assertion-empty {
+  margin: 8px;
+}
+
 .api-assertion-empty--inline {
   min-height: 100%;
 }
@@ -7761,7 +9325,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  width: 100%;
+  width: calc(100% - 16px);
+  margin: 0 8px 6px;
   padding: 8px 10px;
   border: 1px solid transparent;
   border-radius: var(--app-radius-md);
@@ -7769,6 +9334,7 @@ onBeforeUnmount(() => {
   color: var(--app-text-primary);
   text-align: left;
   cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .api-assertion-list-item:hover {
@@ -7783,20 +9349,19 @@ onBeforeUnmount(() => {
 .api-assertion-list-item__main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   font-size: var(--app-font-size-sm);
   font-weight: 500;
 }
 
 .api-assertion-list-copy {
-  display: grid;
   min-width: 0;
-  gap: 2px;
 }
 
 .api-assertion-list-title,
 .api-assertion-list-meta {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7806,18 +9371,41 @@ onBeforeUnmount(() => {
   color: var(--app-text-primary);
   font-size: 13px;
   font-weight: 500;
+  line-height: 18px;
 }
 
 .api-assertion-list-meta {
   color: var(--app-text-muted);
   font-size: 12px;
+  line-height: 16px;
 }
 
 .api-assertion-list-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
+}
+
+.api-assertion-ghost-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.api-assertion-ghost-action:hover:not(:disabled) {
+  color: var(--app-text-primary);
+}
+
+.api-assertion-ghost-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .api-assertion-detail {
@@ -7871,7 +9459,9 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0;
 }
 
 .api-assertion-form-grid {
@@ -7949,7 +9539,7 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -7960,7 +9550,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   overflow-y: hidden;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
 }
 
@@ -7969,12 +9559,16 @@ onBeforeUnmount(() => {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
+  min-height: 42px;
   padding: 6px 10px;
   border: 0;
   border-bottom: 1px solid var(--app-border-soft);
   border-radius: 0;
   background: var(--app-bg-panel);
+}
+
+.api-assertion-item-row:hover {
+  background: var(--app-bg-page);
 }
 
 .api-assertion-item-row:last-child {
@@ -7983,12 +9577,12 @@ onBeforeUnmount(() => {
 
 .api-assertion-item-row.is-header {
   min-width: 720px;
-  grid-template-columns: 48px minmax(120px, 1fr) 132px minmax(120px, 1fr) repeat(2, auto);
+  grid-template-columns: auto minmax(160px, 1fr) 170px minmax(160px, 1fr) auto auto;
 }
 
 .api-assertion-item-row.is-body {
   min-width: 820px;
-  grid-template-columns: 48px minmax(180px, 1.4fr) 132px minmax(120px, 1fr) repeat(3, auto);
+  grid-template-columns: auto minmax(200px, 1.3fr) 170px minmax(160px, 1fr) auto auto auto;
 }
 
 .api-fast-extraction-suffix-button {
@@ -8111,10 +9705,14 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-start;
-  margin: -8px -8px 0;
+  gap: 8px;
   padding: 0 12px;
   border-bottom: 1px solid var(--app-border-soft);
   background: var(--app-bg-panel);
+}
+
+.api-assertion-toolbar + .api-assertion-list-item {
+  margin-top: 8px;
 }
 
 .api-processor-panel {
@@ -8219,13 +9817,12 @@ onBeforeUnmount(() => {
 }
 
 .api-processor-list-copy {
-  display: grid;
   min-width: 0;
-  gap: 2px;
 }
 
 .api-processor-list-title,
 .api-processor-list-meta {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8235,6 +9832,7 @@ onBeforeUnmount(() => {
   color: var(--app-text-primary);
   font-size: 13px;
   font-weight: 500;
+  line-height: 18px;
 }
 
 .api-processor-list-meta,
@@ -8243,6 +9841,7 @@ onBeforeUnmount(() => {
 .api-processor-form-grid span {
   color: var(--app-text-muted);
   font-size: 12px;
+  line-height: 16px;
 }
 
 .api-processor-list-actions,
@@ -8261,8 +9860,7 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-.api-processor-list-actions :deep(.el-button),
-.api-assertion-list-actions :deep(.el-button) {
+.api-processor-list-actions :deep(.el-button) {
   width: 24px;
   height: 24px;
   min-height: 24px;
@@ -8270,14 +9868,12 @@ onBeforeUnmount(() => {
   color: var(--app-text-muted);
 }
 
-.api-processor-list-actions :deep(.el-button:hover),
-.api-assertion-list-actions :deep(.el-button:hover) {
+.api-processor-list-actions :deep(.el-button:hover) {
   color: var(--app-primary);
   background: transparent;
 }
 
-.api-processor-list-actions :deep(.el-button.is-disabled),
-.api-assertion-list-actions :deep(.el-button.is-disabled) {
+.api-processor-list-actions :deep(.el-button.is-disabled) {
   color: var(--app-text-subtle);
   background: transparent;
 }
@@ -8289,7 +9885,9 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--app-primary);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0;
 }
 
 .api-processor-editor-actions button,
@@ -8342,7 +9940,6 @@ onBeforeUnmount(() => {
 .api-processor-detail-fields :deep(.el-input__wrapper),
 .api-processor-form-grid :deep(.el-input__wrapper),
 .api-processor-form-grid :deep(.el-select__wrapper),
-.api-processor-form-grid :deep(.el-input-number),
 .api-processor-extract-row :deep(.el-input__wrapper),
 .api-processor-extract-row :deep(.el-select__wrapper),
 .api-sql-extract-table__row :deep(.el-input__wrapper) {
@@ -8370,7 +9967,7 @@ onBeforeUnmount(() => {
 
 .api-processor-form-grid :deep(.el-input-number .el-input__wrapper) {
   min-height: 32px;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
 }
 
 .api-processor-language-tag {
@@ -8463,38 +10060,69 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
   cursor: pointer;
   font-size: var(--app-font-size-xs);
-  font-weight: 700;
+  font-weight: 500;
   white-space: nowrap;
 }
 
 .api-processor-extract-scroll {
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #d7dbe3 transparent;
 }
 
-.api-processor-extract-grid,
-.api-processor-extract-row {
-  min-width: 980px;
+.api-processor-extract-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.api-processor-extract-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.api-processor-extract-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: #d7dbe3;
+}
+
+.api-processor-extract-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #d7dbe3;
+}
+
+.api-processor-extract-grid {
+  width: max-content;
+  min-width: 100%;
+  overflow: visible;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
 }
 
 .api-processor-extract-header,
 .api-processor-extract-row {
   display: grid;
-  grid-template-columns: 140px 140px 116px 118px 118px minmax(220px, 1fr) 86px;
-  align-items: center;
-  gap: 10px;
+  grid-template-columns: 150px 150px 130px 110px 96px 220px 56px;
+  align-items: start;
+  gap: 8px;
+  padding: 8px 12px;
 }
 
 .api-processor-extract-header {
-  min-height: 28px;
+  min-height: 40px;
+  background: var(--app-bg-page);
   color: var(--app-text-muted);
   font-size: 12px;
   font-weight: 500;
 }
 
 .api-processor-extract-row {
-  min-height: 34px;
-  margin-top: 8px;
+  min-height: 48px;
+  border-top: 1px solid var(--app-border-soft);
+}
+
+.api-processor-extract-row:hover {
+  background: var(--app-bg-page);
 }
 
 .api-processor-extract-row .api-row-remove {
@@ -8504,8 +10132,11 @@ onBeforeUnmount(() => {
 .api-processor-extract-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  justify-content: center;
+  gap: 2px;
+  min-width: 56px;
+  min-height: 32px;
+  white-space: nowrap;
 }
 
 .api-processor-extract-more {
@@ -8722,6 +10353,28 @@ onBeforeUnmount(() => {
   line-height: 16px;
 }
 
+.api-response-result-pill {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.api-response-result-pill.is-success {
+  background: var(--app-success-soft);
+  color: var(--app-success);
+}
+
+.api-response-result-pill.is-failed {
+  background: var(--app-danger-soft);
+  color: var(--app-danger);
+}
+
 .api-response-case-button {
   height: 28px;
   padding: 0 10px;
@@ -8828,55 +10481,16 @@ onBeforeUnmount(() => {
 
 .api-response-code {
   display: flex;
-  min-height: 326px;
+  min-height: 0;
   flex: 0 0 auto;
   flex-direction: column;
   overflow: visible;
   margin: 12px;
-  padding: 12px;
-  border: 1px solid #e5e6eb;
-  border-radius: 4px;
-  background: #fff;
-  color: var(--app-text-primary);
-  font-family: Consolas, Monaco, monospace;
-  font-size: 14px;
-  line-height: 19px;
 }
 
-.api-response-code__line {
-  display: grid;
-  min-height: 19px;
-  grid-template-columns: 32px minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
-  white-space: pre-wrap;
-}
-
-.api-response-code__number {
-  color: var(--app-text-subtle);
-  text-align: right;
-  user-select: none;
-}
-
-.api-response-code__line code {
-  min-width: 0;
-  color: var(--app-text-primary);
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.api-response-error-banner {
-  margin: 10px 16px 0;
-  padding: 9px 12px;
-  border: 1px solid #fecaca;
-  border-radius: var(--app-radius-sm);
-  background: var(--app-danger-soft);
-  color: var(--app-danger);
-  font-size: var(--app-font-size-sm);
-  line-height: 20px;
+.api-response-code :deep(.api-code-editor) {
+  width: 100%;
+  min-height: 0;
 }
 
 .api-import-dialog {
@@ -9607,5 +11221,154 @@ onBeforeUnmount(() => {
   .api-interface-shell {
     grid-template-columns: 260px minmax(0, 1fr);
   }
+}
+</style>
+
+<style>
+.el-drawer.api-case-detail-drawer {
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border-left: 1px solid #e5e7eb;
+  background: #fff;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+}
+
+.api-case-detail-drawer .el-drawer__body {
+  padding: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.api-case-detail-drawer .el-button,
+.api-case-detail-drawer .el-input__inner {
+  font-family: inherit;
+}
+
+.api-case-detail-drawer .ms-like-top-tabs,
+.api-case-detail-drawer .ms-like-response-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 40px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fff;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.api-case-detail-drawer .ms-like-top-tabs::-webkit-scrollbar,
+.api-case-detail-drawer .ms-like-response-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.api-case-detail-drawer .ms-like-top-tab {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.api-case-detail-drawer .ms-like-top-tab:hover {
+  color: #111827;
+}
+
+.api-case-detail-drawer .ms-like-top-tab.active {
+  border-bottom-color: #2563eb;
+  color: #2563eb;
+  font-weight: 600;
+}
+
+.api-case-detail-drawer .ms-like-tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.api-case-detail-drawer .ms-like-response-shell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-top: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.api-case-detail-drawer .ms-like-response-header {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.api-case-detail-drawer .ms-like-response-title {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.api-case-detail-drawer .ms-like-response-metrics {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.api-case-detail-drawer .ms-like-response-metric,
+.api-case-detail-drawer .ms-like-result-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 48px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-case-detail-drawer .ms-like-result-pill.is-success,
+.api-case-detail-drawer .ms-like-result-pill.is-passed,
+.api-case-detail-drawer .ms-like-response-metric.is-success {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.api-case-detail-drawer .ms-like-result-pill.is-failed,
+.api-case-detail-drawer .ms-like-response-metric.is-danger {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.api-case-detail-drawer .ms-like-response-body {
+  min-width: 0;
+  padding: 10px 0 12px;
 }
 </style>

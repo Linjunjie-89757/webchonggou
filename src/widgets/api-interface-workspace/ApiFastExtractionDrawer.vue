@@ -184,7 +184,7 @@ watch(
 </script>
 
 <template>
-  <el-drawer v-model="drawerVisible" title="快速提取" size="720px" append-to-body destroy-on-close>
+  <el-drawer v-model="drawerVisible" title="快速提取" size="720px" class="api-fast-extraction-drawer-shell" append-to-body destroy-on-close>
     <div class="fast-extraction-drawer">
       <div v-if="expressionForm.extractType === 'REGEX'" class="fast-extraction-preview">
         <ApiCodeEditor :model-value="props.response || ''" language="text" :read-only="true" :show-format-button="false" height="336px" />
@@ -246,6 +246,16 @@ watch(
 </template>
 
 <style scoped>
+:global(.api-fast-extraction-drawer-shell) {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+}
+
+:global(.api-fast-extraction-drawer-shell .el-button),
+:global(.api-fast-extraction-drawer-shell .el-input__inner),
+:global(.api-fast-extraction-drawer-shell .el-radio-button__inner) {
+  font-family: inherit;
+}
+
 .fast-extraction-drawer {
   display: flex;
   flex-direction: column;

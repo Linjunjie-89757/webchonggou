@@ -1,9 +1,9 @@
 <template>
-  <div class="api-code-editor" :style="{ height }">
+  <div class="api-code-editor" :class="{ 'is-fit-content': fitContent }" :style="editorShellStyle">
     <div v-if="showToolbar" class="api-code-editor__toolbar">
       <button type="button" class="api-code-editor__format" @click="formatDocument">格式化</button>
     </div>
-    <div ref="containerRef" class="api-code-editor__body"></div>
+    <div ref="containerRef" class="api-code-editor__body" :style="editorBodyStyle"></div>
   </div>
 </template>
 
@@ -17,7 +17,11 @@ import 'monaco-editor/esm/vs/basic-languages/xml/xml.contribution'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 
-type ApiCodeLanguage = 'javascript' | 'json' | 'sql' | 'text' | 'xml'
+type ApiCodeLanguage = 'api-console' | 'javascript' | 'json' | 'sql' | 'text' | 'xml'
+
+const API_CONSOLE_LANGUAGE = 'api-console'
+const API_CODE_THEME = 'api-code-light'
+let apiConsoleLanguageReady = false
 
 const props = withDefaults(defineProps<{
   modelValue?: string | null
@@ -26,12 +30,16 @@ const props = withDefaults(defineProps<{
   readOnly?: boolean
   showFormatButton?: boolean
   placeholder?: string
+  fitContent?: boolean
+  maxFitContentHeight?: number
 }>(), {
   language: 'javascript',
   height: '260px',
   readOnly: false,
   showFormatButton: true,
   placeholder: '',
+  fitContent: false,
+  maxFitContentHeight: 1000,
 })
 
 const emit = defineEmits<{
@@ -40,13 +48,55 @@ const emit = defineEmits<{
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
+const bodyHeight = ref(props.height)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 let suppressModelSync = false
 
 const showToolbar = computed(() => props.showFormatButton && !props.readOnly)
+const editorShellStyle = computed(() => (props.fitContent ? { height: 'auto' } : { height: props.height }))
+const editorBodyStyle = computed(() => (props.fitContent ? { height: bodyHeight.value } : {}))
 
 function mapLanguage(language: ApiCodeLanguage) {
   return language === 'text' ? 'plaintext' : language
+}
+
+function ensureApiConsoleLanguage() {
+  if (apiConsoleLanguageReady) {
+    return
+  }
+
+  if (!monaco.languages.getLanguages().some(item => item.id === API_CONSOLE_LANGUAGE)) {
+    monaco.languages.register({ id: API_CONSOLE_LANGUAGE })
+  }
+
+  monaco.languages.setMonarchTokensProvider(API_CONSOLE_LANGUAGE, {
+    tokenizer: {
+      root: [
+        [/^\[Error\].*$/, 'api-console-error'],
+        [/^\[(?:Processor|Assertion|Extraction)\s+\d+\].*\bFAIL\b.*$/, 'api-console-fail'],
+        [/^\[(?:Processor|Assertion|Extraction)\s+\d+\].*\b(?:PASS|OK)\b.*$/, 'api-console-pass'],
+        [/\b(?:Error|FAIL)\b/, 'api-console-fail'],
+        [/\b(?:PASS|OK)\b/, 'api-console-pass'],
+        [/\b(?:expected|actual|outputVariables):/, 'api-console-key'],
+        [/\b\d+(?:\.\d+)?(?:\s*(?:ms|B|KB|MB))?\b/, 'api-console-number'],
+      ],
+    },
+  })
+
+  monaco.editor.defineTheme(API_CODE_THEME, {
+    base: 'vs',
+    inherit: true,
+    rules: [
+      { token: 'api-console-error', foreground: 'dc2626', fontStyle: 'bold' },
+      { token: 'api-console-fail', foreground: 'dc2626', fontStyle: 'bold' },
+      { token: 'api-console-pass', foreground: '16a34a', fontStyle: 'bold' },
+      { token: 'api-console-key', foreground: '2563eb' },
+      { token: 'api-console-number', foreground: '9333ea' },
+    ],
+    colors: {},
+  })
+
+  apiConsoleLanguageReady = true
 }
 
 function ensureMonacoWorkers() {
@@ -73,15 +123,25 @@ async function formatDocument() {
   await editor.getAction('editor.action.formatDocument')?.run()
 }
 
+function syncEditorHeight() {
+  if (!props.fitContent || !editor) {
+    return
+  }
+  const nextHeight = Math.max(120, Math.min(editor.getContentHeight(), props.maxFitContentHeight))
+  bodyHeight.value = `${nextHeight}px`
+  editor.layout()
+}
+
 function createEditor() {
   if (!containerRef.value) {
     return
   }
 
+  bodyHeight.value = props.height
   editor = monaco.editor.create(containerRef.value, {
     value: props.modelValue ?? '',
     language: mapLanguage(props.language),
-    theme: 'vs',
+    theme: API_CODE_THEME,
     readOnly: props.readOnly,
     automaticLayout: true,
     minimap: { enabled: false },
@@ -106,6 +166,12 @@ function createEditor() {
     ariaLabel: props.placeholder || 'code editor',
   })
   editor.getModel()?.setEOL(monaco.editor.EndOfLineSequence.LF)
+  if (props.fitContent) {
+    editor.onDidContentSizeChange(() => {
+      syncEditorHeight()
+    })
+    syncEditorHeight()
+  }
   editor.onDidChangeModelContent(() => {
     if (!editor || suppressModelSync) {
       return
@@ -126,6 +192,7 @@ watch(
     suppressModelSync = true
     editor.setValue(nextValue)
     suppressModelSync = false
+    syncEditorHeight()
   },
 )
 
@@ -135,6 +202,7 @@ watch(
     const model = editor?.getModel()
     if (model) {
       monaco.editor.setModelLanguage(model, mapLanguage(language))
+      syncEditorHeight()
     }
   },
 )
@@ -146,11 +214,22 @@ watch(
       readOnly,
       contextmenu: !readOnly,
     })
+    syncEditorHeight()
+  },
+)
+
+watch(
+  () => props.height,
+  (height) => {
+    if (!props.fitContent) {
+      bodyHeight.value = height
+    }
   },
 )
 
 onMounted(() => {
   ensureMonacoWorkers()
+  ensureApiConsoleLanguage()
   createEditor()
 })
 
@@ -171,6 +250,10 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: #fff;
   overflow: hidden;
+}
+
+.api-code-editor.is-fit-content {
+  min-height: 0;
 }
 
 .api-code-editor__toolbar {
