@@ -89,6 +89,9 @@ function normalizeRequestConfig(config: ApiDefinitionDetail['requestConfig']): A
     body: {
       type: config?.body?.type || 'NONE',
       rawText: config?.body?.rawText || null,
+      jsonText: config?.body?.jsonText || null,
+      xmlText: config?.body?.xmlText || null,
+      plainText: config?.body?.plainText || null,
       formItems: Array.isArray(config?.body?.formItems) ? config.body.formItems : [],
       contentType: config?.body?.contentType || null,
       fileName: config?.body?.fileName || null,

@@ -51,6 +51,9 @@ export interface ApiAuthConfigInput {
 export interface ApiRequestBodyInput {
   type: string
   rawText?: string | null
+  jsonText?: string | null
+  xmlText?: string | null
+  plainText?: string | null
   formItems: ApiKeyValueInput[]
   contentType?: string | null
   fileName?: string | null

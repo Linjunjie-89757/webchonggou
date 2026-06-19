@@ -123,6 +123,13 @@ watch(
         </div>
       </div>
 
+      <div class="api-case-dialog__carry-summary">
+        <span>请求配置已带入</span>
+        <span>断言 {{ form.assertions.length }} 项</span>
+        <span>前置处理 {{ form.preProcessors.length }} 项</span>
+        <span>后置处理 {{ form.postProcessors.length }} 项</span>
+      </div>
+
       <div class="api-case-dialog__field">
         <span>用例名称 *</span>
         <el-input v-model="form.name" :disabled="loadingDetail" placeholder="请输入用例名称" />
@@ -199,6 +206,22 @@ watch(
 
 .api-case-dialog__grid.is-request {
   grid-template-columns: 160px minmax(0, 1fr);
+}
+
+.api-case-dialog__carry-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+}
+
+.api-case-dialog__carry-summary span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .api-case-dialog__field {

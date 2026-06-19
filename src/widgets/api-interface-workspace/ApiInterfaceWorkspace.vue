@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Close,
   Fold,
+  MagicStick,
   MoreFilled,
   Plus,
   Search,
@@ -38,6 +39,7 @@ import {
   type ApiDefinitionItem,
   type ApiDefinitionModuleItem,
   type ApiKeyValueInput,
+  type ApiRequestBodyInput,
   type ApiRequestConfigInput,
   type ApiRunHistoryDetail,
   type ApiRunHistoryItem,
@@ -51,6 +53,8 @@ import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import ApiCodeEditor from './ApiCodeEditor.vue'
+import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
+import type { FastExtractionConfig, FastExtractionMode, FastExtractionResponseFormat } from './fastExtraction'
 
 type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases'
 type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
@@ -65,8 +69,14 @@ type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
+type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
+type ApiBodyLanguage = 'json' | 'xml' | 'text'
+type FastExtractionTarget =
+  | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
+  | { kind: 'processorExtract', processor: ApiProcessorConfig, item: ApiProcessorExtractItem }
 
 const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
+const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -168,8 +178,13 @@ interface ApiProcessorExtractItem {
   description?: string | null
   variableType?: string | null
   sourceType?: string | null
+  extractScope?: string | null
   extractType?: string | null
   expression?: string | null
+  expressionMatchingRule?: string | null
+  resultMatchingRule?: string | null
+  resultMatchingRuleNum?: number | null
+  responseFormat?: string | null
 }
 
 interface ApiSoftPromptOptions {
@@ -307,6 +322,9 @@ const aiCaseResultType = ref('')
 const aiCaseSelectedResultIds = ref<string[]>([])
 const aiCaseDetailVisible = ref(false)
 const aiCaseDetailResult = ref<ApiAiGeneratedCaseResult | null>(null)
+const fastExtractionVisible = ref(false)
+const fastExtractionTarget = ref<FastExtractionTarget | null>(null)
+const processorExtractMoreSettingsVisibleKey = ref<string | null>(null)
 const responsePanelHeight = ref(360)
 const responsePanelMinHeight = 300
 const responsePanelMaxHeight = 520
@@ -470,6 +488,12 @@ const assertionConditionOptions = [
   { label: '大于等于', value: 'GT_OR_EQUALS' },
   { label: '小于', value: 'LT' },
   { label: '小于等于', value: 'LT_OR_EQUALS' },
+  { label: '长度等于', value: 'LENGTH_EQUALS' },
+  { label: '长度不等于', value: 'LENGTH_NOT_EQUALS' },
+  { label: '长度大于', value: 'LENGTH_GT' },
+  { label: '长度大于等于', value: 'LENGTH_GT_OR_EQUALS' },
+  { label: '长度小于', value: 'LENGTH_LT' },
+  { label: '长度小于等于', value: 'LENGTH_LT_OR_EQUALS' },
   { label: '不校验', value: 'UNCHECKED' },
 ]
 
@@ -485,6 +509,8 @@ const extractorExpressionTypeOptions = [
   { label: 'Regex', value: 'REGEX' },
   { label: 'Header name', value: 'HEADER' },
 ]
+
+const processorExtractTypeOptions = extractorExpressionTypeOptions.filter(item => item.value !== 'HEADER')
 
 function assertionConditionLabel(value?: string | null) {
   return assertionConditionOptions.find(item => item.value === value)?.label || value || '-'
@@ -550,8 +576,20 @@ function processorTypeOptionsFor(stage: 'pre' | 'post') {
 
 const processorExtractVariableTypeOptions = [
   { label: '临时变量', value: 'TEMPORARY' },
-  { label: '全局变量', value: 'GLOBAL' },
   { label: '环境变量', value: 'ENVIRONMENT' },
+]
+
+const processorRegexExtractScopeOptions = [
+  { label: '响应体', value: 'BODY' },
+  { label: '响应头', value: 'RESPONSE_HEADERS' },
+  { label: '请求头', value: 'REQUEST_HEADERS' },
+  { label: '状态码', value: 'RESPONSE_CODE' },
+  { label: '响应消息', value: 'RESPONSE_MESSAGE' },
+  { label: 'URL', value: 'URL' },
+]
+
+const processorBodyExtractScopeOptions = [
+  { label: '响应体', value: 'BODY' },
 ]
 
 const contentTabs = computed<Array<{ label: string; value: RequestContentTab; count?: number }>>(() => [
@@ -568,6 +606,15 @@ const contentTabs = computed<Array<{ label: string; value: RequestContentTab; co
 
 const activeEditor = computed(() => tabs.value.find(item => item.key === activeEditorKey.value) || null)
 const activeDetail = computed(() => activeEditor.value?.detail || null)
+const activeBodyRawText = computed({
+  get: () => activeDetail.value ? getModeBodyText(activeDetail.value.requestConfig.body) : '',
+  set: (value: string) => {
+    if (!activeDetail.value) return
+    setModeBodyText(activeDetail.value.requestConfig.body, value)
+    markDirty()
+  },
+})
+const activeBodyLanguage = computed<ApiBodyLanguage>(() => bodyLanguage(activeDetail.value?.requestConfig.body.type))
 const activeDefinitionCases = computed(() => {
   const id = activeEditor.value?.definitionId
   return id ? cases.value.filter(item => item.definitionId === id) : []
@@ -959,6 +1006,31 @@ const responseSize = computed(() => {
   return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
 })
 const showResponseEmpty = computed(() => !currentStep.value && !activeEditor.value?.runError)
+const latestResponseBody = computed(() => String(currentStep.value?.response?.body || ''))
+const hasLatestResponseBody = computed(() => Boolean(latestResponseBody.value.trim()))
+const fastExtractionTitle = computed(() => (hasLatestResponseBody.value ? '从最近响应快速提取' : '请先发送请求，再使用快速提取'))
+const fastExtractionMode = computed<FastExtractionMode>(() => {
+  const target = fastExtractionTarget.value
+  if (!target) return 'JSON_PATH'
+  if (target.kind === 'assertionBody') return normalizeFastExtractionMode(target.assertion.assertionBodyType || target.assertion.expressionType)
+  return normalizeFastExtractionMode(target.item.extractType)
+})
+const fastExtractionConfig = computed<FastExtractionConfig>(() => {
+  const target = fastExtractionTarget.value
+  if (!target) return { extractType: 'JSON_PATH', expression: '$' }
+  if (target.kind === 'assertionBody') {
+    return {
+      extractType: normalizeFastExtractionMode(target.assertion.assertionBodyType || target.assertion.expressionType),
+      expression: target.item.expression || target.assertion.expression || '',
+      responseFormat: normalizeFastExtractionResponseFormat(activeAssertionBodyGroup(target.assertion).responseFormat),
+    }
+  }
+  return {
+    extractType: normalizeFastExtractionMode(target.item.extractType),
+    expression: target.item.expression || '',
+    responseFormat: 'JSON',
+  }
+})
 const batchAddTitle = computed(() => {
   if (batchAddTarget.value === 'assertion') return '批量添加断言'
   if (batchAddTarget.value === 'extractor') return '批量添加提取器'
@@ -1021,6 +1093,9 @@ function emptyRequestConfig(method = 'GET'): ApiRequestConfigInput {
     body: {
       type: 'NONE',
       rawText: '',
+      jsonText: '',
+      xmlText: '',
+      plainText: '',
       formItems: [emptyKeyValue()],
       contentType: null,
       fileName: null,
@@ -1079,6 +1154,61 @@ function markDirty() {
     activeEditor.value.method = activeEditor.value.detail.requestConfig.method
     activeEditor.value.title = editorTitle(activeEditor.value.detail)
   }
+}
+
+function isRawBodyType(type?: string | null): type is RawBodyType {
+  return rawBodyTypes.includes(type as RawBodyType)
+}
+
+function bodyLanguage(type?: string | null): ApiBodyLanguage {
+  if (type === 'RAW_JSON') return 'json'
+  if (type === 'RAW_XML') return 'xml'
+  return 'text'
+}
+
+function getModeBodyText(body: ApiRequestBodyInput) {
+  if (body.type === 'RAW_JSON') return body.jsonText ?? body.rawText ?? ''
+  if (body.type === 'RAW_XML') return body.xmlText ?? body.rawText ?? ''
+  if (body.type === 'RAW_TEXT') return body.plainText ?? body.rawText ?? ''
+  return body.rawText ?? ''
+}
+
+function setModeBodyText(body: ApiRequestBodyInput, value: string, type = body.type) {
+  if (type === 'RAW_JSON') {
+    body.jsonText = value
+  } else if (type === 'RAW_XML') {
+    body.xmlText = value
+  } else if (type === 'RAW_TEXT') {
+    body.plainText = value
+  }
+  body.rawText = value
+}
+
+function hydrateBodyModeText(body: ApiRequestBodyInput) {
+  const rawText = body.rawText ?? ''
+  body.jsonText = body.type === 'RAW_JSON' ? rawText : (body.jsonText ?? '')
+  body.xmlText = body.type === 'RAW_XML' ? rawText : (body.xmlText ?? '')
+  body.plainText = body.type === 'RAW_TEXT' ? rawText : (body.plainText ?? '')
+}
+
+function syncRequestBodyRawText(requestConfig: ApiRequestConfigInput) {
+  if (isRawBodyType(requestConfig.body.type)) {
+    setModeBodyText(requestConfig.body, getModeBodyText(requestConfig.body), requestConfig.body.type)
+  }
+}
+
+function payloadRequestConfig(detail: ApiDefinitionDetail): ApiRequestConfigInput {
+  syncRequestBodyRawText(detail.requestConfig)
+  const requestConfig = clone({
+    ...detail.requestConfig,
+    method: detail.requestConfig.method || 'GET',
+    path: detail.requestConfig.path || '',
+    timeoutMs: Number(detail.requestConfig.timeoutMs || 10000),
+  })
+  delete requestConfig.body.jsonText
+  delete requestConfig.body.xmlText
+  delete requestConfig.body.plainText
+  return requestConfig
 }
 
 function requestMethodClass(method?: string) {
@@ -1593,33 +1723,52 @@ function testAssertionExpression(assertion: ApiAssertionConfig, item?: ApiAssert
   ElMessage.info('当前表达式类型需要后端执行时验证')
 }
 
-function fillAssertionFromResponse(assertion: ApiAssertionConfig, item?: ApiAssertionItemConfig) {
-  if (!currentStep.value) {
-    ElMessage.info('请先发送请求，再从响应快速提取')
-    return
-  }
-  const bodyText = String(currentStep.value.response?.body || '')
-  try {
-    const body = JSON.parse(bodyText) as Record<string, unknown>
-    const firstKey = ['message', 'code', 'success', 'data'].find(key => key in body)
-    if (!firstKey) {
-      ElMessage.info('最近响应体没有可快速提取的常见字段')
-      return
+function normalizeFastExtractionMode(type?: string | null): FastExtractionMode {
+  if (type === 'X_PATH' || type === 'REGEX') return type
+  return 'JSON_PATH'
+}
+
+function normalizeFastExtractionResponseFormat(format?: string | null): FastExtractionResponseFormat {
+  if (format === 'XML' || format === 'HTML') return format
+  return 'JSON'
+}
+
+function openAssertionFastExtraction(assertion: ApiAssertionConfig, item: ApiAssertionItemConfig) {
+  if (!hasLatestResponseBody.value) return
+  fastExtractionTarget.value = { kind: 'assertionBody', assertion, item }
+  fastExtractionVisible.value = true
+}
+
+function openProcessorFastExtraction(processor: ApiProcessorConfig, item: ApiProcessorExtractItem) {
+  if (!hasLatestResponseBody.value) return
+  fastExtractionTarget.value = { kind: 'processorExtract', processor, item }
+  fastExtractionVisible.value = true
+}
+
+function applyFastExtraction(config: FastExtractionConfig, matchResult: string[]) {
+  const target = fastExtractionTarget.value
+  if (!target) return
+  const expression = config.expression || ''
+  if (target.kind === 'assertionBody') {
+    target.assertion.assertionType = 'RESPONSE_BODY'
+    target.assertion.type = 'RESPONSE_BODY'
+    target.assertion.assertionBodyType = config.extractType || 'JSON_PATH'
+    target.assertion.expressionType = target.assertion.assertionBodyType
+    const group = activeAssertionBodyGroup(target.assertion)
+    if (config.responseFormat) group.responseFormat = config.responseFormat
+    target.item.expression = expression
+    target.assertion.expression = expression
+    if (matchResult[0] !== undefined) {
+      target.item.expectedValue = matchResult[0]
+      target.assertion.expectedValue = matchResult[0]
     }
-    assertion.assertionType = 'RESPONSE_BODY'
-    assertion.type = 'RESPONSE_BODY'
-    assertion.expressionType = 'JSON_PATH'
-    assertion.assertionBodyType = 'JSON_PATH'
-    const target = item || activeAssertionBodyGroup(assertion).assertions[0]
-    target.expression = `$.${firstKey}`
-    target.expectedValue = String(body[firstKey] ?? '')
-    assertion.expression = target.expression
-    assertion.expectedValue = target.expectedValue
-    markDirty()
-    ElMessage.success('已从最近响应填入表达式和期望值')
-  } catch {
-    ElMessage.warning('最近响应体不是可解析的 JSON')
+  } else {
+    target.item.extractType = config.extractType || 'JSON_PATH'
+    target.item.expression = expression
+    syncProcessorScript(target.processor)
   }
+  markDirty()
+  ElMessage.success('已回填快速提取表达式')
 }
 
 function firstJsonAssertionCandidate() {
@@ -1798,10 +1947,85 @@ function createProcessorExtractItem(patch: Partial<ApiProcessorExtractItem> = {}
     description: '',
     variableType: 'TEMPORARY',
     sourceType: 'RESPONSE_BODY',
+    extractScope: 'BODY',
     extractType: 'JSON_PATH',
     expression: '',
+    expressionMatchingRule: 'EXPRESSION',
+    resultMatchingRule: 'RANDOM',
+    resultMatchingRuleNum: 1,
+    responseFormat: 'JSON',
     ...patch,
   }
+}
+
+function processorExtractScopeFromSource(source?: string | null) {
+  if (source === 'RESPONSE_HEADER') return 'RESPONSE_HEADERS'
+  if (source === 'REQUEST_HEADER') return 'REQUEST_HEADERS'
+  if (source === 'STATUS_CODE') return 'RESPONSE_CODE'
+  if (source === 'URL') return 'URL'
+  return 'BODY'
+}
+
+function processorSourceFromExtractScope(scope?: string | null) {
+  if (scope === 'RESPONSE_HEADERS') return 'RESPONSE_HEADER'
+  if (scope === 'REQUEST_HEADERS') return 'REQUEST_HEADER'
+  if (scope === 'RESPONSE_CODE') return 'STATUS_CODE'
+  if (scope === 'URL') return 'URL'
+  return 'RESPONSE_BODY'
+}
+
+function processorExtractScopeOptions(item: ApiProcessorExtractItem) {
+  return item.extractType === 'REGEX' ? processorRegexExtractScopeOptions : processorBodyExtractScopeOptions
+}
+
+function showProcessorExtractRegexSettings(item: ApiProcessorExtractItem) {
+  return item.extractType === 'REGEX'
+}
+
+function showProcessorExtractXPathSettings(item: ApiProcessorExtractItem) {
+  return item.extractType === 'X_PATH'
+}
+
+function showProcessorExtractSpecificIndex(item: ApiProcessorExtractItem) {
+  return (item.resultMatchingRule || 'RANDOM') === 'SPECIFIC'
+}
+
+function normalizeProcessorExtractByType(item: ApiProcessorExtractItem) {
+  const scopeOptions = processorExtractScopeOptions(item)
+  if (!scopeOptions.some(option => option.value === item.extractScope)) {
+    item.extractScope = 'BODY'
+  }
+  item.sourceType = processorSourceFromExtractScope(item.extractScope)
+  if (item.extractType !== 'REGEX') {
+    item.expressionMatchingRule = 'EXPRESSION'
+  }
+  if (item.extractType === 'JSON_PATH') {
+    item.responseFormat = 'JSON'
+  } else if (item.extractType === 'X_PATH') {
+    item.responseFormat = item.responseFormat === 'HTML' ? 'HTML' : 'XML'
+  } else {
+    item.responseFormat = item.responseFormat || 'JSON'
+  }
+}
+
+function processorExtractExpressionPlaceholder(item: ApiProcessorExtractItem) {
+  if (item.extractType === 'X_PATH') return '例如 /response/data/token'
+  if (item.extractType === 'REGEX') return '例如 "token":"([^"]+)"'
+  return '例如 $.data.token'
+}
+
+function handleProcessorExtractTypeChange(processor: ApiProcessorConfig, item: ApiProcessorExtractItem) {
+  normalizeProcessorExtractByType(item)
+  syncProcessorScript(processor)
+}
+
+function handleProcessorExtractScopeChange(processor: ApiProcessorConfig, item: ApiProcessorExtractItem) {
+  item.sourceType = processorSourceFromExtractScope(item.extractScope)
+  syncProcessorScript(processor)
+}
+
+function setProcessorExtractMoreSettingsVisible(processorId: string | undefined, index: number, visible: boolean) {
+  processorExtractMoreSettingsVisibleKey.value = visible && processorId ? `${processorId}-${index}` : null
 }
 
 function normalizeProcessorExtractItem(item: ApiProcessorExtractItem): ApiProcessorExtractItem {
@@ -1812,8 +2036,14 @@ function normalizeProcessorExtractItem(item: ApiProcessorExtractItem): ApiProces
   item.description = item.description ?? ''
   item.variableType = item.variableType || 'TEMPORARY'
   item.sourceType = item.sourceType || 'RESPONSE_BODY'
+  item.extractScope = item.extractScope || processorExtractScopeFromSource(item.sourceType)
   item.extractType = item.extractType || 'JSON_PATH'
   item.expression = item.expression ?? ''
+  item.expressionMatchingRule = item.expressionMatchingRule || 'EXPRESSION'
+  item.resultMatchingRule = item.resultMatchingRule || 'RANDOM'
+  item.resultMatchingRuleNum = item.resultMatchingRuleNum || 1
+  item.responseFormat = item.responseFormat || (item.extractType === 'X_PATH' ? 'XML' : 'JSON')
+  normalizeProcessorExtractByType(item)
   return item
 }
 
@@ -2025,12 +2255,7 @@ function buildPayload(detail: ApiDefinitionDetail): SaveApiDefinitionPayload {
     directoryName: detail.directoryName || null,
     description: detail.description || null,
     tags: Array.isArray(detail.tags) ? detail.tags : [],
-    requestConfig: clone({
-      ...detail.requestConfig,
-      method: detail.requestConfig.method || 'GET',
-      path: detail.requestConfig.path || '',
-      timeoutMs: Number(detail.requestConfig.timeoutMs || 10000),
-    }),
+    requestConfig: payloadRequestConfig(detail),
     assertions: clone(detail.assertions || []),
     extractors: clone(detail.extractors || []),
     preProcessors: clone(detail.preProcessors || []),
@@ -2134,6 +2359,7 @@ async function loadCasesForDefinition(definitionId: number) {
 
 function openNewRequestTab(source?: ApiDefinitionDetail) {
   const detail = source ? clone(source) : createDraftDetail()
+  hydrateBodyModeText(detail.requestConfig.body)
   const key = source?.id ? `definition:${source.id}:${Date.now()}` : `draft:${Date.now()}`
   const tab: EditorTab = {
     key,
@@ -2200,6 +2426,7 @@ async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
 
   try {
     const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, item.id)
+    hydrateBodyModeText(detail.requestConfig.body)
     tab.detail = clone(detail)
     tab.title = editorTitle(detail)
     tab.method = detail.requestConfig.method || detail.method
@@ -2280,6 +2507,7 @@ function setBodyMode(mode: BodyType) {
   if (mode === 'RAW_JSON') activeDetail.value.requestConfig.body.contentType = 'application/json'
   if (mode === 'RAW_XML') activeDetail.value.requestConfig.body.contentType = 'application/xml'
   if (mode === 'RAW_TEXT') activeDetail.value.requestConfig.body.contentType = 'text/plain'
+  syncRequestBodyRawText(activeDetail.value.requestConfig)
   markDirty()
 }
 
@@ -2653,7 +2881,7 @@ function applyCurlToActiveEditor(input: string) {
   }
   if (body) {
     detail.requestConfig.body.type = body.trim().startsWith('<') ? 'RAW_XML' : 'RAW_JSON'
-    detail.requestConfig.body.rawText = body
+    setModeBodyText(detail.requestConfig.body, body, detail.requestConfig.body.type)
     detail.requestConfig.body.contentType = body.trim().startsWith('<') ? 'application/xml' : 'application/json'
   }
   markDirty()
@@ -2696,7 +2924,7 @@ function currentCaseDraftDetail(): ApiDefinitionCaseDetail | null {
     lastRunAt: detail.lastRunAt,
     updatedAt: detail.updatedAt,
     createdAt: null,
-    requestConfig: clone(detail.requestConfig),
+    requestConfig: payloadRequestConfig(detail),
     assertions: clone(detail.assertions || []),
     extractors: clone(detail.extractors || []),
     preProcessors: clone(detail.preProcessors || []),
@@ -3375,8 +3603,9 @@ onBeforeUnmount(() => {
                     </div>
                     <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markDirty" />
                     <div class="api-length-range">
-                      <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="最小" @change="markDirty" />
-                      <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="最大" @change="markDirty" />
+                      <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
+                      <span>至</span>
+                      <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
                     </div>
                     <el-switch v-model="row.encode" size="small" @change="markDirty" />
                     <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
@@ -3446,15 +3675,23 @@ onBeforeUnmount(() => {
                       {{ mode.label }}
                     </button>
                   </div>
-                  <div :class="['api-body-editor', { 'is-empty': activeEditor.detail.requestConfig.body.type === 'NONE' }]">
+                  <div
+                    :class="[
+                      'api-body-editor',
+                      {
+                        'is-empty': activeEditor.detail.requestConfig.body.type === 'NONE',
+                        'is-code': isRawBodyType(activeEditor.detail.requestConfig.body.type),
+                      },
+                    ]"
+                  >
                     <div v-if="activeEditor.detail.requestConfig.body.type === 'NONE'" class="api-empty-body">请求没有 Body</div>
-                    <el-input
-                      v-else-if="['RAW_JSON', 'RAW_XML', 'RAW_TEXT'].includes(activeEditor.detail.requestConfig.body.type)"
-                      v-model="activeEditor.detail.requestConfig.body.rawText"
-                      type="textarea"
-                      resize="none"
+                    <ApiCodeEditor
+                      v-else-if="isRawBodyType(activeEditor.detail.requestConfig.body.type)"
+                      v-model="activeBodyRawText"
+                      :language="activeBodyLanguage"
+                      height="300px"
                       placeholder="请输入请求体"
-                      @input="markDirty"
+                      @change="markDirty"
                     />
                     <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeEditor.detail.requestConfig.body.type)" class="api-param-table is-body-form">
                       <div class="api-param-header">
@@ -3497,8 +3734,9 @@ onBeforeUnmount(() => {
                         </div>
                         <el-input v-else v-model="row.value" placeholder="参数值" @input="markDirty" />
                         <div class="api-length-range">
-                          <el-input-number v-model="row.minLength" :min="0" controls-position="right" placeholder="最小" @change="markDirty" />
-                          <el-input-number v-model="row.maxLength" :min="0" controls-position="right" placeholder="最大" @change="markDirty" />
+                          <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
+                          <span>至</span>
+                          <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
                         </div>
                         <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
                         <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.body.formItems, index)">删除</button>
@@ -3550,15 +3788,15 @@ onBeforeUnmount(() => {
                   </el-radio-group>
                   <div v-if="activeEditor.detail.requestConfig.authConfig.authType === 'BASIC'" class="api-auth-grid">
                     <label>Username</label>
-                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.basicAuth!.userName" placeholder="username" @input="markDirty" />
+                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.basicAuth!.userName" class="api-auth-form-control" placeholder="username" @input="markDirty" />
                     <label>Password</label>
-                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.basicAuth!.password" show-password placeholder="password" @input="markDirty" />
+                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.basicAuth!.password" class="api-auth-form-control" show-password placeholder="password" @input="markDirty" />
                   </div>
                   <div v-else-if="activeEditor.detail.requestConfig.authConfig.authType === 'DIGEST'" class="api-auth-grid">
                     <label>Username</label>
-                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.digestAuth!.userName" placeholder="username" @input="markDirty" />
+                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.digestAuth!.userName" class="api-auth-form-control" placeholder="username" @input="markDirty" />
                     <label>Password</label>
-                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.digestAuth!.password" show-password placeholder="password" @input="markDirty" />
+                    <el-input v-model="activeEditor.detail.requestConfig.authConfig.digestAuth!.password" class="api-auth-form-control" show-password placeholder="password" @input="markDirty" />
                   </div>
                 </div>
               </template>
@@ -3572,7 +3810,9 @@ onBeforeUnmount(() => {
                   <label>标签</label>
                   <el-input :model-value="activeEditor.detail.tags.join(', ')" placeholder="标签，逗号分隔" @update:model-value="(value: string | number) => { activeEditor!.detail.tags = String(value).split(',').map(item => item.trim()).filter(Boolean); markDirty() }" />
                   <label>超时时间</label>
-                  <el-input-number v-model="activeEditor.detail.requestConfig.timeoutMs" :min="1000" :step="1000" controls-position="right" @change="markDirty" />
+                  <div class="api-settings-control-cell">
+                    <el-input-number v-model="activeEditor.detail.requestConfig.timeoutMs" :min="1000" :step="1000" class="api-settings-timeout-number" @change="markDirty" />
+                  </div>
                   <label>描述</label>
                   <el-input v-model="activeEditor.detail.description" type="textarea" :rows="4" placeholder="接口描述、调用约束或备注" @input="markDirty" />
                   <div class="api-settings-footer">
@@ -3753,7 +3993,6 @@ onBeforeUnmount(() => {
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
                             <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
-                            <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
                             <button type="button" @click="copyAssertionItem(activeAssertion.assertions || [], index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.assertions || [], index, { header: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
@@ -3780,13 +4019,24 @@ onBeforeUnmount(() => {
                         <div class="api-assertion-item-list">
                           <div v-for="(item, index) in activeAssertionBodyGroup(activeAssertion).assertions" :key="`${activeAssertion.id}-body-${activeAssertion.assertionBodyType}-${index}`" class="api-assertion-item-row is-body">
                             <el-checkbox v-model="item.enabled" @change="markDirty" />
-                            <el-input v-model="item.expression" placeholder="$.data.id / /root/id / 正则" @input="activeAssertion.expression = item.expression || ''; markDirty()" />
+                            <el-input v-model="item.expression" placeholder="$.data.id / /root/id / 正则" @input="activeAssertion.expression = item.expression || ''; markDirty()">
+                              <template #suffix>
+                                <button
+                                  type="button"
+                                  :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
+                                  :disabled="!hasLatestResponseBody"
+                                  :title="fastExtractionTitle"
+                                  @click.stop="openAssertionFastExtraction(activeAssertion, item)"
+                                >
+                                  <el-icon><MagicStick /></el-icon>
+                                </button>
+                              </template>
+                            </el-input>
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
                             <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
                             <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
-                            <button type="button" @click="fillAssertionFromResponse(activeAssertion, item)">提取</button>
                             <button type="button" @click="copyAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType), condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
@@ -3942,7 +4192,6 @@ onBeforeUnmount(() => {
                                 v-model="activeProcessor.queryTimeout"
                                 :min="1000"
                                 :step="1000"
-                                controls-position="right"
                                 @change="markDirty"
                               />
                             </label>
@@ -4009,16 +4258,75 @@ onBeforeUnmount(() => {
                                 <el-select v-model="item.variableType" @change="syncProcessorScript(activeProcessor)">
                                   <el-option v-for="option in processorExtractVariableTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
                                 </el-select>
-                                <el-select v-model="item.extractType" @change="syncProcessorScript(activeProcessor)">
-                                  <el-option v-for="option in extractorExpressionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+                                <el-select v-model="item.extractType" @change="handleProcessorExtractTypeChange(activeProcessor, item)">
+                                  <el-option v-for="option in processorExtractTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
                                 </el-select>
-                                <el-select v-model="item.sourceType" @change="syncProcessorScript(activeProcessor)">
-                                  <el-option v-for="option in extractorSourceOptions" :key="option.value" :label="option.label" :value="option.value" />
+                                <el-select
+                                  v-model="item.extractScope"
+                                  :disabled="item.extractType !== 'REGEX'"
+                                  @change="handleProcessorExtractScopeChange(activeProcessor, item)"
+                                >
+                                  <el-option v-for="option in processorExtractScopeOptions(item)" :key="option.value" :label="option.label" :value="option.value" />
                                 </el-select>
-                                <el-input v-model="item.expression" placeholder="表达式" @input="syncProcessorScript(activeProcessor)" />
+                                <el-input v-model="item.expression" :placeholder="processorExtractExpressionPlaceholder(item)" @input="syncProcessorScript(activeProcessor)">
+                                  <template #suffix>
+                                    <button
+                                      type="button"
+                                      :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
+                                      :disabled="!hasLatestResponseBody"
+                                      :title="fastExtractionTitle"
+                                      @click.stop="openProcessorFastExtraction(activeProcessor, item)"
+                                    >
+                                      <el-icon><MagicStick /></el-icon>
+                                    </button>
+                                  </template>
+                                </el-input>
                                 <span class="api-processor-extract-actions">
-                                  <button type="button" @click="copyProcessorExtractItem(activeProcessor, extractIndex)">复制</button>
-                                  <button type="button" class="api-row-remove" @click="removeProcessorExtractItem(activeProcessor, extractIndex)">删除</button>
+                                  <el-popover
+                                    placement="bottom-end"
+                                    :width="340"
+                                    trigger="click"
+                                    :visible="processorExtractMoreSettingsVisibleKey === `${activeProcessor?.id || ''}-${extractIndex}`"
+                                    @update:visible="(value: boolean) => setProcessorExtractMoreSettingsVisible(activeProcessor?.id, extractIndex, value)"
+                                  >
+                                    <template #reference>
+                                      <button type="button" class="api-processor-extract-more" aria-label="更多设置">
+                                        <el-icon><MoreFilled /></el-icon>
+                                      </button>
+                                    </template>
+                                    <div class="api-processor-extract-more-panel">
+                                      <button type="button" class="api-processor-extract-copy" @click="copyProcessorExtractItem(activeProcessor, extractIndex)">复制当前提取项</button>
+                                      <div class="api-processor-extract-more-divider"></div>
+                                      <div class="api-processor-extract-more-title">高级设置</div>
+                                      <div class="api-processor-extract-more-group">
+                                        <div class="api-processor-extract-more-label">结果匹配规则</div>
+                                        <el-radio-group v-model="item.resultMatchingRule" size="small" @change="syncProcessorScript(activeProcessor)">
+                                          <el-radio value="RANDOM">随机</el-radio>
+                                          <el-radio value="SPECIFIC">指定</el-radio>
+                                          <el-radio value="ALL">全部</el-radio>
+                                        </el-radio-group>
+                                      </div>
+                                      <div v-if="showProcessorExtractSpecificIndex(item)" class="api-processor-extract-more-group">
+                                        <div class="api-processor-extract-more-label">指定序号</div>
+                                        <el-input-number v-model="item.resultMatchingRuleNum" :min="1" :step="1" size="small" @change="syncProcessorScript(activeProcessor)" />
+                                      </div>
+                                      <div v-if="showProcessorExtractRegexSettings(item)" class="api-processor-extract-more-group">
+                                        <div class="api-processor-extract-more-label">正则匹配规则</div>
+                                        <el-radio-group v-model="item.expressionMatchingRule" size="small" @change="syncProcessorScript(activeProcessor)">
+                                          <el-radio value="EXPRESSION">整段匹配</el-radio>
+                                          <el-radio value="GROUP">分组 1</el-radio>
+                                        </el-radio-group>
+                                      </div>
+                                      <div v-if="showProcessorExtractXPathSettings(item)" class="api-processor-extract-more-group">
+                                        <div class="api-processor-extract-more-label">内容格式</div>
+                                        <el-radio-group v-model="item.responseFormat" size="small" @change="syncProcessorScript(activeProcessor)">
+                                          <el-radio value="XML">XML</el-radio>
+                                          <el-radio value="HTML">HTML</el-radio>
+                                        </el-radio-group>
+                                      </div>
+                                    </div>
+                                  </el-popover>
+                                  <button type="button" class="api-row-remove api-processor-extract-delete" aria-label="删除提取项" @click="removeProcessorExtractItem(activeProcessor, extractIndex)">删除</button>
                                 </span>
                               </div>
                             </div>
@@ -4028,7 +4336,7 @@ onBeforeUnmount(() => {
                         <template v-else>
                           <div class="api-processor-form-row">
                             <span class="api-processor-form-label">等待时长(ms)</span>
-                            <el-input-number v-model="activeProcessor.delayMs" :min="1" :max="600000" :step="100" controls-position="right" @change="markDirty" />
+                            <el-input-number v-model="activeProcessor.delayMs" :min="1" :max="600000" :step="100" @change="markDirty" />
                           </div>
                         </template>
 
@@ -4105,7 +4413,19 @@ onBeforeUnmount(() => {
                             <el-select v-model="item.extractType" @change="syncProcessorScript(processor)">
                               <el-option v-for="option in extractorExpressionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
-                            <el-input v-model="item.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)" />
+                            <el-input v-model="item.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)">
+                              <template #suffix>
+                                <button
+                                  type="button"
+                                  :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
+                                  :disabled="!hasLatestResponseBody"
+                                  :title="fastExtractionTitle"
+                                  @click.stop="openProcessorFastExtraction(processor, item)"
+                                >
+                                  <el-icon><MagicStick /></el-icon>
+                                </button>
+                              </template>
+                            </el-input>
                             <el-input v-model="item.description" placeholder="说明" @input="syncProcessorScript(processor)" />
                             <button type="button" @click="copyProcessorExtractItem(processor, extractIndex)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeProcessorExtractItem(processor, extractIndex)">删除</button>
@@ -4114,7 +4434,7 @@ onBeforeUnmount(() => {
                       </div>
                       <div v-else class="api-wait-row">
                         <span>等待时长 ms</span>
-                        <el-input-number v-model="processor.delayMs" :min="1" :max="600000" :step="100" controls-position="right" @change="markDirty" />
+                        <el-input-number v-model="processor.delayMs" :min="1" :max="600000" :step="100" @change="markDirty" />
                       </div>
                       <el-input v-model="processor.description" placeholder="说明" @input="markDirty" />
                     </div>
@@ -4829,6 +5149,13 @@ onBeforeUnmount(() => {
       :default-workspace-code="props.workspaceCode"
       @submit="submitCaseDialog"
       @retry-detail="editingCaseItem && openEditCaseDialog(editingCaseItem)"
+    />
+    <ApiFastExtractionDrawer
+      v-model:visible="fastExtractionVisible"
+      :response="latestResponseBody"
+      :mode="fastExtractionMode"
+      :config="fastExtractionConfig"
+      @apply="applyFastExtraction"
     />
   </section>
 </template>
@@ -5717,6 +6044,14 @@ onBeforeUnmount(() => {
   flex-basis: 320px;
 }
 
+.api-request-body.is-pre,
+.api-request-body.is-post,
+.api-request-body.is-tests {
+  min-height: 360px;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .api-param-table {
   min-height: 296px;
   overflow: auto;
@@ -5949,8 +6284,11 @@ onBeforeUnmount(() => {
 .api-length-range {
   display: grid;
   min-width: 0;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
   gap: 6px;
+  color: var(--app-text-muted);
+  font-size: 12px;
 }
 
 .api-length-range :deep(.el-input-number) {
@@ -6042,6 +6380,12 @@ onBeforeUnmount(() => {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: #fff;
+}
+
+.api-body-editor.is-code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .api-body-editor.is-empty {
@@ -6191,7 +6535,7 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
   gap: 12px;
-  min-height: 398px;
+  min-height: 360px;
 }
 
 .api-assertion-panel .api-advanced-toolbar,
@@ -6325,8 +6669,35 @@ onBeforeUnmount(() => {
   width: 100%;
 }
 
+.api-settings-panel > .api-settings-control-cell {
+  display: flex;
+  min-height: 63px;
+  align-items: center;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--app-border-soft);
+}
+
 .api-settings-panel :deep(.el-input-number) {
   width: 100%;
+}
+
+.api-settings-timeout-number {
+  width: 100%;
+  line-height: 34px;
+}
+
+.api-settings-timeout-number :deep(.el-input__wrapper) {
+  min-height: 34px;
+  border-radius: var(--app-radius-md);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-settings-timeout-number :deep(.el-input__wrapper:hover) {
+  box-shadow: inset 0 0 0 1px var(--app-text-subtle);
+}
+
+.api-settings-timeout-number :deep(.el-input__wrapper.is-focus) {
+  box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.12);
 }
 
 .api-settings-panel > label:nth-last-of-type(1),
@@ -6356,6 +6727,24 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.api-auth-form-control {
+  width: min(100%, 450px);
+}
+
+.api-auth-form-control :deep(.el-input__wrapper) {
+  min-height: 34px;
+  border-radius: var(--app-radius-md);
+  box-shadow: inset 0 0 0 1px var(--app-border-strong);
+}
+
+.api-auth-form-control :deep(.el-input__wrapper:hover) {
+  box-shadow: inset 0 0 0 1px var(--app-text-subtle);
+}
+
+.api-auth-form-control :deep(.el-input__wrapper.is-focus) {
+  box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.12);
+}
+
 .api-settings-panel > label {
   color: var(--app-text-secondary);
   font-size: 14px;
@@ -6372,22 +6761,22 @@ onBeforeUnmount(() => {
   min-height: 300px;
   overflow: hidden;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: #fff;
 }
 
 .api-binary-row {
   display: grid;
-  min-height: 63px;
+  min-height: 0;
   grid-template-columns: 128px minmax(0, 1fr);
   align-items: center;
   gap: 18px;
-  padding: 0 18px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--app-border-soft);
 }
 
 .api-binary-row:last-child {
-  min-height: 84px;
+  min-height: 0;
   border-bottom: 0;
 }
 
@@ -6408,12 +6797,12 @@ onBeforeUnmount(() => {
 .api-binary-pick,
 .api-binary-clear {
   display: inline-flex;
-  height: 38px;
+  height: 32px;
   align-items: center;
   justify-content: center;
-  padding: 0 16px;
+  padding: 0 15px;
   border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
+  border-radius: 4px;
   background: #fff;
   color: var(--app-text-primary);
   cursor: pointer;
@@ -6447,10 +6836,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 18px;
   border: 1px dashed var(--app-border-strong);
-  border-radius: var(--app-radius-lg);
+  border-radius: var(--app-radius-md);
   background: var(--app-bg-page);
   color: var(--app-text-subtle);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .api-binary-file-name {
@@ -7332,7 +7721,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  overflow: auto;
+  overflow-x: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
@@ -7438,7 +7827,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   padding: 12px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: visible;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
@@ -7593,12 +7983,43 @@ onBeforeUnmount(() => {
 
 .api-assertion-item-row.is-header {
   min-width: 720px;
-  grid-template-columns: 48px minmax(120px, 1fr) 132px minmax(120px, 1fr) repeat(3, auto);
+  grid-template-columns: 48px minmax(120px, 1fr) 132px minmax(120px, 1fr) repeat(2, auto);
 }
 
 .api-assertion-item-row.is-body {
   min-width: 820px;
-  grid-template-columns: 48px minmax(180px, 1.4fr) 132px minmax(120px, 1fr) repeat(4, auto);
+  grid-template-columns: 48px minmax(180px, 1.4fr) 132px minmax(120px, 1fr) repeat(3, auto);
+}
+
+.api-fast-extraction-suffix-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #165dff;
+  cursor: pointer;
+}
+
+.api-fast-extraction-suffix-button:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.api-fast-extraction-suffix-button .el-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+.api-fast-extraction-suffix-button.is-disabled,
+.api-fast-extraction-suffix-button:disabled {
+  background: transparent;
+  color: #c9cdd4;
+  cursor: not-allowed;
 }
 
 .api-assertion-item-row.is-variable {
@@ -7898,6 +8319,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   overflow-x: hidden;
+  overflow-y: visible;
   padding: 12px;
 }
 
@@ -8084,6 +8506,65 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.api-processor-extract-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: var(--app-radius-sm);
+}
+
+.api-processor-extract-more .el-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+.api-processor-extract-delete {
+  min-width: 28px;
+}
+
+.api-processor-extract-more-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.api-processor-extract-copy {
+  align-self: flex-start;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.api-processor-extract-more-divider {
+  height: 1px;
+  background: var(--app-border-soft);
+}
+
+.api-processor-extract-more-title {
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-processor-extract-more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.api-processor-extract-more-label {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .api-sql-extract-table {
