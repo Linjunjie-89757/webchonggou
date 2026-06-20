@@ -25,7 +25,7 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
-type ParamCategoryFilter = '' | 'global' | 'api' | 'business'
+type ParamCategoryFilter = '' | 'global' | 'api' | 'business' | 'webUi'
 
 const props = withDefaults(
   defineProps<{
@@ -58,6 +58,7 @@ const stats = computed<ConfigStat[]>(() => [
   { label: '全局参数', value: params.value.filter((item) => getParamCategory(item) === 'global').length, tone: 'primary' },
   { label: '接口参数', value: params.value.filter((item) => getParamCategory(item) === 'api').length, tone: 'purple' },
   { label: '业务参数', value: params.value.filter((item) => getParamCategory(item) === 'business').length, tone: 'success' },
+  { label: 'Web UI 变量集', value: params.value.filter((item) => getParamCategory(item) === 'webUi').length, tone: 'warning' },
 ])
 
 const categoryTabs: Array<{ label: string; value: ParamCategoryFilter }> = [
@@ -65,11 +66,12 @@ const categoryTabs: Array<{ label: string; value: ParamCategoryFilter }> = [
   { label: '全局参数', value: 'global' },
   { label: '接口参数', value: 'api' },
   { label: '业务参数', value: 'business' },
+  { label: 'Web UI 变量集', value: 'webUi' },
 ]
 
 const paramQuery = computed(() => ({
   keyword: filterKeyword.value.trim(),
-  paramType: activeCategory.value ? activeCategory.value.toUpperCase() : '',
+  paramType: getParamTypeByCategory(activeCategory.value),
   status: filterStatus.value === '' ? undefined : (Number(filterStatus.value) as ConfigStatus),
 }))
 
@@ -84,6 +86,13 @@ function resetFilters() {
   activeCategory.value = ''
   suppressFilterLoad = false
   void loadParams()
+}
+
+function getParamTypeByCategory(category: ParamCategoryFilter) {
+  if (category === 'webUi') {
+    return 'WEB_UI_VARIABLE_SET'
+  }
+  return category ? category.toUpperCase() : ''
 }
 
 async function loadParams() {
@@ -182,7 +191,7 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       </div>
     </header>
 
-    <div class="config-panel__stats config-panel__stats--four">
+    <div class="config-panel__stats config-panel__stats--five">
       <ConfigStatCard v-for="stat in stats" :key="stat.label" :stat="stat" />
     </div>
 
@@ -358,8 +367,8 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   gap: var(--app-space-4);
 }
 
-.config-panel__stats--four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+.config-panel__stats--five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .config-filter-toolbar {
@@ -527,13 +536,13 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
 }
 
 @media (max-width: 1100px) {
-  .config-panel__stats--four {
+  .config-panel__stats--five {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 720px) {
-  .config-panel__stats--four {
+  .config-panel__stats--five {
     grid-template-columns: 1fr;
   }
 

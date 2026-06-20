@@ -53,6 +53,7 @@ import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-prov
 import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
+import { ApiScenarioWorkspace } from '@/widgets/api-scenario-workspace'
 import ApiCodeEditor from './ApiCodeEditor.vue'
 import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
 import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
@@ -76,6 +77,7 @@ type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
 type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
 type ApiBodyLanguage = 'json' | 'xml' | 'text'
+type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
 type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
   | { kind: 'processorExtract', processor: ApiProcessorConfig, item: ApiProcessorExtractItem }
@@ -244,7 +246,7 @@ const emit = defineEmits<{
   loaded: [payload: { definitions: ApiDefinitionItem[]; modules: ApiDefinitionModuleItem[]; cases: ApiDefinitionCaseItem[] }]
 }>()
 
-const activeTopTab = ref('definitions')
+const activeTopTab = ref<ApiTopTab>('definitions')
 const loading = ref(false)
 const moduleLoading = ref(false)
 const definitionLoading = ref(false)
@@ -3754,8 +3756,8 @@ onBeforeUnmount(() => {
   <section v-loading="loading" class="api-interface-workspace">
     <div class="api-interface-tabs">
       <div class="api-interface-tab-nav">
-        <button class="api-interface-tab is-active" type="button">接口</button>
-        <button class="api-interface-tab" type="button" disabled>场景</button>
+        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'definitions' }]" type="button" @click="activeTopTab = 'definitions'">接口</button>
+        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'scenarios' }]" type="button" @click="activeTopTab = 'scenarios'">场景</button>
         <button class="api-interface-tab" type="button" disabled>执行</button>
         <button class="api-interface-tab" type="button" disabled>报告</button>
         <button class="api-interface-tab" type="button" disabled>设置</button>
@@ -5022,6 +5024,15 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
+    <ApiScenarioWorkspace
+      v-else-if="activeTopTab === 'scenarios'"
+      :workspace-code="props.workspaceCode"
+      :workspace-ready="props.workspaceReady"
+      :workspaces="props.workspaces"
+      :environments="environments"
+      :variable-sets="variableSets"
+    />
+
     <el-dialog
       v-model="softPromptVisible"
       width="420px"
@@ -5630,7 +5641,6 @@ onBeforeUnmount(() => {
 
                 <div class="case-drawer-history-step">
                   <div class="case-drawer-history-section-title">响应结果</div>
-                  <div v-if="caseHistoryDebugError" class="response-error-inline">{{ caseHistoryDebugError }}</div>
                   <div class="ms-like-response-tabs">
                     <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'body' }]" @click="caseHistoryResponseTab = 'body'">Body</button>
                     <button :class="['ms-like-top-tab', { active: caseHistoryResponseTab === 'header' }]" @click="caseHistoryResponseTab = 'header'">Header</button>

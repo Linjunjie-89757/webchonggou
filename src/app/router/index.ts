@@ -3,6 +3,8 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppLayout from '@/app/layouts/AppLayout.vue'
 import { loadCurrentUser, sessionState } from '@/entities/session'
 import ApiAutomationPage from '@/pages/automation-api/ApiAutomationPage.vue'
+import WebAutomationPage from '@/pages/automation-web/WebAutomationPage.vue'
+import WebUiSharedReportPage from '@/pages/automation-web/WebUiSharedReportPage.vue'
 import CaseAiConfigPage from '@/pages/cases/CaseAiConfigPage.vue'
 import CaseAiGeneratePage from '@/pages/cases/CaseAiGeneratePage.vue'
 import CaseAiRecordsPage from '@/pages/cases/CaseAiRecordsPage.vue'
@@ -22,6 +24,16 @@ const routes: RouteRecordRaw[] = [
     component: LoginPage,
     meta: {
       title: '登录',
+      bare: true,
+      public: true,
+    },
+  },
+  {
+    path: '/share/web-ui/report',
+    name: 'web-ui-shared-report',
+    component: WebUiSharedReportPage,
+    meta: {
+      title: 'Web UI 公开报告',
       bare: true,
       public: true,
     },
@@ -181,10 +193,10 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'automation/web',
         name: 'automation-web',
-        component: PlaceholderPage,
+        component: WebAutomationPage,
         meta: {
           title: 'Web UI 自动化',
-          description: '旧项目当前为占位模块，后续确认真实业务边界后再接入。',
+          description: '管理 Web UI 用例、环境配置、执行记录与失败证据。',
         },
       },
       {

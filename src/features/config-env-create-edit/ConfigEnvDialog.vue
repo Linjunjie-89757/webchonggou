@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
-import { configEnvTypeOptions, configStatusOptions, type EnvConfigItem } from '@/entities/config'
+import { configApi, configEnvTypeOptions, configStatusOptions, type EnvConfigItem, type ParamSetItem } from '@/entities/config'
+import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
 
@@ -37,6 +38,11 @@ const form = reactive<ConfigEnvForm>(createDefaultConfigEnvForm(props.defaultWor
 const formError = reactive({
   message: '',
 })
+const variableSets = ref<ParamSetItem[]>([])
+const loadingVariableSets = ref(false)
+let variableSetRequestSeq = 0
+
+const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
 
 function resetForm() {
   const nextForm =
@@ -59,11 +65,34 @@ function submit() {
   emit('submit', buildCreateEnvPayload(form))
 }
 
+async function loadVariableSets() {
+  const requestId = ++variableSetRequestSeq
+  loadingVariableSets.value = true
+  try {
+    const page = await configApi.getSettingsParams(props.defaultWorkspaceCode, {
+      paramType: 'WEB_UI_VARIABLE_SET',
+      status: 1,
+    })
+    if (requestId === variableSetRequestSeq) {
+      variableSets.value = Array.isArray(page.items) ? page.items : []
+    }
+  } catch (error) {
+    if (requestId === variableSetRequestSeq) {
+      formError.message = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestId === variableSetRequestSeq) {
+      loadingVariableSets.value = false
+    }
+  }
+}
+
 watch(
   () => props.modelValue,
   (visible) => {
     if (visible) {
       resetForm()
+      void loadVariableSets()
     }
   },
 )
@@ -116,7 +145,57 @@ watch(
         <el-input v-model="form.baseUrl" placeholder="https://api.example.com" />
       </div>
 
-      <div class="config-env-dialog__field">
+      <div v-if="form.envType === 'WEB_UI'" class="config-env-dialog__field">
+        <span>Web UI 配置</span>
+        <div class="config-env-dialog__grid">
+          <label>
+            <span>浏览器</span>
+            <el-select v-model="form.browserType">
+              <el-option label="Chromium" value="CHROMIUM" />
+              <el-option label="Firefox" value="FIREFOX" />
+              <el-option label="WebKit" value="WEBKIT" />
+            </el-select>
+          </label>
+          <label>
+            <span>默认超时</span>
+            <el-input-number v-model="form.defaultTimeoutMs" :min="1000" :max="60000" :step="1000" controls-position="right" />
+          </label>
+          <label>
+            <span>视口宽度</span>
+            <el-input-number v-model="form.viewportWidth" :min="320" :max="7680" :step="10" controls-position="right" />
+          </label>
+          <label>
+            <span>视口高度</span>
+            <el-input-number v-model="form.viewportHeight" :min="240" :max="4320" :step="10" controls-position="right" />
+          </label>
+        </div>
+        <div class="config-env-dialog__switches">
+          <label>
+            <span>无头模式</span>
+            <el-switch v-model="form.headless" />
+          </label>
+          <label>
+            <span>忽略 HTTPS 错误</span>
+            <el-switch v-model="form.ignoreHttpsErrors" />
+          </label>
+        </div>
+        <el-select
+          v-model="form.defaultVariableSetId"
+          clearable
+          filterable
+          :loading="loadingVariableSets"
+          placeholder="默认变量集"
+        >
+          <el-option
+            v-for="variableSet in enabledVariableSets"
+            :key="variableSet.id"
+            :label="variableSet.paramName"
+            :value="variableSet.id"
+          />
+        </el-select>
+      </div>
+
+      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.configJson"
@@ -168,6 +247,33 @@ watch(
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 600;
+}
+
+.config-env-dialog__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--app-space-3);
+}
+
+.config-env-dialog__grid label,
+.config-env-dialog__switches label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.config-env-dialog__switches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--app-space-3);
+}
+
+.config-env-dialog :deep(.el-select),
+.config-env-dialog :deep(.el-input-number) {
+  width: 100%;
 }
 
 .config-env-dialog__segment {

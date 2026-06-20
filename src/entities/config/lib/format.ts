@@ -6,6 +6,14 @@ export function isProductionEnv(item: Pick<EnvConfigItem, 'envType' | 'envName' 
 }
 
 export function getEnvVisualMeta(item: Pick<EnvConfigItem, 'envType' | 'envName' | 'configJson'>) {
+  if (item.envType === 'WEB_UI') {
+    return {
+      typeLabel: 'Web UI 环境',
+      tone: 'purple' as const,
+      description: getWebUiEnvDescription(item.configJson),
+    }
+  }
+
   const text = `${item.envType} ${item.envName} ${item.configJson ?? ''}`.toLowerCase()
   if (text.includes('prod') || text.includes('生产')) {
     return {
@@ -53,6 +61,9 @@ export function getEnvDescription(configJson: string, fallback: string) {
 
 export function getParamCategory(item: Pick<ParamSetItem, 'paramType' | 'paramName'>) {
   const text = `${item.paramType} ${item.paramName}`.toLowerCase()
+  if (item.paramType === 'WEB_UI_VARIABLE_SET') {
+    return 'webUi'
+  }
   if (item.paramType === 'BUSINESS' || ['business', '业务'].some((keyword) => text.includes(keyword))) {
     return 'business'
   }
@@ -64,6 +75,9 @@ export function getParamCategory(item: Pick<ParamSetItem, 'paramType' | 'paramNa
 
 export function getParamTypeMeta(item: Pick<ParamSetItem, 'paramType' | 'paramName'>) {
   const category = getParamCategory(item)
+  if (category === 'webUi') {
+    return { label: 'Web UI 变量集', tone: 'purple' as const }
+  }
   if (category === 'api') {
     return { label: '接口参数', tone: 'purple' as const }
   }
@@ -103,7 +117,12 @@ export function parseParamContent(contentJson: string) {
   }
 }
 
-export function getParamValueText(item: Pick<ParamSetItem, 'contentJson'>) {
+export function getParamValueText(item: Pick<ParamSetItem, 'contentJson' | 'paramType'>) {
+  const variables = item.paramType === 'WEB_UI_VARIABLE_SET' ? parseWebUiVariableSummary(item.contentJson) : []
+  if (item.paramType === 'WEB_UI_VARIABLE_SET') {
+    return `${variables.length} 个变量`
+  }
+
   const parsed = parseParamContent(item.contentJson)
   if (parsed.sensitive && parsed.value) {
     return '••••••••'
@@ -112,8 +131,66 @@ export function getParamValueText(item: Pick<ParamSetItem, 'contentJson'>) {
 }
 
 export function getParamDescriptionText(item: Pick<ParamSetItem, 'contentJson' | 'paramType'>) {
+  if (item.paramType === 'WEB_UI_VARIABLE_SET') {
+    const variables = parseWebUiVariableSummary(item.contentJson)
+    if (variables.length > 0) {
+      return `包含 ${variables.slice(0, 3).join('、')}${variables.length > 3 ? ' 等' : ''}`
+    }
+    return 'Web UI 执行变量集'
+  }
+
   const parsed = parseParamContent(item.contentJson)
   return parsed.description || item.paramType || '-'
+}
+
+function getWebUiEnvDescription(configJson: string) {
+  const raw = configJson?.trim()
+  if (!raw) {
+    return '浏览器执行环境'
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      browserType?: unknown
+      defaultTimeoutMs?: unknown
+      viewport?: {
+        width?: unknown
+        height?: unknown
+      }
+    }
+    const browserType = typeof parsed.browserType === 'string' ? parsed.browserType : 'CHROMIUM'
+    const timeout = typeof parsed.defaultTimeoutMs === 'number' ? `${parsed.defaultTimeoutMs}ms` : ''
+    const width = typeof parsed.viewport?.width === 'number' ? parsed.viewport.width : null
+    const height = typeof parsed.viewport?.height === 'number' ? parsed.viewport.height : null
+    const viewport = width && height ? `${width}x${height}` : ''
+
+    return [browserType, viewport, timeout].filter(Boolean).join(' / ') || '浏览器执行环境'
+  } catch {
+    return '浏览器执行环境'
+  }
+}
+
+function parseWebUiVariableSummary(contentJson: string) {
+  const raw = contentJson?.trim()
+  if (!raw) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    const source = Array.isArray(parsed)
+      ? parsed
+      : typeof parsed === 'object' && parsed !== null && Array.isArray((parsed as { variables?: unknown }).variables)
+        ? (parsed as { variables: unknown[] }).variables
+        : []
+
+    return source
+      .filter((item): item is { name?: unknown } => typeof item === 'object' && item !== null)
+      .map(item => (typeof item.name === 'string' ? item.name.trim() : ''))
+      .filter(Boolean)
+  } catch {
+    return []
+  }
 }
 
 export function getDbHostSummary(jdbcUrl: string) {

@@ -17,10 +17,16 @@ import type {
   ApiRunHistoryItem,
   ApiRunPayload,
   ApiRunResult,
+  ApiScenarioDetail,
+  ApiScenarioItem,
+  ApiScenarioListQuery,
+  ApiScenarioModuleItem,
   PageResponse,
   SaveApiDefinitionCasePayload,
   SaveApiDefinitionModulePayload,
   SaveApiDefinitionPayload,
+  SaveApiScenarioModulePayload,
+  SaveApiScenarioPayload,
 } from '../model/types'
 
 function workspaceHeaders(workspaceCode = 'ALL') {
@@ -157,6 +163,56 @@ function normalizeCaseDetail(item: ApiDefinitionCaseDetail): ApiDefinitionCaseDe
     extractors: Array.isArray(item.extractors) ? item.extractors : [],
     preProcessors: Array.isArray(item.preProcessors) ? item.preProcessors : [],
     postProcessors: Array.isArray(item.postProcessors) ? item.postProcessors : [],
+    createdAt: item.createdAt || null,
+  }
+}
+
+function normalizeScenarioModule(item: ApiScenarioModuleItem): ApiScenarioModuleItem {
+  return {
+    ...item,
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    parentId: item.parentId ?? null,
+    name: item.name || '-',
+    sortOrder: item.sortOrder ?? null,
+    scenarioCount: Number(item.scenarioCount || 0),
+    children: Array.isArray(item.children) ? item.children.map(normalizeScenarioModule) : [],
+  }
+}
+
+function normalizeScenario(item: ApiScenarioItem): ApiScenarioItem {
+  return {
+    ...item,
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    name: item.name || '-',
+    directoryName: item.directoryName || null,
+    moduleId: item.moduleId ?? null,
+    moduleName: item.moduleName || null,
+    priority: item.priority || 'P1',
+    status: item.status || 'IN_PROGRESS',
+    description: item.description || null,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    stepCount: Number(item.stepCount || 0),
+    defaultEnvironmentId: item.defaultEnvironmentId ?? null,
+    variableSetId: item.variableSetId ?? null,
+    continueOnFailure: Boolean(item.continueOnFailure),
+    globalTimeoutMs: Number(item.globalTimeoutMs || 300000),
+    stepFailureRetryCount: Number(item.stepFailureRetryCount || 0),
+    defaultStepWaitMs: Number(item.defaultStepWaitMs || 0),
+    lastRunResult: item.lastRunResult || null,
+    lastRunAt: item.lastRunAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeScenarioDetail(item: ApiScenarioDetail): ApiScenarioDetail {
+  return {
+    ...normalizeScenario(item),
+    relatedCaseId: item.relatedCaseId ?? null,
+    scenarioVariables: Array.isArray(item.scenarioVariables) ? item.scenarioVariables : [],
+    scenarioAssertions: Array.isArray(item.scenarioAssertions) ? item.scenarioAssertions : [],
+    steps: Array.isArray(item.steps) ? item.steps : [],
     createdAt: item.createdAt || null,
   }
 }
@@ -368,12 +424,102 @@ export const apiAutomationApi = {
     return unwrapApiResponse(payload)
   },
 
+  async getScenarios(workspaceCode = 'ALL', query?: ApiScenarioListQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiScenarioItem>>>('/automation/api/scenarios', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
+    })
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeScenario)
+  },
+
+  async getScenarioModules(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<ApiScenarioModuleItem[]>>('/automation/api/scenario-modules', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    const modules = unwrapApiResponse(payload)
+    return Array.isArray(modules) ? modules.map(normalizeScenarioModule) : []
+  },
+
+  async createScenarioModule(workspaceCode = 'ALL', data: SaveApiScenarioModulePayload) {
+    const payload = await httpPost<ApiResponse<ApiScenarioModuleItem>, SaveApiScenarioModulePayload>(
+      '/automation/api/scenario-modules',
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioModule(unwrapApiResponse(payload))
+  },
+
+  async updateScenarioModule(workspaceCode = 'ALL', id: number, data: SaveApiScenarioModulePayload) {
+    const payload = await httpPut<ApiResponse<ApiScenarioModuleItem>, SaveApiScenarioModulePayload>(
+      `/automation/api/scenario-modules/${id}`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioModule(unwrapApiResponse(payload))
+  },
+
+  async deleteScenarioModule(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/scenario-modules/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
+  },
+
   async getDefinitionDetail(workspaceCode = 'ALL', id: number) {
     const payload = await httpGet<ApiResponse<ApiDefinitionDetail>>(`/automation/api/definitions/${id}`, {
       headers: workspaceHeaders(workspaceCode),
     })
 
     return normalizeDefinitionDetail(unwrapApiResponse(payload))
+  },
+
+  async getScenarioDetail(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<ApiScenarioDetail>>(`/automation/api/scenarios/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeScenarioDetail(unwrapApiResponse(payload))
+  },
+
+  async createScenario(workspaceCode = 'ALL', data: SaveApiScenarioPayload) {
+    const payload = await httpPost<ApiResponse<ApiScenarioDetail>, SaveApiScenarioPayload>(
+      '/automation/api/scenarios',
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioDetail(unwrapApiResponse(payload))
+  },
+
+  async updateScenario(workspaceCode = 'ALL', id: number, data: SaveApiScenarioPayload) {
+    const payload = await httpPut<ApiResponse<ApiScenarioDetail>, SaveApiScenarioPayload>(
+      `/automation/api/scenarios/${id}`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioDetail(unwrapApiResponse(payload))
+  },
+
+  async deleteScenario(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/scenarios/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
   },
 
   async createDefinition(workspaceCode = 'ALL', data: SaveApiDefinitionPayload) {
@@ -484,6 +630,18 @@ export const apiAutomationApi = {
   async runCase(workspaceCode = 'ALL', id: number, data?: ApiRunPayload) {
     const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
       `/automation/api/cases/${id}/run`,
+      data || {},
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunResult(unwrapApiResponse(payload))
+  },
+
+  async runScenario(workspaceCode = 'ALL', id: number, data?: ApiRunPayload) {
+    const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
+      `/automation/api/scenarios/${id}/run`,
       data || {},
       {
         headers: workspaceHeaders(workspaceCode),

@@ -166,6 +166,133 @@ export interface SaveApiDefinitionCasePayload {
   postProcessors: unknown[]
 }
 
+export type ApiScenarioStepResourceType = 'DEFINITION' | 'CASE' | null
+
+export type ApiScenarioStepType =
+  | 'API'
+  | 'API_CASE'
+  | 'CUSTOM_REQUEST'
+  | 'API_SCENARIO'
+  | 'IF_CONTROLLER'
+  | 'LOOP_CONTROLLER'
+  | 'ONCE_ONLY_CONTROLLER'
+  | 'CONSTANT_TIMER'
+  | 'SCRIPT'
+
+export interface ApiScenarioVariableItem {
+  name: string
+  value: string
+  type?: 'string' | 'number' | 'boolean' | 'object' | string
+  sensitive?: boolean
+  description?: string
+}
+
+export interface ApiScenarioAssertionConfig {
+  id?: string
+  name: string
+  assertionType: 'ALL_STEPS_PASSED' | 'FAILED_COUNT_EQUALS' | 'FAILED_COUNT_LTE' | 'TOTAL_DURATION_LT' | 'STEP_COUNT_EQUALS'
+  operator?: string
+  expectedValue?: string
+  enabled?: boolean
+}
+
+export interface ApiScenarioModuleItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  parentId: number | null
+  name: string
+  sortOrder: number | null
+  scenarioCount: number
+  children: ApiScenarioModuleItem[]
+}
+
+export interface SaveApiScenarioModulePayload {
+  workspaceCode?: string
+  parentId?: number | null
+  name: string
+}
+
+export interface ApiScenarioStep {
+  id?: string
+  stepName: string
+  stepType?: ApiScenarioStepType
+  resourceType: ApiScenarioStepResourceType
+  resourceId: number | null
+  enabled?: boolean
+  requestConfig?: ApiRequestConfigInput | null
+  assertions?: unknown[]
+  preProcessors?: unknown[]
+  postProcessors?: unknown[]
+  delayMs?: number | null
+  conditionType?: 'EXPRESSION' | 'SCRIPT' | string
+  conditionExpression?: string | null
+  loopType?: 'FIXED' | 'WHILE' | 'FOREACH' | string
+  loopCount?: number | null
+  foreachExpression?: string | null
+  script?: string | null
+  children?: ApiScenarioStep[]
+}
+
+export interface ApiScenarioItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  name: string
+  directoryName: string | null
+  moduleId: number | null
+  moduleName: string | null
+  priority: string
+  status: string
+  description: string | null
+  tags: string[]
+  stepCount: number
+  defaultEnvironmentId: number | null
+  variableSetId: number | null
+  continueOnFailure: boolean
+  globalTimeoutMs: number
+  stepFailureRetryCount: number
+  defaultStepWaitMs: number
+  lastRunResult: string | null
+  lastRunAt: string | null
+  updatedAt: string | null
+}
+
+export interface ApiScenarioDetail extends ApiScenarioItem {
+  relatedCaseId: number | null
+  scenarioVariables: ApiScenarioVariableItem[]
+  scenarioAssertions: ApiScenarioAssertionConfig[]
+  steps: ApiScenarioStep[]
+  createdAt: string | null
+}
+
+export interface SaveApiScenarioPayload {
+  workspaceCode?: string
+  name: string
+  directoryName?: string | null
+  moduleId?: number | null
+  priority: string
+  status: string
+  description?: string | null
+  tags: string[]
+  defaultEnvironmentId?: number | null
+  variableSetId?: number | null
+  continueOnFailure: boolean
+  globalTimeoutMs: number
+  stepFailureRetryCount: number
+  defaultStepWaitMs: number
+  relatedCaseId?: number | null
+  scenarioVariables: ApiScenarioVariableItem[]
+  scenarioAssertions: ApiScenarioAssertionConfig[]
+  steps: ApiScenarioStep[]
+}
+
+export interface ApiScenarioListQuery {
+  moduleId?: number | null
+  keyword?: string
+  status?: string
+}
+
 export interface ApiAiCaseGenerationOptionPayload {
   id: string
   key: string

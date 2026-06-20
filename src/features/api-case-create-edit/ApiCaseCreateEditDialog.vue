@@ -1345,9 +1345,11 @@ watch(
   align-items: center;
   gap: 0;
   min-width: 0;
-  height: 40px;
+  height: 46px;
+  min-height: 46px;
   overflow-x: auto;
   overflow-y: hidden;
+  padding: 0 16px;
   border-bottom: 1px solid #e5e7eb;
   background: #fff;
   scrollbar-width: none;
@@ -1360,29 +1362,32 @@ watch(
 .ms-like-top-tab {
   position: relative;
   display: inline-flex;
-  height: 40px;
+  box-sizing: border-box;
+  height: 45px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   padding: 0 12px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 500;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 400;
   line-height: 20px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .ms-like-top-tab:hover {
-  color: #111827;
+  color: #4b5563;
 }
 
 .ms-like-top-tab.active {
   border-bottom-color: #2563eb;
   color: #2563eb;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ms-like-tab-badge {
@@ -1914,7 +1919,7 @@ watch(
 .ms-like-body-type-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
 }
 
 .api-case-body-mode,
@@ -1924,10 +1929,11 @@ watch(
   border: 1px solid #d1d5db;
   border-radius: 6px;
   background: #fff;
-  color: #4b5563;
+  color: #6b7280;
   font-size: 12px;
-  font-weight: 600;
-  line-height: 22px;
+  font-family: Arial, sans-serif;
+  font-weight: 500;
+  line-height: 16px;
   cursor: pointer;
 }
 
@@ -1940,7 +1946,7 @@ watch(
 
 .api-case-body-mode.active,
 .ms-like-body-chip.active {
-  border-color: #93c5fd;
+  border-color: #3b82f6;
   background: #eff6ff;
   color: #2563eb;
 }
