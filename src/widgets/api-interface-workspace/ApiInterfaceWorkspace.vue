@@ -290,6 +290,9 @@ const softPromptError = ref('')
 const caseDialogVisible = ref(false)
 const caseDialogMode = ref<ApiCaseDialogMode>('create')
 const caseDialogSaving = ref(false)
+const caseDialogDebugRunning = ref(false)
+const caseDialogDebugResult = ref<ApiRunResult | null>(null)
+const caseDialogDebugError = ref('')
 const caseDetailLoading = ref(false)
 const caseDetailErrorMessage = ref('')
 const editingCaseItem = ref<ApiDefinitionCaseItem | null>(null)
@@ -559,18 +562,18 @@ function pickPreferredRunStep(steps: ApiRunStepResult[]) {
 
 function appendProcessorConsoleLines(lines: string[], rows: unknown[]) {
   rows.forEach((row, index) => {
-    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'processorName') ?? `Processor ${index + 1}`)
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'processorName') ?? `处理器 ${index + 1}`)
     const stage = extractionResultText(extractionResultValue(row, 'stage') ?? extractionResultValue(row, 'processorStage'))
     const success = extractionResultValue(row, 'success')
     const duration = extractionResultNumber(extractionResultValue(row, 'durationMs'))
     const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage') ?? extractionResultValue(row, 'result'))
-    lines.push(`[Processor ${index + 1}] ${stage !== '-' ? `${stage} / ` : ''}${name} / ${success === false ? 'FAIL' : 'PASS'}${duration !== null ? ` / ${duration} ms` : ''}`)
+    lines.push(`[处理器 ${index + 1}] ${stage !== '-' ? `${stage} / ` : ''}${name} / ${success === false ? '失败' : '通过'}${duration !== null ? ` / ${duration} ms` : ''}`)
     if (message !== '-') {
       lines.push(`  ${message}`)
     }
     const outputVariables = extractionResultValue(row, 'outputVariables')
     if (outputVariables && typeof outputVariables === 'object' && Object.keys(outputVariables).length) {
-      lines.push(`  outputVariables: ${JSON.stringify(outputVariables)}`)
+      lines.push(`  输出变量: ${JSON.stringify(outputVariables)}`)
     }
     const logs = extractionResultValue(row, 'logs')
     if (Array.isArray(logs)) {
@@ -581,24 +584,24 @@ function appendProcessorConsoleLines(lines: string[], rows: unknown[]) {
 
 function appendAssertionConsoleLines(lines: string[], rows: ApiRunStepResult['assertionResults']) {
   rows.forEach((item, index) => {
-    lines.push(`[Assertion ${index + 1}] ${(item.name || item.type)} / ${item.success ? 'PASS' : 'FAIL'}`)
+    lines.push(`[断言 ${index + 1}] ${(item.name || item.type)} / ${item.success ? '通过' : '失败'}`)
     if (item.message) {
       lines.push(`  ${item.message}`)
     }
     if (item.expectedValue !== undefined || item.actualValue !== undefined) {
-      lines.push(`  expected: ${item.expectedValue ?? ''}`)
-      lines.push(`  actual: ${item.actualValue ?? ''}`)
+      lines.push(`  期望值: ${item.expectedValue ?? ''}`)
+      lines.push(`  实际值: ${item.actualValue ?? ''}`)
     }
   })
 }
 
 function appendExtractionConsoleLines(lines: string[], rows: unknown[]) {
   rows.forEach((row, index) => {
-    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'variableName') ?? `Extraction ${index + 1}`)
+    const name = extractionResultText(extractionResultValue(row, 'name') ?? extractionResultValue(row, 'variableName') ?? `提取项 ${index + 1}`)
     const success = extractionResultValue(row, 'success')
     const value = extractionResultText(extractionResultValue(row, 'value') ?? extractionResultValue(row, 'actualValue'))
     const message = extractionResultText(extractionResultValue(row, 'message') ?? extractionResultValue(row, 'errorMessage'))
-    lines.push(`[Extraction ${index + 1}] ${name} / ${success === false ? 'FAIL' : 'OK'}`)
+    lines.push(`[提取 ${index + 1}] ${name} / ${success === false ? '失败' : '通过'}`)
     lines.push(`  ${value !== '-' ? value : message}`)
   })
 }
@@ -611,7 +614,7 @@ function buildRunConsolePreview(
 ) {
   const lines: string[] = []
   if (debugError) {
-    lines.push(`[Error] ${debugError}`)
+    lines.push(`[错误] ${debugError}`)
   }
   appendProcessorConsoleLines(lines, processorResults)
   appendAssertionConsoleLines(lines, assertionResults)
@@ -779,12 +782,12 @@ function caseProtocolLabel() {
   return /^https:\/\//i.test(path) ? 'HTTPS' : 'HTTP'
 }
 
-function casePriorityLabel(_row?: ApiDefinitionCaseItem) {
-  return 'P0'
+function casePriorityLabel(row?: ApiDefinitionCaseItem) {
+  return (row as any)?.casePriority || (row as any)?.priority || '-'
 }
 
-function caseStatusLabel(_row?: ApiDefinitionCaseItem) {
-  return '进行中'
+function caseStatusLabel(row?: ApiDefinitionCaseItem) {
+  return (row as any)?.caseStatus || (row as any)?.status || '-'
 }
 
 function formatCaseTags(tags?: string[] | null) {
@@ -2617,9 +2620,9 @@ async function loadWorkspaceData() {
   }
 }
 
-async function loadCasesForDefinition(definitionId: number) {
+async function loadCasesForDefinition(definitionId: number, workspaceCode = props.workspaceCode) {
   try {
-    const page = await apiAutomationApi.getCases(props.workspaceCode, { definitionId, pageNo: 1, pageSize: 100 })
+    const page = await apiAutomationApi.getCases(workspaceCode, { definitionId, pageNo: 1, pageSize: 100 })
     const others = cases.value.filter(item => item.definitionId !== definitionId)
     cases.value = [...others, ...page.items]
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
@@ -3361,11 +3364,13 @@ async function submitAiCaseGeneration() {
 
 async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
   if (!activeEditor.value?.definitionId) return
+  const targetWorkspaceCode = resolveCaseItemWorkspaceCode()
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '保存 AI 生成用例')) return
   aiCaseSavingId.value = result.id
   try {
     const draft = result.draft
-    await apiAutomationApi.createCase(props.workspaceCode, {
-      workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+    await apiAutomationApi.createCase(targetWorkspaceCode, {
+      workspaceCode: targetWorkspaceCode,
       definitionId: activeEditor.value.definitionId,
       name: draft.name?.trim() || 'AI 生成接口用例',
       description: draft.description || draft.expected || null,
@@ -3377,7 +3382,7 @@ async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
     })
     result.status = 'accepted'
     aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
-    await loadCasesForDefinition(activeEditor.value.definitionId)
+    await loadCasesForDefinition(activeEditor.value.definitionId, targetWorkspaceCode)
     ElMessage.success('AI 生成用例已保存')
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -3466,6 +3471,7 @@ function openCreateCaseDialog() {
     ElMessage.warning('请先保存接口，再新建用例')
     return
   }
+  resetCaseDialogDebugState()
   caseDialogMode.value = 'create'
   editingCaseItem.value = null
   editingCaseDetail.value = null
@@ -3474,6 +3480,7 @@ function openCreateCaseDialog() {
 }
 
 async function openEditCaseDialog(item: ApiDefinitionCaseItem) {
+  resetCaseDialogDebugState()
   caseDialogMode.value = 'edit'
   editingCaseItem.value = item
   editingCaseDetail.value = null
@@ -3481,12 +3488,36 @@ async function openEditCaseDialog(item: ApiDefinitionCaseItem) {
   caseDialogVisible.value = true
   caseDetailLoading.value = true
   try {
-    editingCaseDetail.value = await apiAutomationApi.getCaseDetail(props.workspaceCode, item.id)
+    editingCaseDetail.value = await apiAutomationApi.getCaseDetail(resolveCaseItemWorkspaceCode(item), item.id)
   } catch (error) {
     caseDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     caseDetailLoading.value = false
   }
+}
+
+function resetCaseDialogDebugState() {
+  caseDialogDebugRunning.value = false
+  caseDialogDebugResult.value = null
+  caseDialogDebugError.value = ''
+}
+
+function resolveCaseItemWorkspaceCode(item?: ApiDefinitionCaseItem | null) {
+  return (
+    item?.workspaceCode
+    || editingCaseDetail.value?.workspaceCode
+    || viewingCaseDetail.value?.workspaceCode
+    || viewingCaseItem.value?.workspaceCode
+    || activeEditor.value?.detail.workspaceCode
+    || props.workspaceCode
+    || 'ALL'
+  )
+}
+
+function requireConcreteCaseWorkspace(workspaceCode: string, actionText: string) {
+  if (workspaceCode && workspaceCode !== 'ALL') return true
+  ElMessage.warning(`请先切换到具体工作空间后再${actionText}`)
+  return false
 }
 
 async function openCaseDetailDrawer(item: ApiDefinitionCaseItem) {
@@ -3505,14 +3536,18 @@ async function openCaseDetailDrawer(item: ApiDefinitionCaseItem) {
   caseHistoryRequestTab.value = 'header'
   caseHistoryResponseTab.value = 'body'
   caseDetailDrawerVisible.value = true
-  await Promise.all([loadViewingCaseDetail(item.id), loadCaseRunHistories(item.id)])
+  const targetWorkspaceCode = resolveCaseItemWorkspaceCode(item)
+  await Promise.all([
+    loadViewingCaseDetail(item.id, targetWorkspaceCode),
+    loadCaseRunHistories(item.id, targetWorkspaceCode),
+  ])
 }
 
-async function loadViewingCaseDetail(caseId: number) {
+async function loadViewingCaseDetail(caseId: number, workspaceCode = resolveCaseItemWorkspaceCode()) {
   viewingCaseDetailLoading.value = true
   viewingCaseDetailErrorMessage.value = ''
   try {
-    const detail = await apiAutomationApi.getCaseDetail(props.workspaceCode, caseId)
+    const detail = await apiAutomationApi.getCaseDetail(workspaceCode, caseId)
     viewingCaseDetail.value = detail
     caseDetailRequestTab.value = pickCaseDetailDefaultRequestTab(detail)
   } catch (error) {
@@ -3522,11 +3557,11 @@ async function loadViewingCaseDetail(caseId: number) {
   }
 }
 
-async function loadCaseRunHistories(caseId: number) {
+async function loadCaseRunHistories(caseId: number, workspaceCode = resolveCaseItemWorkspaceCode()) {
   caseRunHistoryLoading.value = true
   caseRunHistoryErrorMessage.value = ''
   try {
-    const page = await apiAutomationApi.getCaseRunHistory(props.workspaceCode, caseId, {
+    const page = await apiAutomationApi.getCaseRunHistory(workspaceCode, caseId, {
       pageNo: 1,
       pageSize: CASE_RUN_HISTORY_LIMIT,
     })
@@ -3549,7 +3584,7 @@ async function openCaseRunHistoryDetail(item: ApiRunHistoryItem) {
   caseRunHistoryDetailErrorMessage.value = ''
   caseRunHistoryDetailLoading.value = true
   try {
-    selectedCaseRunHistoryDetail.value = await apiAutomationApi.getCaseRunHistoryDetail(props.workspaceCode, item.id)
+    selectedCaseRunHistoryDetail.value = await apiAutomationApi.getCaseRunHistoryDetail(resolveCaseItemWorkspaceCode(), item.id)
   } catch (error) {
     caseRunHistoryDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
@@ -3566,19 +3601,39 @@ function backToCaseRunHistoryList() {
   caseHistoryView.value = 'list'
 }
 
+function resolveCaseDialogWorkspaceCode(payload: SaveApiDefinitionCasePayload) {
+  return (
+    payload.workspaceCode
+    || editingCaseDetail.value?.workspaceCode
+    || editingCaseItem.value?.workspaceCode
+    || activeEditor.value?.detail.workspaceCode
+    || props.workspaceCode
+    || 'ALL'
+  )
+}
+
 async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
   if (!activeEditor.value?.definitionId) return
+  const targetWorkspaceCode = resolveCaseDialogWorkspaceCode(payload)
+  if (targetWorkspaceCode === 'ALL') {
+    ElMessage.warning('请先切换到具体工作空间后再保存用例')
+    return
+  }
+  const requestPayload = {
+    ...payload,
+    workspaceCode: targetWorkspaceCode,
+  }
   caseDialogSaving.value = true
   try {
     if (caseDialogMode.value === 'edit' && editingCaseItem.value) {
-      await apiAutomationApi.updateCase(props.workspaceCode, editingCaseItem.value.id, payload)
+      await apiAutomationApi.updateCase(targetWorkspaceCode, editingCaseItem.value.id, requestPayload)
       ElMessage.success('用例已保存')
     } else {
-      await apiAutomationApi.createCase(props.workspaceCode, payload)
+      await apiAutomationApi.createCase(targetWorkspaceCode, requestPayload)
       ElMessage.success('用例已创建')
     }
     caseDialogVisible.value = false
-    await loadCasesForDefinition(activeEditor.value.definitionId)
+    await loadCasesForDefinition(activeEditor.value.definitionId, targetWorkspaceCode)
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -3586,10 +3641,47 @@ async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
   }
 }
 
+async function debugCaseDialog(payload: SaveApiDefinitionCasePayload) {
+  if (!activeEditor.value) return
+  const editor = activeEditor.value
+  const targetWorkspaceCode = resolveCaseDialogWorkspaceCode(payload)
+  if (targetWorkspaceCode === 'ALL') {
+    caseDialogDebugError.value = '请先切换到具体工作空间后再发送用例请求'
+    ElMessage.warning(caseDialogDebugError.value)
+    return
+  }
+  caseDialogDebugRunning.value = true
+  caseDialogDebugResult.value = null
+  caseDialogDebugError.value = ''
+  try {
+    caseDialogDebugResult.value = await apiAutomationApi.debugRunDefinitionDraft(targetWorkspaceCode, {
+      ...currentRunPayload(),
+      workspaceCode: targetWorkspaceCode,
+      name: payload.name,
+      directoryName: editor.detail.directoryName || null,
+      description: payload.description,
+      tags: payload.tags,
+      requestConfig: clone(payload.requestConfig),
+      assertions: clone(payload.assertions || []),
+      extractors: [],
+      preProcessors: clone(payload.preProcessors || []),
+      postProcessors: clone(payload.postProcessors || []),
+    })
+    ElMessage.success('用例请求已发送')
+  } catch (error) {
+    caseDialogDebugError.value = getRequestErrorMessage(error)
+    ElMessage.error(caseDialogDebugError.value)
+  } finally {
+    caseDialogDebugRunning.value = false
+  }
+}
+
 async function duplicateCase(item: ApiDefinitionCaseItem) {
-  const detail = await apiAutomationApi.getCaseDetail(props.workspaceCode, item.id)
-  await apiAutomationApi.createCase(props.workspaceCode, {
-    workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+  const targetWorkspaceCode = resolveCaseItemWorkspaceCode(item)
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '复制用例')) return
+  const detail = await apiAutomationApi.getCaseDetail(targetWorkspaceCode, item.id)
+  await apiAutomationApi.createCase(targetWorkspaceCode, {
+    workspaceCode: targetWorkspaceCode,
     definitionId: detail.definitionId,
     name: `${detail.name} - 副本`,
     description: detail.description,
@@ -3599,28 +3691,35 @@ async function duplicateCase(item: ApiDefinitionCaseItem) {
     preProcessors: clone(detail.preProcessors || []),
     postProcessors: clone(detail.postProcessors || []),
   })
-  await loadCasesForDefinition(item.definitionId)
+  await loadCasesForDefinition(item.definitionId, targetWorkspaceCode)
   ElMessage.success('用例已复制')
 }
 
 async function deleteCase(item: ApiDefinitionCaseItem) {
+  const targetWorkspaceCode = resolveCaseItemWorkspaceCode(item)
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '删除用例')) return
   const confirmed = await confirmApiAction('删除后不可恢复，确认删除该用例吗？', '删除用例', {
     confirmText: '确认',
     danger: true,
   })
   if (!confirmed) return
-  await apiAutomationApi.deleteCase(props.workspaceCode, item.id)
-  await loadCasesForDefinition(item.definitionId)
+  await apiAutomationApi.deleteCase(targetWorkspaceCode, item.id)
+  await loadCasesForDefinition(item.definitionId, targetWorkspaceCode)
   ElMessage.success('用例已删除')
 }
 
 async function runCase(item: ApiDefinitionCaseItem) {
+  const targetWorkspaceCode = resolveCaseItemWorkspaceCode(item)
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '执行用例')) return
   caseRunningId.value = item.id
   try {
-    await apiAutomationApi.runCase(props.workspaceCode, item.id, currentRunPayload())
-    await loadCasesForDefinition(item.definitionId)
+    await apiAutomationApi.runCase(targetWorkspaceCode, item.id, {
+      ...currentRunPayload(),
+      workspaceCode: targetWorkspaceCode,
+    })
+    await loadCasesForDefinition(item.definitionId, targetWorkspaceCode)
     if (caseDetailDrawerVisible.value && viewingCaseItem.value?.id === item.id) {
-      await loadCaseRunHistories(item.id)
+      await loadCaseRunHistories(item.id, targetWorkspaceCode)
     }
     ElMessage.success('用例执行完成')
   } catch (error) {
@@ -5852,10 +5951,17 @@ onBeforeUnmount(() => {
       :case-detail="editingCaseDetail"
       :case-draft-detail="caseDialogMode === 'create' ? currentCaseDraftDetail() : null"
       :saving="caseDialogSaving"
+      :debug-running="caseDialogDebugRunning"
+      :debug-result="caseDialogDebugResult"
+      :debug-error="caseDialogDebugError"
       :loading-detail="caseDetailLoading"
       :detail-error-message="caseDetailErrorMessage"
       :default-workspace-code="props.workspaceCode"
+      :workspace-display-name="currentDefinitionWorkspaceLabel"
+      :environment-name="currentEnvironmentName"
+      :variable-set-name="currentVariableSetName"
       @submit="submitCaseDialog"
+      @debug="debugCaseDialog"
       @retry-detail="editingCaseItem && openEditCaseDialog(editingCaseItem)"
     />
     <ApiFastExtractionDrawer
@@ -7517,49 +7623,6 @@ onBeforeUnmount(() => {
 
 .api-settings-timeout-number :deep(.el-input__wrapper.is-focus) {
   box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.12);
-}
-
-.api-assertion-form-row :deep(.el-input-number__increase),
-.api-assertion-form-row :deep(.el-input-number__decrease),
-.api-processor-form-grid :deep(.el-input-number__increase),
-.api-processor-form-grid :deep(.el-input-number__decrease),
-.api-processor-form-row :deep(.el-input-number__increase),
-.api-processor-form-row :deep(.el-input-number__decrease) {
-  width: 24px;
-  height: 16px;
-  line-height: 16px;
-  color: var(--app-text-muted);
-  font-size: 10px;
-}
-
-.api-settings-timeout-number :deep(.el-input-number__decrease),
-.api-settings-timeout-number :deep(.el-input-number__increase) {
-  top: 1px;
-  width: 32px;
-  height: 30px;
-  border-color: var(--app-border);
-  background: var(--app-bg-panel);
-  color: var(--app-text-muted);
-  font-size: 12px;
-  line-height: 30px;
-}
-
-.api-settings-timeout-number :deep(.el-input-number__decrease) {
-  left: 1px;
-  right: auto;
-  border-radius: 7px 0 0 7px;
-}
-
-.api-settings-timeout-number :deep(.el-input-number__increase) {
-  right: 1px;
-  left: auto;
-  border-radius: 0 7px 7px 0;
-}
-
-.api-settings-timeout-number :deep(.el-input-number__decrease:hover),
-.api-settings-timeout-number :deep(.el-input-number__increase:hover) {
-  background: var(--app-bg-page);
-  color: var(--app-primary);
 }
 
 .api-settings-panel > label:nth-of-type(5) {

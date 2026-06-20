@@ -1,0 +1,427 @@
+- generic [ref=e1]:
+  - generic [ref=e42]:
+    - complementary [ref=e43]:
+      - generic [ref=e44]:
+        - generic [ref=e45]: A
+        - generic [ref=e46]: 自动化测试平台
+      - navigation "主导航" [ref=e47]:
+        - link "工作台" [ref=e49] [cursor=pointer]:
+          - /url: /?workspace=ALL
+          - img [ref=e51]
+          - generic [ref=e53]: 工作台
+        - link "配置中心" [ref=e55] [cursor=pointer]:
+          - /url: /config-center?workspace=ALL
+          - img [ref=e57]
+          - generic [ref=e59]: 配置中心
+        - button "用例中心" [ref=e61] [cursor=pointer]:
+          - img [ref=e63]
+          - generic [ref=e65]: 用例中心
+        - link "缺陷管理" [ref=e67] [cursor=pointer]:
+          - /url: /bugs?workspace=ALL
+          - img [ref=e69]
+          - generic [ref=e71]: 缺陷管理
+        - link "接口自动化" [ref=e73] [cursor=pointer]:
+          - /url: /automation/api?workspace=ALL
+          - img [ref=e75]
+          - generic [ref=e78]: 接口自动化
+        - link "Web UI 自动化" [ref=e80] [cursor=pointer]:
+          - /url: /automation/web?workspace=ALL
+          - img [ref=e82]
+          - generic [ref=e84]: Web UI 自动化
+        - link "APP 自动化" [ref=e86] [cursor=pointer]:
+          - /url: /automation/app?workspace=ALL
+          - img [ref=e88]
+          - generic [ref=e90]: APP 自动化
+        - link "系统设置" [ref=e92] [cursor=pointer]:
+          - /url: /settings?workspace=ALL
+          - img [ref=e94]
+          - generic [ref=e96]: 系统设置
+    - generic [ref=e97]:
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - generic [ref=e100]: 接口自动化
+          - button "全部" [ref=e103] [cursor=pointer]:
+            - img [ref=e104]
+            - generic [ref=e108]: 全部
+            - img [ref=e109]
+        - button "超 超级管理员 SUPER_ADMIN" [ref=e113] [cursor=pointer]:
+          - generic [ref=e114]: 超
+          - generic [ref=e115]:
+            - generic [ref=e116]: 超级管理员
+            - generic [ref=e117]: SUPER_ADMIN
+          - img [ref=e119]
+      - main [ref=e121]:
+        - generic [ref=e125]:
+          - generic [ref=e127]:
+            - button "接口" [ref=e128] [cursor=pointer]
+            - button "场景" [disabled] [ref=e129]
+            - button "执行" [disabled] [ref=e130]
+            - button "报告" [disabled] [ref=e131]
+            - button "设置" [disabled] [ref=e132]
+          - generic [ref=e133]:
+            - complementary [ref=e134]:
+              - generic [ref=e135]:
+                - button "新建请求" [ref=e136] [cursor=pointer]:
+                  - img [ref=e138]
+                  - text: 新建请求
+                - button "导入" [ref=e140] [cursor=pointer]:
+                  - img [ref=e141]
+                  - text: 导入
+              - generic [ref=e146]:
+                - img [ref=e149]
+                - textbox "搜索模块或请求" [ref=e151]
+              - generic [ref=e153]:
+                - generic [ref=e154]:
+                  - generic [ref=e155]: 请求目录
+                  - generic [ref=e156]: "5"
+                - button "收起全部子模块" [ref=e157] [cursor=pointer]:
+                  - img [ref=e159]
+              - tree [ref=e162]:
+                - treeitem "X-MAN 3" [expanded] [ref=e163]:
+                  - generic [ref=e164] [cursor=pointer]:
+                    - img [ref=e166]
+                    - generic [ref=e168]:
+                      - generic [ref=e169]:
+                        - img [ref=e171]
+                        - generic [ref=e173]: X-MAN
+                        - generic [ref=e174]: "3"
+                      - button "新建模块" [ref=e176]:
+                        - img [ref=e177]
+                  - group [ref=e178]:
+                    - treeitem "测试 3" [expanded] [ref=e179]:
+                      - generic [ref=e180] [cursor=pointer]:
+                        - img [ref=e182]
+                        - generic [ref=e184]:
+                          - generic [ref=e185]:
+                            - img [ref=e187]
+                            - generic [ref=e189]: 测试
+                            - generic [ref=e190]: "3"
+                          - generic [ref=e191]:
+                            - button "新建模块" [ref=e192]:
+                              - img [ref=e193]
+                            - button "更多操作" [ref=e195]:
+                              - img [ref=e196]
+                      - group [ref=e200]:
+                        - treeitem "GET 测啥" [ref=e201]:
+                          - generic [ref=e203] [cursor=pointer]:
+                            - generic [ref=e204]:
+                              - generic [ref=e205]: GET
+                              - generic [ref=e206]: 测啥
+                            - button "更多操作" [ref=e209]:
+                              - img [ref=e210]
+                        - treeitem "POST 测试11111" [ref=e214]:
+                          - generic [ref=e216] [cursor=pointer]:
+                            - generic [ref=e217]:
+                              - generic [ref=e218]: POST
+                              - generic [ref=e219]: 测试11111
+                            - button "更多操作" [ref=e222]:
+                              - img [ref=e223]
+                        - treeitem "POST 测试接口" [ref=e227]:
+                          - generic [ref=e229] [cursor=pointer]:
+                            - generic [ref=e230]:
+                              - generic [ref=e231]: POST
+                              - generic [ref=e232]: 测试接口
+                            - button "更多操作" [ref=e235]:
+                              - img [ref=e236]
+                    - treeitem "DISPOSABLE 0" [ref=e240]:
+                      - generic [ref=e242] [cursor=pointer]:
+                        - generic [ref=e243]:
+                          - img [ref=e245]
+                          - generic [ref=e247]: DISPOSABLE
+                          - generic [ref=e248]: "0"
+                        - generic [ref=e249]:
+                          - button "新建模块" [ref=e250]:
+                            - img [ref=e251]
+                          - button "更多操作" [ref=e253]:
+                            - img [ref=e254]
+                    - treeitem "DISPOSABLE-254 0" [ref=e258]:
+                      - generic [ref=e260] [cursor=pointer]:
+                        - generic [ref=e261]:
+                          - img [ref=e263]
+                          - generic [ref=e265]: DISPOSABLE-254
+                          - generic [ref=e266]: "0"
+                        - generic [ref=e267]:
+                          - button "新建模块" [ref=e268]:
+                            - img [ref=e269]
+                          - button "更多操作" [ref=e271]:
+                            - img [ref=e272]
+                    - treeitem "未规划请求 2" [expanded] [ref=e276]:
+                      - generic [ref=e277] [cursor=pointer]:
+                        - img [ref=e279]
+                        - generic [ref=e282]:
+                          - img [ref=e284]
+                          - generic [ref=e286]: 未规划请求
+                          - generic [ref=e287]: "2"
+                      - group [ref=e288]:
+                        - treeitem "GET 新建用例" [ref=e289]:
+                          - generic [ref=e291] [cursor=pointer]:
+                            - generic [ref=e292]:
+                              - generic [ref=e293]: GET
+                              - generic [ref=e294]: 新建用例
+                            - button "更多操作" [ref=e297]:
+                              - img [ref=e298]
+                        - treeitem "POST 新增" [ref=e302]:
+                          - generic [ref=e304] [cursor=pointer]:
+                            - generic [ref=e305]:
+                              - generic [ref=e306]: POST
+                              - generic [ref=e307]: 新增
+                            - button "更多操作" [ref=e310]:
+                              - img [ref=e311]
+                - treeitem "SCRM 0" [expanded] [ref=e315]:
+                  - generic [ref=e316] [cursor=pointer]:
+                    - img [ref=e318]
+                    - generic [ref=e320]:
+                      - generic [ref=e321]:
+                        - img [ref=e323]
+                        - generic [ref=e325]: SCRM
+                        - generic [ref=e326]: "0"
+                      - button "新建模块" [ref=e328]:
+                        - img [ref=e329]
+                  - group [ref=e330]:
+                    - treeitem "111 0" [ref=e331]:
+                      - generic [ref=e333] [cursor=pointer]:
+                        - generic [ref=e334]:
+                          - img [ref=e336]
+                          - generic [ref=e338]: "111"
+                          - generic [ref=e339]: "0"
+                        - generic [ref=e340]:
+                          - button "新建模块" [ref=e341]:
+                            - img [ref=e342]
+                          - button "更多操作" [ref=e344]:
+                            - img [ref=e345]
+                - treeitem "CMS&DDM 0" [ref=e349]:
+                  - generic [ref=e351] [cursor=pointer]:
+                    - generic [ref=e352]:
+                      - img [ref=e354]
+                      - generic [ref=e356]: CMS&DDM
+                      - generic [ref=e357]: "0"
+                    - button "新建模块" [ref=e359]:
+                      - img [ref=e360]
+                - treeitem "PC 0" [ref=e361]:
+                  - generic [ref=e363] [cursor=pointer]:
+                    - generic [ref=e364]:
+                      - img [ref=e366]
+                      - generic [ref=e368]: PC
+                      - generic [ref=e369]: "0"
+                    - button "新建模块" [ref=e371]:
+                      - img [ref=e372]
+                - treeitem "APP 0" [ref=e373]:
+                  - generic [ref=e375] [cursor=pointer]:
+                    - generic [ref=e376]:
+                      - img [ref=e378]
+                      - generic [ref=e380]: APP
+                      - generic [ref=e381]: "0"
+                    - button "新建模块" [ref=e383]:
+                      - img [ref=e384]
+                - treeitem "测试用 0" [expanded] [ref=e385]:
+                  - generic [ref=e386] [cursor=pointer]:
+                    - img [ref=e388]
+                    - generic [ref=e390]:
+                      - generic [ref=e391]:
+                        - img [ref=e393]
+                        - generic [ref=e395]: 测试用
+                        - generic [ref=e396]: "0"
+                      - button "新建模块" [ref=e398]:
+                        - img [ref=e399]
+                  - group [ref=e400]:
+                    - treeitem "DISPOSABLE-287 0" [ref=e401]:
+                      - generic [ref=e403] [cursor=pointer]:
+                        - generic [ref=e404]:
+                          - img [ref=e406]
+                          - generic [ref=e408]: DISPOSABLE-287
+                          - generic [ref=e409]: "0"
+                        - generic [ref=e410]:
+                          - button "新建模块" [ref=e411]:
+                            - img [ref=e412]
+                          - button "更多操作" [ref=e414]:
+                            - img [ref=e415]
+                    - treeitem "DISPOSABLE-317 0" [ref=e419]:
+                      - generic [ref=e421] [cursor=pointer]:
+                        - generic [ref=e422]:
+                          - img [ref=e424]
+                          - generic [ref=e426]: DISPOSABLE-317
+                          - generic [ref=e427]: "0"
+                        - generic [ref=e428]:
+                          - button "新建模块" [ref=e429]:
+                            - img [ref=e430]
+                          - button "更多操作" [ref=e432]:
+                            - img [ref=e433]
+            - generic [ref=e437]:
+              - generic [ref=e438]:
+                - generic [ref=e439]:
+                  - button "GET 新建请求" [ref=e440] [cursor=pointer]:
+                    - generic [ref=e441]: GET
+                    - generic [ref=e442]: 新建请求
+                    - img [ref=e520]
+                  - button "GET 新建用例" [ref=e522] [cursor=pointer]:
+                    - generic [ref=e523]: GET
+                    - generic [ref=e524]: 新建用例
+                    - img [ref=e527]
+                - button [ref=e443] [cursor=pointer]:
+                  - img [ref=e445]
+                - button [ref=e448] [cursor=pointer]:
+                  - img [ref=e450]
+              - generic [ref=e452]:
+                - generic [ref=e453]:
+                  - generic [ref=e455] [cursor=pointer]:
+                    - generic:
+                      - combobox [ref=e457]
+                      - generic [ref=e458]: GET
+                    - img [ref=e461]
+                  - textbox "请输入包含 http/https 的完整 URL 或接口路径" [ref=e465]: cecece
+                  - button "Curl" [ref=e466] [cursor=pointer]
+                - button "发送" [ref=e467] [cursor=pointer]:
+                  - img [ref=e468]
+                  - text: 发送
+                - generic [ref=e471]:
+                  - button "保存" [ref=e472] [cursor=pointer]:
+                    - generic [ref=e474]:
+                      - img [ref=e475]
+                      - text: 保存
+                  - button "Toggle Dropdown" [ref=e479] [cursor=pointer]:
+                    - img [ref=e482]
+              - generic [ref=e484]:
+                - generic [ref=e485]:
+                  - button "请求头" [ref=e486] [cursor=pointer]
+                  - button "请求体" [ref=e487] [cursor=pointer]
+                  - button "Params" [ref=e488] [cursor=pointer]
+                  - button "Auth" [ref=e489] [cursor=pointer]
+                  - button "前置处理" [ref=e490] [cursor=pointer]
+                  - button "后置处理" [ref=e491] [cursor=pointer]
+                  - button "断言" [ref=e492] [cursor=pointer]
+                  - button "设置" [ref=e493] [cursor=pointer]
+                  - button "用例 1" [ref=e529] [cursor=pointer]:
+                    - text: 用例
+                    - generic [ref=e530]: "1"
+                - generic [ref=e532]:
+                  - generic [ref=e533]:
+                    - button "新建用例" [ref=e534] [cursor=pointer]:
+                      - generic [ref=e535]: 新建用例
+                    - button "AI生成用例" [ref=e536] [cursor=pointer]:
+                      - img [ref=e538]
+                      - generic [ref=e540]: AI生成用例
+                  - generic [ref=e541]:
+                    - generic [ref=e543]:
+                      - table [ref=e545]:
+                        - rowgroup [ref=e556]:
+                          - row "ID 用例名称 协议 用例等级 状态 路径 标签 创建人 操作" [ref=e557]:
+                            - columnheader "ID" [ref=e558]:
+                              - generic [ref=e559]: ID
+                            - columnheader "用例名称" [ref=e560]:
+                              - generic [ref=e561]: 用例名称
+                            - columnheader "协议" [ref=e562]:
+                              - generic [ref=e563]: 协议
+                            - columnheader "用例等级" [ref=e564]:
+                              - generic [ref=e565]: 用例等级
+                            - columnheader "状态" [ref=e566]:
+                              - generic [ref=e567]: 状态
+                            - columnheader "路径" [ref=e568]:
+                              - generic [ref=e569]: 路径
+                            - columnheader "标签" [ref=e570]:
+                              - generic [ref=e571]: 标签
+                            - columnheader "创建人" [ref=e572]:
+                              - generic [ref=e573]: 创建人
+                            - columnheader "操作" [ref=e574]:
+                              - generic [ref=e576]:
+                                - generic [ref=e577]: 操作
+                                - button "表格设置" [ref=e578] [cursor=pointer]:
+                                  - img [ref=e581]
+                      - table [ref=e587]:
+                        - rowgroup [ref=e598]:
+                          - row "1 新建用例 HTTP - - cecece - - 编辑 执行" [ref=e599]:
+                            - cell "1" [ref=e600]:
+                              - generic [ref=e601]: "1"
+                            - cell "新建用例" [ref=e602]:
+                              - generic [ref=e603]: 新建用例
+                            - cell "HTTP" [ref=e604]:
+                              - generic [ref=e605]: HTTP
+                            - cell "-" [ref=e606]:
+                              - generic [ref=e607]: "-"
+                            - cell "-" [ref=e608]:
+                              - generic [ref=e609]: "-"
+                            - cell "cecece" [ref=e610]:
+                              - generic [ref=e611]: cecece
+                            - cell "-" [ref=e612]:
+                              - generic [ref=e613]: "-"
+                            - cell "-" [ref=e614]:
+                              - generic [ref=e615]: "-"
+                            - cell "编辑 执行" [ref=e616]:
+                              - generic [ref=e618]:
+                                - button "编辑" [ref=e619] [cursor=pointer]:
+                                  - generic [ref=e620]: 编辑
+                                - button "执行" [ref=e621] [cursor=pointer]:
+                                  - generic [ref=e622]: 执行
+                                - button [ref=e624] [cursor=pointer]:
+                                  - img [ref=e627]
+                    - generic [ref=e629]:
+                      - generic [ref=e630]: 共 1 条 / 1 页
+                      - generic [ref=e631]:
+                        - generic [ref=e634] [cursor=pointer]:
+                          - generic:
+                            - combobox [ref=e636]
+                            - generic [ref=e637]: 10/page
+                          - img [ref=e640]
+                        - button "Go to previous page" [disabled] [ref=e642]:
+                          - generic:
+                            - img
+                        - list [ref=e643]:
+                          - listitem "page 1" [ref=e644]: "1"
+                        - button "Go to next page" [disabled] [ref=e645]:
+                          - generic:
+                            - img
+  - dialog [ref=e647]:
+    - generic [ref=e649]:
+      - generic [ref=e650]:
+        - generic [ref=e651]:
+          - generic [ref=e652]: 编辑用例
+          - generic [ref=e653]: 新建用例
+        - button [ref=e654] [cursor=pointer]:
+          - img [ref=e655]
+      - generic [ref=e658]:
+        - generic [ref=e661]:
+          - generic [ref=e662]: GET
+          - generic [ref=e663]: cecece
+        - generic [ref=e664]:
+          - generic [ref=e666]:
+            - textbox "请输入用例名称" [ref=e667]: 新建用例
+            - generic [ref=e670]: 4 / 255
+          - button "发送" [ref=e671] [cursor=pointer]:
+            - generic [ref=e672]: 发送
+        - generic [ref=e673]:
+          - generic [ref=e675] [cursor=pointer]:
+            - generic:
+              - combobox [ref=e677]
+              - generic [ref=e678]: P0
+            - img [ref=e681]
+          - generic [ref=e684] [cursor=pointer]:
+            - generic:
+              - combobox [ref=e686]
+              - generic [ref=e687]: 进行中
+            - img [ref=e690]
+          - generic [ref=e694]:
+            - combobox [ref=e696]
+            - generic [ref=e697]: 输入内容后回车可直接添加标签
+        - generic [ref=e699]:
+          - button "请求头" [ref=e700] [cursor=pointer]
+          - button "请求体" [ref=e701] [cursor=pointer]
+          - button "Params" [ref=e702] [cursor=pointer]
+          - button "Auth" [ref=e703] [cursor=pointer]
+          - button "前置处理" [ref=e704] [cursor=pointer]
+          - button "后置处理" [ref=e705] [cursor=pointer]
+          - button "断言" [ref=e706] [cursor=pointer]
+          - button "设置" [ref=e707] [cursor=pointer]
+        - generic [ref=e709]:
+          - generic [ref=e710]:
+            - button "none" [ref=e711] [cursor=pointer]
+            - button "form-data" [ref=e712] [cursor=pointer]
+            - button "x-www-form-urlencoded" [ref=e713] [cursor=pointer]
+            - button "json" [ref=e714] [cursor=pointer]
+            - button "xml" [ref=e715] [cursor=pointer]
+            - button "raw" [ref=e716] [cursor=pointer]
+            - button "binary" [ref=e717] [cursor=pointer]
+          - generic [ref=e719]: 请求没有 Body
+      - generic [ref=e720]:
+        - button "取消" [ref=e721] [cursor=pointer]:
+          - generic [ref=e722]: 取消
+        - button "保存" [ref=e723] [cursor=pointer]:
+          - generic [ref=e724]: 保存
