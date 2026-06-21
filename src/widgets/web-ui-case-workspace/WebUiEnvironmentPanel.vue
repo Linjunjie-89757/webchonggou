@@ -182,6 +182,7 @@ watch(
     <header class="web-ui-env-panel__header">
       <div>
         <h2>环境配置</h2>
+        <p>运行时会优先使用所选环境；变量集留空时继承环境绑定的默认变量集。</p>
       </div>
       <div class="web-ui-env-panel__actions">
         <AppButton :icon="RefreshRight" :loading="loading" @click="emit('refresh')">刷新</AppButton>
@@ -215,6 +216,11 @@ watch(
           <el-tag :type="row.status === 1 ? 'success' : 'info'" effect="light">
             {{ formatEnvironmentStatus(row.status) }}
           </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="defaultVariableSetName" label="默认变量集" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.defaultVariableSetName || '-' }}
         </template>
       </el-table-column>
       <el-table-column label="更新时间" width="160">
@@ -318,6 +324,13 @@ watch(
   color: var(--app-text-primary);
   font-size: var(--app-font-size-lg);
   line-height: var(--app-line-height-lg);
+}
+
+.web-ui-env-panel__header p {
+  margin: var(--app-space-1) 0 0;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-md);
 }
 
 .web-ui-env-panel__actions,

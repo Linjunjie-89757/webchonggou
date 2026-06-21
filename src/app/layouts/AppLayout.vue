@@ -91,7 +91,19 @@ const navigationItems: NavigationItem[] = [
   },
   { path: '/bugs', label: '缺陷管理', icon: Warning },
   { path: '/automation/api', label: '接口自动化', icon: Cpu },
-  { path: '/automation/web', label: 'Web UI 自动化', icon: Monitor },
+  {
+    path: '/automation/web',
+    label: 'Web UI 自动化',
+    icon: Monitor,
+    children: [
+      { path: '/automation/web/cases', label: '用例管理' },
+      { path: '/automation/web/elements', label: '元素库' },
+      { path: '/automation/web/templates', label: '模板库' },
+      { path: '/automation/web/runs', label: '执行记录' },
+      { path: '/automation/web/batches', label: '批次报告' },
+      { path: '/automation/web/environments', label: '环境配置' },
+    ],
+  },
   { path: '/automation/app', label: 'APP 自动化', icon: Tools },
   { path: '/settings', label: '系统设置', icon: User },
 ]
@@ -205,7 +217,7 @@ async function handleWorkspaceChange(value: string) {
   }
 
   setSelectedWorkspaceCode(value)
-  if (route.path.startsWith('/bugs')) {
+  if (route.path.startsWith('/bugs') || route.path.startsWith('/automation/web')) {
     await router.replace({
       path: route.path,
       query: {

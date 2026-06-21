@@ -1,14 +1,76 @@
 ﻿<script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { WebUiCaseWorkspace } from '@/widgets/web-ui-case-workspace'
+import WebUiElementLibraryPanel from '@/widgets/web-ui-case-workspace/WebUiElementLibraryPanel.vue'
+import { webUiAutomationApi, type WebUiEnvironmentItem } from '@/entities/web-ui-automation'
 
 const workspaceCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
+const environments = ref<WebUiEnvironmentItem[]>([])
 const workspaceReady = ref(false)
+const route = useRoute()
+const router = useRouter()
 const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
+
+type WebUiSection = 'cases' | 'elements' | 'templates' | 'runs' | 'batches' | 'environments'
+
+const routeSectionMap: Record<string, WebUiSection> = {
+  '/automation/web': 'cases',
+  '/automation/web/cases': 'cases',
+  '/automation/web/elements': 'elements',
+  '/automation/web/templates': 'templates',
+  '/automation/web/runs': 'runs',
+  '/automation/web/batches': 'batches',
+  '/automation/web/environments': 'environments',
+}
+
+const activeSection = computed<WebUiSection>(() => routeSectionMap[route.path] || 'cases')
+const workspaceMode = computed<'cases' | 'templates' | 'runs' | 'batches' | 'environments'>(() =>
+  activeSection.value === 'elements' ? 'cases' : activeSection.value,
+)
+
+const pageCopy = computed(() => {
+  if (activeSection.value === 'elements') {
+    return {
+      title: 'Web UI 元素库',
+      description: '维护页面对象和元素定位器，后续用于用例步骤、录制和 AI 生成。',
+    }
+  }
+  if (activeSection.value === 'templates') {
+    return {
+      title: 'Web UI 模板库',
+      description: '沉淀登录、查询、表单、审批等常用 Web UI 用例模板。',
+    }
+  }
+  if (activeSection.value === 'runs') {
+    return {
+      title: 'Web UI 执行记录',
+      description: '查看单次运行报告、失败步骤、截图证据和分享链接。',
+    }
+  }
+  if (activeSection.value === 'batches') {
+    return {
+      title: 'Web UI 批次报告',
+      description: '查看批量运行、CI 触发、批次结果和失败用例摘要。',
+    }
+  }
+  if (activeSection.value === 'environments') {
+    return {
+      title: 'Web UI 环境配置',
+      description: '管理 Web UI 运行环境、默认变量集和环境继承规则。',
+    }
+  }
+  return {
+    title: 'Web UI 用例管理',
+    description: '管理 Web UI 自动化用例、步骤和调试运行。',
+  }
+})
 
 function isKnownWorkspaceCode(workspaceCode: string, items: WorkspaceItem[]) {
   return workspaceCode === 'ALL' || items.some(item => item.workspaceCode === workspaceCode)
@@ -49,6 +111,18 @@ async function loadWorkspaces() {
   }
 }
 
+async function loadEnvironments() {
+  if (!workspaceReady.value || activeSection.value !== 'elements') {
+    return
+  }
+  try {
+    const page = await webUiAutomationApi.getEnvironments(workspaceCode.value)
+    environments.value = page.items
+  } catch {
+    environments.value = []
+  }
+}
+
 onMounted(() => {
   void loadWorkspaces()
 })
@@ -60,20 +134,68 @@ watch(selectedWorkspaceCode, (value) => {
 
   workspaceCode.value = value === 'ALL' ? firstWritableWorkspaceCode(workspaces.value) : value
 })
+
+watch(
+  () => [workspaceCode.value, workspaceReady.value, activeSection.value] as const,
+  () => {
+    void loadEnvironments()
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [route.path, route.query.tab] as const,
+  () => {
+    if (!route.path.startsWith('/automation/web')) {
+      return
+    }
+
+    const tab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
+    if (tab !== 'runs' && tab !== 'batches' && tab !== 'environments') {
+      return
+    }
+
+    const query = { ...route.query }
+    delete query.tab
+    void router.replace({
+      path: `/automation/web/${tab}`,
+      query,
+      hash: route.hash,
+    })
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
   <AppPage
-    title="Web UI 自动化"
-    description="管理 Web UI 自动化用例、步骤和环境配置基础资产。"
+    :title="pageCopy.title"
+    :description="pageCopy.description"
     fill
   >
     <div class="web-automation-page">
       <WebUiCaseWorkspace
+        v-if="activeSection !== 'elements'"
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :workspaces="workspaces"
+        :mode="workspaceMode"
       />
+      <WebUiElementLibraryPanel
+        v-else-if="activeSection === 'elements'"
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
+        :environments="environments"
+      />
+      <AppEmptyState
+        v-else
+        title="模板库独立页即将接入"
+        description="当前模板能力仍在用例管理里可用，后续会拆成独立二级菜单页面。"
+      >
+        <template #actions>
+          <AppButton type="primary">继续使用用例管理中的模板库</AppButton>
+        </template>
+      </AppEmptyState>
     </div>
   </AppPage>
 </template>

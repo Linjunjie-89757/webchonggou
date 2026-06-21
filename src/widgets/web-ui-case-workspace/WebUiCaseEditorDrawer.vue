@@ -24,6 +24,10 @@ import {
   type WebUiCaseDetail,
   type WebUiCaseStatus,
   type WebUiCaseStepItem,
+  type WebUiElementGroupItem,
+  type WebUiElementItem,
+  type WebUiElementModuleItem,
+  type WebUiElementPageItem,
   type WebUiLocatorType,
   type WebUiRunResponse,
   type WebUiRunStepResult,
@@ -38,6 +42,11 @@ interface EditableStep {
   id?: number | null
   name: string
   type: WebUiStepType
+  elementId: number | null
+  elementName: string | null
+  elementModuleId: number | null
+  elementPageId: number | null
+  elementGroupId: number | null
   locatorType: WebUiLocatorType | null
   locatorValue: string
   inputValue: string
@@ -95,6 +104,7 @@ const loading = ref(false)
 const saving = ref(false)
 const debugging = ref(false)
 const loadingVariableSets = ref(false)
+const loadingElements = ref(false)
 const debuggingStepIndex = ref<number | null>(null)
 const errorMessage = ref('')
 const form = ref<CaseForm>(createEmptyForm())
@@ -105,9 +115,14 @@ const validatingLocatorIndex = ref<number | null>(null)
 const locatorValidationVisible = ref(false)
 const locatorValidationResult = ref<ValidateWebUiLocatorResponse | null>(null)
 const variableSets = ref<ParamSetItem[]>([])
+const elements = ref<WebUiElementItem[]>([])
+const elementModules = ref<WebUiElementModuleItem[]>([])
+const elementPages = ref<WebUiElementPageItem[]>([])
+const elementGroups = ref<WebUiElementGroupItem[]>([])
 const debugVariableSetId = ref<number | null>(null)
 let detailRequestSeq = 0
 let variableSetRequestSeq = 0
+let elementRequestSeq = 0
 
 const drawerTitle = computed(() => {
   if (props.caseId) {
@@ -137,6 +152,11 @@ function createStep(sortOrder = form.value.steps.length + 1): EditableStep {
     id: null,
     name: '',
     type: 'OPEN',
+    elementId: null,
+    elementName: null,
+    elementModuleId: null,
+    elementPageId: null,
+    elementGroupId: null,
     locatorType: null,
     locatorValue: '',
     inputValue: '',
@@ -261,6 +281,11 @@ function toEditableStep(item: WebUiCaseStepItem, index: number): EditableStep {
     id: item.id ?? null,
     name: item.name || '',
     type: item.type || 'OPEN',
+    elementId: item.elementId ?? null,
+    elementName: item.elementName || null,
+    elementModuleId: null,
+    elementPageId: null,
+    elementGroupId: null,
     locatorType: item.locatorType || null,
     locatorValue: item.locatorValue || '',
     inputValue: item.inputValue || '',
@@ -287,6 +312,7 @@ function fillForm(detail: WebUiCaseDetail) {
     steps: Array.isArray(detail.steps) ? detail.steps.map(toEditableStep) : [],
   }
   reorderSteps()
+  syncStepElementSelectionsFromReferences()
   savedFormSnapshot.value = JSON.stringify(buildPayload())
 }
 
@@ -387,6 +413,11 @@ function copyStep(index: number) {
 function handleStepTypeChange(step: EditableStep) {
   const requirement = getStepRequirement(step.type)
   if (!requirement.locator) {
+    step.elementId = null
+    step.elementName = null
+    step.elementModuleId = null
+    step.elementPageId = null
+    step.elementGroupId = null
     step.locatorType = null
     step.locatorValue = ''
   } else if (!step.locatorType) {
@@ -464,6 +495,132 @@ async function loadVariableSets() {
     if (requestId === variableSetRequestSeq && props.modelValue && props.workspaceCode === workspaceCode) {
       loadingVariableSets.value = false
     }
+  }
+}
+
+async function loadElements() {
+  if (!props.modelValue) {
+    return
+  }
+
+  const requestId = ++elementRequestSeq
+  const workspaceCode = props.workspaceCode
+
+  loadingElements.value = true
+  try {
+    const [page, moduleResult, pageResult, groupResult] = await Promise.all([
+      webUiAutomationApi.getElements(workspaceCode, {
+        status: 'ENABLED',
+        pageNo: 1,
+        pageSize: 500,
+      }),
+      webUiAutomationApi.getElementModules(workspaceCode),
+      webUiAutomationApi.getElementPages(workspaceCode),
+      webUiAutomationApi.getElementGroups(workspaceCode),
+    ])
+    if (requestId === elementRequestSeq && props.modelValue && props.workspaceCode === workspaceCode) {
+      elements.value = page.items
+      elementModules.value = moduleResult.items
+      elementPages.value = pageResult.items
+      elementGroups.value = groupResult.items
+      syncStepElementSelectionsFromReferences()
+    }
+  } catch (error) {
+    if (requestId === elementRequestSeq && props.modelValue && props.workspaceCode === workspaceCode) {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  } finally {
+    if (requestId === elementRequestSeq && props.modelValue && props.workspaceCode === workspaceCode) {
+      loadingElements.value = false
+    }
+  }
+}
+
+function formatElementOption(item: WebUiElementItem) {
+  const group = item.groupName ? ` / ${item.groupName}` : ''
+  return `${item.pageName}${group} / ${item.elementName}`
+}
+
+function getStepElementOptions(step: EditableStep) {
+  return elements.value.filter((item) => {
+    if (step.elementModuleId) {
+      const page = elementPages.value.find(pageItem => pageItem.id === item.pageId)
+      if (page?.moduleId !== step.elementModuleId) {
+        return false
+      }
+    }
+    if (step.elementPageId && item.pageId !== step.elementPageId) {
+      return false
+    }
+    if (step.elementGroupId && item.groupId !== step.elementGroupId) {
+      return false
+    }
+    return true
+  })
+}
+
+function getStepElementPages(step: EditableStep) {
+  return elementPages.value.filter(item => !step.elementModuleId || item.moduleId === step.elementModuleId)
+}
+
+function getStepElementGroups(step: EditableStep) {
+  return elementGroups.value.filter(item => !step.elementPageId || item.pageId === step.elementPageId)
+}
+
+function syncStepElementSelectionsFromReferences() {
+  if (!elements.value.length || !elementPages.value.length) {
+    return
+  }
+
+  form.value.steps.forEach((step) => {
+    if (!step.elementId) {
+      return
+    }
+    const element = elements.value.find(item => item.id === step.elementId)
+    if (!element) {
+      return
+    }
+    step.elementName = step.elementName || element.elementName
+    step.elementPageId = element.pageId
+    step.elementGroupId = element.groupId
+    step.elementModuleId = elementPages.value.find(item => item.id === element.pageId)?.moduleId ?? null
+  })
+}
+
+function handleStepElementModuleChange(step: EditableStep) {
+  step.elementPageId = null
+  step.elementGroupId = null
+  step.elementId = null
+  step.elementName = null
+}
+
+function handleStepElementPageChange(step: EditableStep) {
+  step.elementGroupId = null
+  step.elementId = null
+  step.elementName = null
+}
+
+function handleStepElementGroupChange(step: EditableStep) {
+  step.elementId = null
+  step.elementName = null
+}
+
+function handleStepElementChange(step: EditableStep, elementId: number | null) {
+  const element = elements.value.find(item => item.id === elementId)
+  if (!element) {
+    step.elementId = null
+    step.elementName = null
+    return
+  }
+  step.elementId = element.id
+  step.elementName = element.elementName
+  step.elementModuleId = elementPages.value.find(item => item.id === element.pageId)?.moduleId ?? null
+  step.elementPageId = element.pageId
+  step.elementGroupId = element.groupId
+  step.locatorType = element.locatorType
+  step.locatorValue = element.locatorValue
+  if (!step.name.trim()) {
+    step.name = element.elementName
   }
 }
 
@@ -624,6 +781,7 @@ function buildPayload(): SaveWebUiCasePayload {
       id: step.id ?? null,
       name: step.name.trim() || null,
       type: step.type,
+      elementId: step.elementId ?? null,
       locatorType: stepNeedsLocator(step.type) ? step.locatorType : null,
       locatorValue: stepNeedsLocator(step.type) ? step.locatorValue.trim() || null : null,
       inputValue: stepNeedsInput(step.type) ? step.inputValue.trim() || null : null,
@@ -801,6 +959,7 @@ watch(
   () => {
     void loadDetail()
     void loadVariableSets()
+    void loadElements()
   },
   { immediate: true },
 )
@@ -958,6 +1117,66 @@ watch(
                     </div>
                   </el-option>
                 </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="元素库" min-width="220">
+              <template #default="{ row }">
+                <div class="web-ui-element-picker">
+                  <el-select
+                    v-model="row.elementModuleId"
+                    clearable
+                    filterable
+                    :loading="loadingElements"
+                    :disabled="!stepNeedsLocator(row.type)"
+                    placeholder="模块"
+                    @change="handleStepElementModuleChange(row)"
+                  >
+                    <el-option v-for="item in elementModules" :key="item.id" :label="item.moduleName" :value="item.id" />
+                  </el-select>
+                  <el-select
+                    v-model="row.elementPageId"
+                    clearable
+                    filterable
+                    :loading="loadingElements"
+                    :disabled="!stepNeedsLocator(row.type)"
+                    placeholder="页面"
+                    @change="handleStepElementPageChange(row)"
+                  >
+                    <el-option v-for="item in getStepElementPages(row)" :key="item.id" :label="item.pageName" :value="item.id" />
+                  </el-select>
+                  <el-select
+                    v-model="row.elementGroupId"
+                    clearable
+                    filterable
+                    :loading="loadingElements"
+                    :disabled="!stepNeedsLocator(row.type) || !row.elementPageId"
+                    placeholder="分组"
+                    @change="handleStepElementGroupChange(row)"
+                  >
+                    <el-option v-for="item in getStepElementGroups(row)" :key="item.id" :label="item.groupName" :value="item.id" />
+                  </el-select>
+                  <el-select
+                    v-model="row.elementId"
+                    clearable
+                    filterable
+                    :loading="loadingElements"
+                    :disabled="!stepNeedsLocator(row.type)"
+                    :placeholder="stepNeedsLocator(row.type) ? '选择元素或手写' : '无需元素'"
+                    @change="handleStepElementChange(row, $event)"
+                  >
+                    <el-option
+                      v-for="item in getStepElementOptions(row)"
+                      :key="item.id"
+                      :label="formatElementOption(item)"
+                      :value="item.id"
+                    >
+                      <div class="web-ui-option">
+                        <span>{{ formatElementOption(item) }}</span>
+                        <small>{{ formatLocatorType(item.locatorType) }}：{{ item.locatorValue }}</small>
+                      </div>
+                    </el-option>
+                  </el-select>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="定位方式" min-width="132">
@@ -1237,6 +1456,11 @@ watch(
 
 .web-ui-step-table :deep(.el-input-number .el-input__inner) {
   text-align: left;
+}
+
+.web-ui-element-picker {
+  display: grid;
+  gap: var(--app-space-2);
 }
 
 .web-ui-locator-input {

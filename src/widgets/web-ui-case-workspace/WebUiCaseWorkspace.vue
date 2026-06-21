@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   CopyDocument,
   Delete,
@@ -57,22 +57,30 @@ import WebUiEnvironmentPanel from './WebUiEnvironmentPanel.vue'
 import WebUiReportShareDialog from './WebUiReportShareDialog.vue'
 import WebUiRunDetailDrawer from './WebUiRunDetailDrawer.vue'
 
+type WorkspaceMode = 'cases' | 'templates' | 'runs' | 'batches' | 'environments'
+type WorkspaceTab = Exclude<WorkspaceMode, 'templates'>
+
 const props = withDefaults(
   defineProps<{
     workspaceCode: string
     workspaceReady?: boolean
     workspaces?: WorkspaceItem[]
+    mode?: WorkspaceMode
   }>(),
   {
     workspaceReady: true,
     workspaces: () => [],
+    mode: 'cases',
   },
 )
 const route = useRoute()
+const router = useRouter()
 
-type WorkspaceTab = 'cases' | 'runs' | 'batches' | 'environments'
+function resolveModeTab(mode: WorkspaceMode): WorkspaceTab {
+  return mode === 'templates' ? 'cases' : mode
+}
 
-const activeTab = ref<WorkspaceTab>('cases')
+const activeTab = ref<WorkspaceTab>(resolveModeTab(props.mode))
 const loadingCases = ref(false)
 const loadingEnvironments = ref(false)
 const loadingRuns = ref(false)
@@ -193,6 +201,41 @@ const selectedBatchEnvironment = computed(() => enabledEnvironments.value.find(i
 const selectedBatchVariableSet = computed(() => enabledVariableSets.value.find(item => item.id === batchForm.variableSetId) ?? null)
 const visibleTemplates = computed(() => templates.value.length ? templates.value : WEB_UI_CASE_TEMPLATES)
 const usingBuiltinTemplates = computed(() => templates.value.length === 0)
+const isCasesMode = computed(() => props.mode === 'cases')
+const isTemplatesMode = computed(() => props.mode === 'templates')
+const isRunsMode = computed(() => props.mode === 'runs')
+const isBatchesMode = computed(() => props.mode === 'batches')
+const isEnvironmentsMode = computed(() => props.mode === 'environments')
+const workspaceTitle = computed(() => {
+  if (isTemplatesMode.value) {
+    return 'Web UI 模板库'
+  }
+  if (isRunsMode.value) {
+    return 'Web UI 执行记录'
+  }
+  if (isBatchesMode.value) {
+    return 'Web UI 批次报告'
+  }
+  if (isEnvironmentsMode.value) {
+    return 'Web UI 环境配置'
+  }
+  return 'Web UI 用例管理'
+})
+const workspaceLoading = computed(() => {
+  if (isTemplatesMode.value) {
+    return loadingTemplates.value
+  }
+  if (isRunsMode.value) {
+    return loadingRuns.value
+  }
+  if (isBatchesMode.value) {
+    return loadingBatches.value || loadingCiTokens.value
+  }
+  if (isEnvironmentsMode.value) {
+    return loadingEnvironments.value
+  }
+  return loadingCases.value || loadingEnvironments.value || loadingRuns.value || loadingBatches.value
+})
 
 function formatRunEnvironmentLabel(environment: WebUiEnvironmentItem) {
   const source = environment.source === 'CONFIG_CENTER' ? '配置中心' : 'Web UI'
@@ -276,6 +319,7 @@ const batchDetailSuccessRate = computed(() => {
   }
   return `${Math.round((summary.successCases / summary.totalCases) * 100)}%`
 })
+const batchDetailFailedRuns = computed(() => batchDetailRuns.value.filter(run => run.status === 'FAILED'))
 
 function buildBatchReportSummary() {
   const detail = batchDetail.value
@@ -342,7 +386,8 @@ async function syncReportDeepLink() {
   if (!isWorkspaceReady()) {
     return
   }
-  const tab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
+  const queryTab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
+  const tab = queryTab || props.mode
   const runId = getSingleQueryNumber(route.query.runId)
   const batchId = getSingleQueryNumber(route.query.batchId)
   const key = `${tab || ''}:${runId || ''}:${batchId || ''}:${props.workspaceCode}`
@@ -352,14 +397,12 @@ async function syncReportDeepLink() {
 
   if (tab === 'runs' && runId) {
     consumedDeepLinkKey = key
-    activeTab.value = 'runs'
     openRunDetail(runId)
     return
   }
 
   if (tab === 'batches' && batchId) {
     consumedDeepLinkKey = key
-    activeTab.value = 'batches'
     await openBatchDetail(batchId)
   }
 }
@@ -1046,6 +1089,9 @@ function handleCaseSelectionChange(selection: WebUiCaseItem[]) {
 }
 
 function openBatchRunDialog() {
+  if (batchSubmitting.value) {
+    return
+  }
   if (!selectedCases.value.length) {
     ElMessage.warning('请先选择要批量运行的用例')
     return
@@ -1059,6 +1105,9 @@ function openBatchRunDialog() {
 }
 
 async function submitBatchRun() {
+  if (batchSubmitting.value) {
+    return
+  }
   if (!selectedCases.value.length) {
     ElMessage.warning('请先选择要批量运行的用例')
     return
@@ -1076,8 +1125,10 @@ async function submitBatchRun() {
     })
     ElMessage.success(result.status === 'SUCCESS' ? '批量运行成功' : '批量运行完成，请查看批次报告')
     batchRunDialogVisible.value = false
-    activeTab.value = 'batches'
     await Promise.all([loadCases(), loadCaseStats(), loadRuns(), loadBatches()])
+    if (!isBatchesMode.value) {
+      await router.push({ path: '/automation/web/batches', query: { batchId: String(result.batchId) } })
+    }
     await openBatchDetail(result.batchId)
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1334,6 +1385,14 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => props.mode,
+  value => {
+    activeTab.value = resolveModeTab(value)
+    void syncReportDeepLink()
+  },
+)
+
 watch(editorVisible, () => {
   drawerStateSeq += 1
   copyCaseRequestSeq += 1
@@ -1382,23 +1441,31 @@ watch(
   <section class="web-ui-workspace">
     <header class="web-ui-workspace__header">
       <div>
-        <h2>Web UI 自动化</h2>
+        <h2>{{ workspaceTitle }}</h2>
         <p>{{ currentWorkspaceName }}</p>
       </div>
       <div class="web-ui-workspace__actions">
-        <AppButton :icon="RefreshRight" :loading="loadingCases || loadingEnvironments || loadingRuns || loadingBatches" @click="loadWorkspaceData">
+        <AppButton :icon="RefreshRight" :loading="workspaceLoading" @click="loadWorkspaceData">
           刷新
         </AppButton>
-        <AppButton :icon="VideoPlay" :disabled="!selectedCases.length" @click="openBatchRunDialog">
+        <AppButton v-if="isCasesMode" :icon="VideoPlay" :disabled="!selectedCases.length || batchSubmitting" :loading="batchSubmitting" @click="openBatchRunDialog">
           批量运行
         </AppButton>
-        <AppButton :icon="CopyDocument" @click="openTemplateDialog">从模板新建</AppButton>
-        <AppButton :icon="Upload" @click="openImportDialog">导入 JSON</AppButton>
-        <AppButton type="primary" :icon="Plus" @click="openCreateDrawer">新建用例</AppButton>
+        <AppButton v-if="isCasesMode" :icon="CopyDocument" @click="openTemplateDialog">从模板新建</AppButton>
+        <AppButton v-if="isCasesMode" :icon="Upload" @click="openImportDialog">导入 JSON</AppButton>
+        <AppButton v-if="isCasesMode" type="primary" :icon="Plus" @click="openCreateDrawer">新建用例</AppButton>
+        <AppButton
+          v-if="isTemplatesMode && usingBuiltinTemplates"
+          :loading="initializingTemplates"
+          @click="initializeBuiltinTemplates"
+        >
+          导入内置模板
+        </AppButton>
+        <AppButton v-if="isTemplatesMode" type="primary" :icon="Plus" @click="openCreateTemplateDialog">新建模板</AppButton>
       </div>
     </header>
 
-    <div class="web-ui-stats">
+    <div v-if="isCasesMode" class="web-ui-stats">
       <article v-for="stat in stats" :key="stat.label" class="web-ui-stat-card">
         <span>{{ stat.label }}</span>
         <strong>{{ stat.value }}</strong>
@@ -1406,7 +1473,7 @@ watch(
     </div>
 
     <el-tabs v-model="activeTab" class="web-ui-tabs">
-      <el-tab-pane label="用例列表" name="cases">
+      <el-tab-pane v-if="isCasesMode" label="用例列表" name="cases">
         <div class="web-ui-filter-toolbar">
           <el-input
             v-model="keyword"
@@ -1433,7 +1500,7 @@ watch(
 
         <div v-if="selectedCases.length" class="web-ui-selection-bar">
           已选择 {{ selectedCases.length }} 条用例
-          <AppButton size="small" :icon="VideoPlay" @click="openBatchRunDialog">批量运行</AppButton>
+          <AppButton size="small" :icon="VideoPlay" :loading="batchSubmitting" @click="openBatchRunDialog">批量运行</AppButton>
         </div>
 
         <div v-if="errorMessage && cases.length" class="web-ui-inline-error">
@@ -1504,6 +1571,7 @@ watch(
                     link
                     type="primary"
                     :loading="runningCaseId === row.id"
+                    :disabled="runSubmitting && runningCaseId !== row.id"
                     @click="openRunDialog(row)"
                   >
                     运行
@@ -1553,7 +1621,7 @@ watch(
         </template>
       </el-tab-pane>
 
-      <el-tab-pane label="执行记录" name="runs">
+      <el-tab-pane v-if="isRunsMode" label="执行记录" name="runs">
         <el-table
           v-loading="loadingRuns"
           class="web-ui-run-table"
@@ -1624,7 +1692,7 @@ watch(
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="批次报告" name="batches">
+      <el-tab-pane v-if="isBatchesMode" label="批次报告" name="batches">
         <div class="web-ui-ci-panel">
           <div class="web-ui-ci-panel__header">
             <div>
@@ -1750,7 +1818,7 @@ watch(
         </div>
       </el-tab-pane>
 
-      <el-tab-pane label="环境配置" name="environments">
+      <el-tab-pane v-if="isEnvironmentsMode" label="环境配置" name="environments">
         <WebUiEnvironmentPanel
           :workspace-code="workspaceCode"
           :environments="environments"
@@ -1759,6 +1827,40 @@ watch(
         />
       </el-tab-pane>
     </el-tabs>
+
+    <section v-if="isTemplatesMode" class="web-ui-template-page">
+      <div class="web-ui-template-toolbar">
+        <el-alert
+          :type="usingBuiltinTemplates ? 'info' : 'success'"
+          show-icon
+          :closable="false"
+          :title="usingBuiltinTemplates ? '当前工作空间暂无可维护模板，先显示内置模板兜底。' : `已加载 ${templates.length} 个团队模板。`"
+        />
+      </div>
+      <div v-loading="loadingTemplates" class="web-ui-template-list">
+        <article v-for="template in visibleTemplates" :key="getTemplateKey(template)" class="web-ui-template-card">
+          <div>
+            <h3>{{ getTemplateName(template) }}</h3>
+            <p>{{ getTemplateDescription(template) }}</p>
+            <span>{{ getTemplateModuleName(template) }} · {{ getTemplateStepCount(template) }} 步 · {{ formatBrowserType(template.browserType) }}</span>
+          </div>
+          <div class="web-ui-template-card__actions">
+            <AppButton
+              type="primary"
+              size="small"
+              :loading="applyingTemplateId === template.id"
+              @click="createCaseFromTemplate(template)"
+            >
+              使用模板
+            </AppButton>
+            <template v-if="isMaintainedTemplate(template)">
+              <AppButton size="small" :loading="applyingTemplateId === template.id" @click="openEditTemplateDialog(template)">编辑</AppButton>
+              <AppButton size="small" type="danger" :loading="deletingTemplateId === template.id" @click="deleteTemplate(template)">删除</AppButton>
+            </template>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <el-dialog v-model="singleRunDialogVisible" title="运行 Web UI 用例" width="460px">
       <el-form label-width="96px">
@@ -1802,7 +1904,7 @@ watch(
         </el-form-item>
       </el-form>
       <template #footer>
-        <AppButton @click="singleRunDialogVisible = false">取消</AppButton>
+        <AppButton :disabled="runSubmitting" @click="singleRunDialogVisible = false">取消</AppButton>
         <AppButton type="primary" :loading="runSubmitting" @click="submitSingleRun">开始运行</AppButton>
       </template>
     </el-dialog>
@@ -1855,7 +1957,7 @@ watch(
         </el-form-item>
       </el-form>
       <template #footer>
-        <AppButton @click="batchRunDialogVisible = false">取消</AppButton>
+        <AppButton :disabled="batchSubmitting" @click="batchRunDialogVisible = false">取消</AppButton>
         <AppButton type="primary" :loading="batchSubmitting" @click="submitBatchRun">开始批量运行</AppButton>
       </template>
     </el-dialog>
@@ -1939,6 +2041,20 @@ watch(
           :closable="false"
           :title="batchDetail.summary.failureSummary"
         />
+
+        <section v-if="batchDetailFailedRuns.length" class="web-ui-batch-failed-runs">
+          <header>
+            <span>失败用例</span>
+            <strong>{{ batchDetailFailedRuns.length }} 条需要处理</strong>
+          </header>
+          <article v-for="run in batchDetailFailedRuns" :key="run.id">
+            <div>
+              <strong>{{ run.caseName }}</strong>
+              <p>{{ run.failureSummary || '未记录失败摘要，请打开运行报告查看步骤证据。' }}</p>
+            </div>
+            <AppButton size="small" type="primary" :icon="View" @click="openRunDetail(run.id)">查看报告</AppButton>
+          </article>
+        </section>
 
         <el-table
           :data="batchDetailRuns"
@@ -2182,6 +2298,18 @@ watch(
   min-width: 0;
 }
 
+.web-ui-tabs :deep(.el-tabs__header) {
+  display: none;
+}
+
+.web-ui-tabs :deep(.el-tabs__content) {
+  overflow: visible;
+}
+
+.web-ui-template-page {
+  min-width: 0;
+}
+
 .web-ui-filter-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -2399,6 +2527,53 @@ watch(
 
 .web-ui-batch-failure {
   margin-bottom: var(--app-space-3);
+}
+
+.web-ui-batch-failed-runs {
+  display: grid;
+  gap: var(--app-space-2);
+  margin-bottom: var(--app-space-3);
+  padding: var(--app-space-3);
+  border: 1px solid #fecaca;
+  border-radius: var(--app-radius-md);
+  background: #fff7f7;
+}
+
+.web-ui-batch-failed-runs header,
+.web-ui-batch-failed-runs article {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
+.web-ui-batch-failed-runs header span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.web-ui-batch-failed-runs header strong,
+.web-ui-batch-failed-runs article strong {
+  color: var(--app-danger);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.web-ui-batch-failed-runs article {
+  padding: var(--app-space-2) 0 0;
+  border-top: 1px solid #fecaca;
+}
+
+.web-ui-batch-failed-runs article > div {
+  min-width: 0;
+}
+
+.web-ui-batch-failed-runs p {
+  margin: var(--app-space-1) 0 0;
+  overflow-wrap: anywhere;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-md);
 }
 
 .web-ui-batch-table :deep(.web-ui-batch-table__row--failed > td) {

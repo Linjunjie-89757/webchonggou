@@ -53,6 +53,7 @@ import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-prov
 import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
+import { ApiExecutionWorkspace } from '@/widgets/api-execution-workspace'
 import { ApiScenarioWorkspace } from '@/widgets/api-scenario-workspace'
 import ApiCodeEditor from './ApiCodeEditor.vue'
 import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
@@ -3758,7 +3759,7 @@ onBeforeUnmount(() => {
       <div class="api-interface-tab-nav">
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'definitions' }]" type="button" @click="activeTopTab = 'definitions'">接口</button>
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'scenarios' }]" type="button" @click="activeTopTab = 'scenarios'">场景</button>
-        <button class="api-interface-tab" type="button" disabled>执行</button>
+        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'execution' }]" type="button" @click="activeTopTab = 'execution'">执行</button>
         <button class="api-interface-tab" type="button" disabled>报告</button>
         <button class="api-interface-tab" type="button" disabled>设置</button>
       </div>
@@ -5026,6 +5027,15 @@ onBeforeUnmount(() => {
 
     <ApiScenarioWorkspace
       v-else-if="activeTopTab === 'scenarios'"
+      :workspace-code="props.workspaceCode"
+      :workspace-ready="props.workspaceReady"
+      :workspaces="props.workspaces"
+      :environments="environments"
+      :variable-sets="variableSets"
+    />
+
+    <ApiExecutionWorkspace
+      v-else-if="activeTopTab === 'execution'"
       :workspace-code="props.workspaceCode"
       :workspace-ready="props.workspaceReady"
       :workspaces="props.workspaces"

@@ -51,6 +51,8 @@ export interface WebUiCaseStepItem {
   id?: number | null
   name?: string | null
   type: WebUiStepType
+  elementId?: number | null
+  elementName?: string | null
   locatorType?: WebUiLocatorType | null
   locatorValue?: string | null
   inputValue?: string | null
@@ -175,6 +177,247 @@ export interface SaveWebUiEnvironmentPayload {
   headless?: boolean
   defaultTimeoutMs?: number
   status?: WebUiEnvironmentStatus
+}
+
+export interface WebUiElementItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  pageId: number | null
+  groupId: number | null
+  pageName: string
+  groupName: string | null
+  elementName: string
+  locatorType: WebUiLocatorType
+  locatorValue: string
+  description: string | null
+  status: WebUiCaseStatus
+  lastValidateResult: 'PASSED' | 'FAILED' | string | null
+  lastValidateAt: string | null
+  lastValidateMessage: string | null
+  lastMatchCount: number | null
+  createdAt: string | null
+  updatedAt: string | null
+  usageCount: number
+}
+
+export type WebUiElementQualityIssueLevel = 'HIGH' | 'MEDIUM' | 'LOW'
+
+export interface WebUiElementBatchBlockedItem {
+  elementId: number
+  elementName: string
+  usageCount: number
+  reason: string
+}
+
+export interface WebUiElementBatchResult {
+  requestedCount: number
+  updatedCount: number
+  deletedCount: number
+  blockedCount: number
+  blockedItems: WebUiElementBatchBlockedItem[]
+}
+
+export interface BatchUpdateWebUiElementStatusPayload {
+  elementIds: number[]
+  status: WebUiCaseStatus
+}
+
+export interface BatchMoveWebUiElementPayload {
+  elementIds: number[]
+  pageId: number
+  groupId?: number | null
+}
+
+export interface BatchDeleteWebUiElementPayload {
+  elementIds: number[]
+}
+
+export interface BatchValidateWebUiElementPayload {
+  elementIds: number[]
+  baseUrl: string
+  browserType?: WebUiBrowserType
+  headless?: boolean
+  timeoutMs?: number | null
+}
+
+export interface WebUiElementValidateResultItem {
+  elementId: number
+  elementName: string
+  matched: boolean
+  matchCount: number
+  errorMessage: string | null
+  screenshotBase64: string | null
+}
+
+export interface WebUiElementBatchValidateResult {
+  totalCount: number
+  passedCount: number
+  failedCount: number
+  results: WebUiElementValidateResultItem[]
+}
+
+export interface WebUiElementQualityIssue {
+  id: string
+  level: WebUiElementQualityIssueLevel
+  title: string
+  description: string
+  elementId: number
+  elementName: string
+  pageId: number | null
+  groupId: number | null
+  pageName: string
+  groupName: string | null
+  locatorType: WebUiLocatorType
+  locatorValue: string
+  usageCount: number
+  lastValidateResult: string | null
+  lastValidateAt: string | null
+}
+
+export interface WebUiElementQualityCheckResult {
+  totalElements: number
+  highRiskCount: number
+  mediumRiskCount: number
+  lowRiskCount: number
+  issues: WebUiElementQualityIssue[]
+}
+
+export type WebUiElementReferenceSourceType = 'CASE' | 'TEMPLATE'
+
+export interface WebUiElementReferenceItem {
+  sourceType: WebUiElementReferenceSourceType | string
+  sourceId: number
+  sourceName: string
+  moduleName: string | null
+  stepId: number
+  stepName: string | null
+  stepType: WebUiStepType | string
+  locatorType: WebUiLocatorType | null
+  locatorValue: string | null
+  enabled: boolean
+  sortOrder: number
+  updatedAt: string | null
+}
+
+export interface WebUiElementReferenceSyncResult {
+  caseStepCount: number
+  templateStepCount: number
+  totalCount: number
+}
+
+export interface SaveWebUiElementPayload {
+  workspaceCode?: string
+  pageId?: number | null
+  groupId?: number | null
+  pageName: string
+  groupName?: string | null
+  elementName: string
+  locatorType: WebUiLocatorType
+  locatorValue: string
+  description?: string | null
+  status?: WebUiCaseStatus
+}
+
+export interface WebUiElementListQuery {
+  keyword?: string
+  moduleId?: number | null
+  pageId?: number | null
+  groupId?: number | null
+  pageName?: string
+  groupName?: string
+  status?: WebUiCaseStatus | ''
+  pageNo?: number
+  pageSize?: number
+}
+
+export interface WebUiElementPageItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  moduleId: number | null
+  moduleName: string | null
+  pageName: string
+  pagePath: string | null
+  description: string | null
+  sortOrder: number
+  status: WebUiCaseStatus
+  groupCount: number
+  elementCount: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface WebUiElementGroupItem {
+  id: number
+  pageId: number
+  workspaceCode: string
+  workspaceName: string | null
+  groupName: string
+  description: string | null
+  sortOrder: number
+  status: WebUiCaseStatus
+  elementCount: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface SaveWebUiElementPagePayload {
+  workspaceCode?: string
+  moduleId?: number | null
+  moduleName?: string | null
+  pageName: string
+  pagePath?: string | null
+  description?: string | null
+  sortOrder?: number | null
+  status?: WebUiCaseStatus
+}
+
+export interface WebUiElementModuleItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  moduleName: string
+  description: string | null
+  sortOrder: number
+  status: WebUiCaseStatus
+  pageCount: number
+  elementCount: number
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface SaveWebUiElementModulePayload {
+  workspaceCode?: string
+  moduleName: string
+  description?: string | null
+  sortOrder?: number | null
+  status?: WebUiCaseStatus
+}
+
+export interface SaveWebUiElementGroupPayload {
+  workspaceCode?: string
+  pageId: number
+  groupName: string
+  description?: string | null
+  sortOrder?: number | null
+  status?: WebUiCaseStatus
+}
+
+export interface WebUiElementTreeNode {
+  id: string
+  rawId: number | null
+  type: 'ALL' | 'PAGE' | 'GROUP'
+  label: string
+  elementCount: number
+  children: WebUiElementTreeNode[]
+}
+
+export interface ValidateWebUiElementPayload {
+  baseUrl: string
+  browserType?: WebUiBrowserType
+  headless?: boolean
+  timeoutMs?: number | null
 }
 
 export interface ValidateWebUiLocatorPayload {

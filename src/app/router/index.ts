@@ -192,11 +192,60 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'automation/web',
-        name: 'automation-web',
+        redirect: to => ({ path: '/automation/web/cases', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'automation/web/cases',
+        name: 'automation-web-cases',
         component: WebAutomationPage,
         meta: {
-          title: 'Web UI 自动化',
-          description: '管理 Web UI 用例、环境配置、执行记录与失败证据。',
+          title: 'Web UI 用例管理',
+          description: '管理 Web UI 自动化用例、步骤和调试运行。',
+        },
+      },
+      {
+        path: 'automation/web/elements',
+        name: 'automation-web-elements',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 元素库',
+          description: '维护页面对象、元素定位器、验证结果和用例引用关系。',
+        },
+      },
+      {
+        path: 'automation/web/templates',
+        name: 'automation-web-templates',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 模板库',
+          description: '沉淀和维护常用 Web UI 用例模板。',
+        },
+      },
+      {
+        path: 'automation/web/runs',
+        name: 'automation-web-runs',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 执行记录',
+          description: '查看单次运行报告、失败步骤和截图证据。',
+        },
+      },
+      {
+        path: 'automation/web/batches',
+        name: 'automation-web-batches',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 批次报告',
+          description: '查看批量运行、CI 触发和批次结果。',
+        },
+      },
+      {
+        path: 'automation/web/environments',
+        name: 'automation-web-environments',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 环境配置',
+          description: '管理 Web UI 运行环境和默认变量集。',
         },
       },
       {

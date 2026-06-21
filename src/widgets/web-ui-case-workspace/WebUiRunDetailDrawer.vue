@@ -3,7 +3,9 @@ import { computed, ref, watch } from 'vue'
 
 import {
   CopyDocument,
+  Download,
   Link,
+  Picture,
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
@@ -326,15 +328,17 @@ watch(
                 <dd class="web-ui-run-evidence-card__error">{{ step.errorMessage || '-' }}</dd>
               </div>
             </dl>
-            <el-link
+            <div
               v-if="step.screenshotUrl"
               class="web-ui-run-evidence-card__screenshot"
-              type="primary"
-              :href="step.screenshotUrl"
-              target="_blank"
             >
-              打开失败截图
-            </el-link>
+              <el-button size="small" type="primary" :icon="Picture" tag="a" :href="step.screenshotUrl" target="_blank">
+                打开失败截图
+              </el-button>
+              <el-button size="small" :icon="Download" tag="a" :href="step.screenshotUrl" download>
+                下载截图
+              </el-button>
+            </div>
           </article>
         </section>
 
@@ -373,7 +377,10 @@ watch(
                   <div class="web-ui-run-step-detail__wide">
                     <dt>截图证据</dt>
                     <dd>
-                      <el-link v-if="row.screenshotUrl" type="primary" :href="row.screenshotUrl" target="_blank">打开截图</el-link>
+                      <div v-if="row.screenshotUrl" class="web-ui-run-step-detail__evidence-actions">
+                        <el-button size="small" :icon="Picture" tag="a" :href="row.screenshotUrl" target="_blank">打开截图</el-button>
+                        <el-button size="small" :icon="Download" tag="a" :href="row.screenshotUrl" download>下载截图</el-button>
+                      </div>
                       <span v-else>-</span>
                     </dd>
                   </div>
@@ -419,7 +426,7 @@ watch(
           </el-table-column>
           <el-table-column label="证据" width="96">
             <template #default="{ row }">
-              <el-link v-if="row.screenshotUrl" type="primary" :href="row.screenshotUrl" target="_blank">截图</el-link>
+              <el-tag v-if="row.screenshotUrl" type="warning" effect="light">有截图</el-tag>
               <span v-else>-</span>
             </template>
           </el-table-column>
@@ -684,7 +691,21 @@ watch(
 }
 
 .web-ui-run-evidence-card__screenshot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
   justify-self: flex-start;
+}
+
+.web-ui-run-evidence-card__screenshot .el-button + .el-button,
+.web-ui-run-step-detail__evidence-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.web-ui-run-step-detail__evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
 }
 
 .web-ui-run-step-table {

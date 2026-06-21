@@ -2,13 +2,22 @@ import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shar
 import { env } from '@/shared/config/env'
 
 import type {
+  BatchDeleteWebUiElementPayload,
+  BatchMoveWebUiElementPayload,
+  BatchUpdateWebUiElementStatusPayload,
+  BatchValidateWebUiElementPayload,
   PageResponse,
   SaveWebUiCasePayload,
   SaveWebUiCaseTemplatePayload,
   SaveWebUiCiTokenPayload,
+  SaveWebUiElementGroupPayload,
+  SaveWebUiElementModulePayload,
+  SaveWebUiElementPagePayload,
+  SaveWebUiElementPayload,
   SaveWebUiEnvironmentPayload,
   SaveWebUiReportSharePayload,
   SaveWebUiTemplateFromCasePayload,
+  ValidateWebUiElementPayload,
   ValidateWebUiLocatorPayload,
   ValidateWebUiLocatorResponse,
   WebUiBatchRunRequest,
@@ -22,6 +31,20 @@ import type {
   WebUiCaseTemplateListQuery,
   WebUiCiTokenCreated,
   WebUiCiTokenSummary,
+  WebUiElementBatchBlockedItem,
+  WebUiElementBatchResult,
+  WebUiElementBatchValidateResult,
+  WebUiElementItem,
+  WebUiElementListQuery,
+  WebUiElementQualityCheckResult,
+  WebUiElementQualityIssue,
+  WebUiElementReferenceItem,
+  WebUiElementReferenceSyncResult,
+  WebUiElementValidateResultItem,
+  WebUiElementGroupItem,
+  WebUiElementModuleItem,
+  WebUiElementPageItem,
+  WebUiElementTreeNode,
   WebUiEnvironmentItem,
   WebUiRunBatchDetail,
   WebUiRunBatchListQuery,
@@ -101,6 +124,8 @@ function normalizeStep(item: WebUiCaseStepItem): WebUiCaseStepItem {
     id: item.id ?? null,
     name: item.name || raw.stepName || null,
     type: item.type || raw.stepType || 'OPEN',
+    elementId: item.elementId === null || item.elementId === undefined ? null : Number(item.elementId),
+    elementName: item.elementName || null,
     locatorType: item.locatorType || null,
     locatorValue: item.locatorValue || null,
     inputValue: item.inputValue || null,
@@ -200,6 +225,192 @@ function normalizeEnvironment(item: WebUiEnvironmentItem): WebUiEnvironmentItem 
       : Number(item.defaultVariableSetId),
     defaultVariableSetName: item.defaultVariableSetName || null,
     updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeElement(item: WebUiElementItem): WebUiElementItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    pageId: item.pageId === null || item.pageId === undefined ? null : Number(item.pageId),
+    groupId: item.groupId === null || item.groupId === undefined ? null : Number(item.groupId),
+    pageName: item.pageName || '-',
+    groupName: item.groupName || null,
+    elementName: item.elementName || '-',
+    locatorType: item.locatorType || 'CSS',
+    locatorValue: item.locatorValue || '',
+    description: item.description || null,
+    status: item.status || 'ENABLED',
+    lastValidateResult: item.lastValidateResult || null,
+    lastValidateAt: item.lastValidateAt || null,
+    lastValidateMessage: item.lastValidateMessage || null,
+    lastMatchCount: item.lastMatchCount === null || item.lastMatchCount === undefined ? null : Number(item.lastMatchCount),
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+    usageCount: Number(item.usageCount || 0),
+  }
+}
+
+function normalizeElementBatchBlockedItem(item: WebUiElementBatchBlockedItem): WebUiElementBatchBlockedItem {
+  return {
+    elementId: Number(item.elementId),
+    elementName: item.elementName || '-',
+    usageCount: Number(item.usageCount || 0),
+    reason: item.reason || '',
+  }
+}
+
+function normalizeElementBatchResult(item: WebUiElementBatchResult): WebUiElementBatchResult {
+  return {
+    requestedCount: Number(item.requestedCount || 0),
+    updatedCount: Number(item.updatedCount || 0),
+    deletedCount: Number(item.deletedCount || 0),
+    blockedCount: Number(item.blockedCount || 0),
+    blockedItems: Array.isArray(item.blockedItems) ? item.blockedItems.map(normalizeElementBatchBlockedItem) : [],
+  }
+}
+
+function normalizeElementQualityIssue(item: WebUiElementQualityIssue): WebUiElementQualityIssue {
+  return {
+    ...item,
+    id: item.id || `${item.elementId}-${item.title}`,
+    level: item.level || 'LOW',
+    title: item.title || '-',
+    description: item.description || '',
+    elementId: Number(item.elementId),
+    elementName: item.elementName || '-',
+    pageId: item.pageId === null || item.pageId === undefined ? null : Number(item.pageId),
+    groupId: item.groupId === null || item.groupId === undefined ? null : Number(item.groupId),
+    pageName: item.pageName || '-',
+    groupName: item.groupName || null,
+    locatorType: item.locatorType || 'CSS',
+    locatorValue: item.locatorValue || '',
+    usageCount: Number(item.usageCount || 0),
+    lastValidateResult: item.lastValidateResult || null,
+    lastValidateAt: item.lastValidateAt || null,
+  }
+}
+
+function normalizeElementQualityCheckResult(item: WebUiElementQualityCheckResult): WebUiElementQualityCheckResult {
+  return {
+    totalElements: Number(item.totalElements || 0),
+    highRiskCount: Number(item.highRiskCount || 0),
+    mediumRiskCount: Number(item.mediumRiskCount || 0),
+    lowRiskCount: Number(item.lowRiskCount || 0),
+    issues: Array.isArray(item.issues) ? item.issues.map(normalizeElementQualityIssue) : [],
+  }
+}
+
+function normalizeElementValidateResultItem(item: WebUiElementValidateResultItem): WebUiElementValidateResultItem {
+  return {
+    elementId: Number(item.elementId),
+    elementName: item.elementName || '-',
+    matched: Boolean(item.matched),
+    matchCount: Number(item.matchCount || 0),
+    errorMessage: item.errorMessage || null,
+    screenshotBase64: item.screenshotBase64 || null,
+  }
+}
+
+function normalizeElementBatchValidateResult(item: WebUiElementBatchValidateResult): WebUiElementBatchValidateResult {
+  return {
+    totalCount: Number(item.totalCount || 0),
+    passedCount: Number(item.passedCount || 0),
+    failedCount: Number(item.failedCount || 0),
+    results: Array.isArray(item.results) ? item.results.map(normalizeElementValidateResultItem) : [],
+  }
+}
+
+function normalizeElementReference(item: WebUiElementReferenceItem): WebUiElementReferenceItem {
+  return {
+    ...item,
+    sourceType: item.sourceType || 'CASE',
+    sourceId: Number(item.sourceId),
+    sourceName: item.sourceName || '-',
+    moduleName: item.moduleName || null,
+    stepId: Number(item.stepId),
+    stepName: item.stepName || null,
+    stepType: item.stepType || 'OPEN',
+    locatorType: item.locatorType || null,
+    locatorValue: item.locatorValue || null,
+    enabled: item.enabled !== false,
+    sortOrder: Number(item.sortOrder || 0),
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeElementReferenceSyncResult(item: WebUiElementReferenceSyncResult): WebUiElementReferenceSyncResult {
+  return {
+    caseStepCount: Number(item.caseStepCount || 0),
+    templateStepCount: Number(item.templateStepCount || 0),
+    totalCount: Number(item.totalCount || 0),
+  }
+}
+
+function normalizeElementPage(item: WebUiElementPageItem): WebUiElementPageItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    moduleId: item.moduleId === null || item.moduleId === undefined ? null : Number(item.moduleId),
+    moduleName: item.moduleName || null,
+    pageName: item.pageName || '-',
+    pagePath: item.pagePath || null,
+    description: item.description || null,
+    sortOrder: Number(item.sortOrder || 0),
+    status: item.status || 'ENABLED',
+    groupCount: Number(item.groupCount || 0),
+    elementCount: Number(item.elementCount || 0),
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeElementModule(item: WebUiElementModuleItem): WebUiElementModuleItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    moduleName: item.moduleName || '-',
+    description: item.description || null,
+    sortOrder: Number(item.sortOrder || 0),
+    status: item.status || 'ENABLED',
+    pageCount: Number(item.pageCount || 0),
+    elementCount: Number(item.elementCount || 0),
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeElementGroup(item: WebUiElementGroupItem): WebUiElementGroupItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    pageId: Number(item.pageId),
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    groupName: item.groupName || '-',
+    description: item.description || null,
+    sortOrder: Number(item.sortOrder || 0),
+    status: item.status || 'ENABLED',
+    elementCount: Number(item.elementCount || 0),
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeElementTreeNode(item: WebUiElementTreeNode): WebUiElementTreeNode {
+  return {
+    id: item.id || `${item.type}-${item.rawId || 'all'}`,
+    rawId: item.rawId === null || item.rawId === undefined ? null : Number(item.rawId),
+    type: item.type || 'PAGE',
+    label: item.label || '-',
+    elementCount: Number(item.elementCount || 0),
+    children: Array.isArray(item.children) ? item.children.map(normalizeElementTreeNode) : [],
   }
 }
 
@@ -432,6 +643,7 @@ function toBackendCasePayload(data: SaveWebUiCasePayload) {
       ...step,
       stepName: step.name,
       stepType: step.type,
+      elementId: step.elementId ?? null,
     })),
   }
 }
@@ -444,6 +656,7 @@ function toBackendTemplatePayload(data: SaveWebUiCaseTemplatePayload) {
       ...step,
       stepName: step.name,
       stepType: step.type,
+      elementId: step.elementId ?? null,
     })),
   }
 }
@@ -543,6 +756,209 @@ export const webUiAutomationApi = {
       headers: workspaceHeaders(workspaceCode),
     })
     return unwrapApiResponse(payload)
+  },
+
+  async getElements(workspaceCode = 'ALL', query?: WebUiElementListQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<WebUiElementItem>>>('/automation/web/elements', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
+    })
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeElement)
+  },
+
+  async checkElementQuality(workspaceCode = 'ALL', query?: WebUiElementListQuery) {
+    const payload = await httpGet<ApiResponse<WebUiElementQualityCheckResult>>('/automation/web/elements/quality-check', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
+    })
+    return normalizeElementQualityCheckResult(unwrapApiResponse(payload))
+  },
+
+  async batchUpdateElementStatus(workspaceCode = 'ALL', data: BatchUpdateWebUiElementStatusPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementBatchResult>, BatchUpdateWebUiElementStatusPayload>(
+      '/automation/web/elements/batch/status',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementBatchResult(unwrapApiResponse(payload))
+  },
+
+  async batchMoveElements(workspaceCode = 'ALL', data: BatchMoveWebUiElementPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementBatchResult>, BatchMoveWebUiElementPayload>(
+      '/automation/web/elements/batch/move',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementBatchResult(unwrapApiResponse(payload))
+  },
+
+  async batchDeleteElements(workspaceCode = 'ALL', data: BatchDeleteWebUiElementPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementBatchResult>, BatchDeleteWebUiElementPayload>(
+      '/automation/web/elements/batch/delete',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementBatchResult(unwrapApiResponse(payload))
+  },
+
+  async batchValidateElements(workspaceCode = 'ALL', data: BatchValidateWebUiElementPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementBatchValidateResult>, BatchValidateWebUiElementPayload>(
+      '/automation/web/elements/batch/validate',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementBatchValidateResult(unwrapApiResponse(payload))
+  },
+
+  async getElementTree(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<WebUiElementTreeNode[]>>('/automation/web/elements/tree', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return (unwrapApiResponse(payload) || []).map(normalizeElementTreeNode)
+  },
+
+  async getElementPages(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<PageResponse<WebUiElementPageItem>>>('/automation/web/elements/pages', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeElementPage)
+  },
+
+  async getElementModules(workspaceCode = 'ALL') {
+    const payload = await httpGet<ApiResponse<PageResponse<WebUiElementModuleItem>>>('/automation/web/elements/modules', {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeElementModule)
+  },
+
+  async createElementModule(workspaceCode = 'ALL', data: SaveWebUiElementModulePayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementModuleItem>, SaveWebUiElementModulePayload>(
+      '/automation/web/elements/modules',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementModule(unwrapApiResponse(payload))
+  },
+
+  async createElementPage(workspaceCode = 'ALL', data: SaveWebUiElementPagePayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementPageItem>, SaveWebUiElementPagePayload>(
+      '/automation/web/elements/pages',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementPage(unwrapApiResponse(payload))
+  },
+
+  async updateElementPage(workspaceCode = 'ALL', id: number, data: SaveWebUiElementPagePayload) {
+    const payload = await httpPut<ApiResponse<WebUiElementPageItem>, SaveWebUiElementPagePayload>(
+      `/automation/web/elements/pages/${id}`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementPage(unwrapApiResponse(payload))
+  },
+
+  async deleteElementPage(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/web/elements/pages/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return unwrapApiResponse(payload)
+  },
+
+  async getElementGroups(workspaceCode = 'ALL', pageId?: number | null) {
+    const payload = await httpGet<ApiResponse<PageResponse<WebUiElementGroupItem>>>('/automation/web/elements/groups', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery({ pageId }),
+    })
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeElementGroup)
+  },
+
+  async createElementGroup(workspaceCode = 'ALL', data: SaveWebUiElementGroupPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementGroupItem>, SaveWebUiElementGroupPayload>(
+      '/automation/web/elements/groups',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementGroup(unwrapApiResponse(payload))
+  },
+
+  async updateElementGroup(workspaceCode = 'ALL', id: number, data: SaveWebUiElementGroupPayload) {
+    const payload = await httpPut<ApiResponse<WebUiElementGroupItem>, SaveWebUiElementGroupPayload>(
+      `/automation/web/elements/groups/${id}`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementGroup(unwrapApiResponse(payload))
+  },
+
+  async deleteElementGroup(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/web/elements/groups/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return unwrapApiResponse(payload)
+  },
+
+  async getElementDetail(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<WebUiElementItem>>(`/automation/web/elements/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return normalizeElement(unwrapApiResponse(payload))
+  },
+
+  async getElementReferences(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<WebUiElementReferenceItem[]>>(`/automation/web/elements/${id}/references`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return (unwrapApiResponse(payload) || []).map(normalizeElementReference)
+  },
+
+  async syncElementReferenceLocators(workspaceCode = 'ALL', id: number) {
+    const payload = await httpPost<ApiResponse<WebUiElementReferenceSyncResult>, Record<string, never>>(
+      `/automation/web/elements/${id}/references/sync-locator`,
+      {},
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementReferenceSyncResult(unwrapApiResponse(payload))
+  },
+
+  async createElement(workspaceCode = 'ALL', data: SaveWebUiElementPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementItem>, SaveWebUiElementPayload>(
+      '/automation/web/elements',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElement(unwrapApiResponse(payload))
+  },
+
+  async updateElement(workspaceCode = 'ALL', id: number, data: SaveWebUiElementPayload) {
+    const payload = await httpPut<ApiResponse<WebUiElementItem>, SaveWebUiElementPayload>(
+      `/automation/web/elements/${id}`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElement(unwrapApiResponse(payload))
+  },
+
+  async deleteElement(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/web/elements/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return unwrapApiResponse(payload)
+  },
+
+  async validateElement(workspaceCode = 'ALL', id: number, data: ValidateWebUiElementPayload) {
+    const payload = await httpPost<ApiResponse<ValidateWebUiLocatorResponse>, ValidateWebUiElementPayload>(
+      `/automation/web/elements/${id}/validate`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    const result = unwrapApiResponse(payload)
+    return {
+      matched: Boolean(result.matched),
+      matchCount: Number(result.matchCount || 0),
+      errorMessage: result.errorMessage || null,
+      screenshotBase64: result.screenshotBase64 || null,
+    }
   },
 
   async runCase(workspaceCode = 'ALL', id: number, data: WebUiRunRequest = {}) {

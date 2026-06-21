@@ -291,6 +291,8 @@ export interface ApiScenarioListQuery {
   moduleId?: number | null
   keyword?: string
   status?: string
+  pageNo?: number
+  pageSize?: number
 }
 
 export interface ApiAiCaseGenerationOptionPayload {
