@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { Cpu, InfoFilled } from '@element-plus/icons-vue'
 
 import { type AiProviderConnectionItem } from '@/entities/ai-provider'
@@ -13,13 +12,10 @@ import {
   type WebUiElementCollectTaskResponse,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
-import {
-  buildCollectTaskStages,
-  type WebUiCollectTaskStageStatus,
-} from '@/entities/web-ui-automation/lib/collectTask'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import type { LocalRunnerHealthView } from '@/entities/web-ui-automation/lib/localRunnerClient'
+import WebUiElementCollectTaskPanel from './WebUiElementCollectTaskPanel.vue'
 
 type AiCollectMode = 'ONLINE' | 'OFFLINE'
 type AiCollectScope = 'ALL' | 'FORM' | 'BUTTON' | 'TABLE' | 'DIALOG'
@@ -93,6 +89,7 @@ const props = defineProps<{
   collectFilterSummary: WebUiElementCollectFilterSummary | null
   collectTask: WebUiElementCollectTaskResponse | null
   collectTaskRefreshing: boolean
+  collectTaskPolling: boolean
   selectedCount: number
   candidateFilter: AiCandidateFilter
   collecting: boolean
@@ -102,8 +99,6 @@ const props = defineProps<{
   localRunnerHealth: LocalRunnerHealthView | null
   saving: boolean
 }>()
-
-const collectTaskStages = computed(() => buildCollectTaskStages(props.collectTask))
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -158,37 +153,6 @@ function formatAiCandidateSource(source?: string | null) {
 
 function getAiCandidateSourceTagType(source?: string | null) {
   return source === 'AI_SUPPLEMENT' ? 'warning' : 'info'
-}
-
-function formatCollectTaskStatus(status?: string | null) {
-  if (status === 'COMPLETED') return '已完成'
-  if (status === 'PROCESSING') return '处理中'
-  if (status === 'PENDING') return '待处理'
-  if (status === 'FAILED') return '失败'
-  if (status === 'DEGRADED') return '已降级'
-  return status || '未知'
-}
-
-function getCollectTaskStatusTagType(status?: string | null) {
-  if (status === 'COMPLETED') return 'success'
-  if (status === 'FAILED') return 'danger'
-  if (status === 'DEGRADED') return 'warning'
-  return 'info'
-}
-
-function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
-  if (status === 'done') return 'success'
-  if (status === 'running') return 'process'
-  if (status === 'failed') return 'error'
-  return 'wait'
-}
-
-function formatCollectFilterReason(reason?: string | null) {
-  if (reason === 'EMPTY_LOCATOR') return '空定位'
-  if (reason === 'DUPLICATE_LOCATOR') return '重复定位'
-  if (reason === 'LOW_STABILITY') return '低稳定性'
-  if (reason === 'FINAL_CANDIDATE') return '最终候选'
-  return reason || '未知'
 }
 
 function isAiCandidateSaveable(candidate: AiElementCandidate) {
@@ -370,61 +334,13 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
           </el-form-item>
         </el-form>
 
-        <section v-if="collectTask" class="web-ui-ai-collect__task">
-          <div class="web-ui-ai-collect__task-header">
-            <strong>采集任务 #{{ collectTask.taskId }}</strong>
-            <el-tag :type="getCollectTaskStatusTagType(collectTask.status)" effect="light">
-              {{ formatCollectTaskStatus(collectTask.status) }}
-            </el-tag>
-            <span>{{ collectTask.source }}</span>
-            <AppButton
-              size="small"
-              :loading="collectTaskRefreshing"
-              @click="emit('refresh-collect-task')"
-            >
-              刷新
-            </AppButton>
-          </div>
-          <div class="web-ui-ai-collect__task-meta">
-            <span v-if="collectTask.pageTitle">页面：{{ collectTask.pageTitle }}</span>
-            <span v-if="collectTask.actualUrl">地址：{{ collectTask.actualUrl }}</span>
-            <span v-if="collectTask.createdAt">创建：{{ collectTask.createdAt }}</span>
-            <span v-if="collectTask.completedAt">完成：{{ collectTask.completedAt }}</span>
-          </div>
-          <el-progress
-            :percentage="collectTask.progressPercent"
-            :status="collectTask.status === 'FAILED' ? 'exception' : collectTask.status === 'COMPLETED' ? 'success' : undefined"
-            striped
-            striped-flow
-          />
-          <el-steps class="web-ui-ai-collect__stages" :active="collectTaskStages.length" finish-status="success" align-center>
-            <el-step
-              v-for="stage in collectTaskStages"
-              :key="stage.key"
-              :title="stage.title"
-              :status="toElementStepStatus(stage.status)"
-              :description="stage.description"
-            >
-              <template #description>
-                <div class="web-ui-ai-collect__stage-description">
-                  <span>{{ stage.description }}</span>
-                  <el-tag v-if="stage.status === 'degraded'" type="warning" effect="light" size="small">降级</el-tag>
-                </div>
-              </template>
-            </el-step>
-          </el-steps>
-          <div v-if="collectTask.filterLogs.length" class="web-ui-ai-collect__filter-log">
-            <div
-              v-for="log in collectTask.filterLogs"
-              :key="`${log.stage}-${log.reason}`"
-              class="web-ui-ai-collect__filter-log-item"
-            >
-              <span>{{ formatCollectFilterReason(log.reason) }}</span>
-              <strong>{{ log.count }}</strong>
-              <small>{{ log.message }}</small>
-            </div>
-          </div>
-        </section>
+        <WebUiElementCollectTaskPanel
+          v-if="collectTask"
+          :task="collectTask"
+          :refreshing="collectTaskRefreshing"
+          :polling="collectTaskPolling"
+          @refresh="emit('refresh-collect-task')"
+        />
 
         <div v-if="candidates.length" class="web-ui-ai-collect__summary">
           <el-tag type="info" effect="light">候选总数 {{ candidateSummary.total }}</el-tag>
@@ -688,54 +604,6 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
 .web-ui-ai-collect__runner-status small {
   flex-basis: 100%;
   color: var(--app-text-muted);
-}
-
-.web-ui-ai-collect__task {
-  display: grid;
-  gap: var(--app-space-3);
-  padding: var(--app-space-3);
-  border: 1px solid var(--app-border-color);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-soft);
-}
-
-.web-ui-ai-collect__task-header,
-.web-ui-ai-collect__task-meta,
-.web-ui-ai-collect__filter-log,
-.web-ui-ai-collect__filter-log-item {
-  display: flex;
-  align-items: center;
-  gap: var(--app-space-2);
-  flex-wrap: wrap;
-}
-
-.web-ui-ai-collect__task-header span,
-.web-ui-ai-collect__task-meta,
-.web-ui-ai-collect__filter-log-item small {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-sm);
-}
-
-.web-ui-ai-collect__filter-log-item {
-  padding: var(--app-space-1) var(--app-space-2);
-  border-radius: var(--app-radius-sm);
-  background: var(--app-bg-card);
-  color: var(--app-text-secondary);
-}
-
-.web-ui-ai-collect__stages {
-  min-width: 0;
-}
-
-.web-ui-ai-collect__stage-description {
-  display: grid;
-  gap: var(--app-space-1);
-  justify-items: center;
-  min-width: 0;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
-  line-height: 1.4;
-  overflow-wrap: anywhere;
 }
 
 .web-ui-ai-collect__actions,

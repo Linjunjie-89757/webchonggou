@@ -33,6 +33,10 @@ import type {
   ApiScenarioItem,
   ApiScenarioListQuery,
   ApiScenarioModuleItem,
+  ApiScenarioTestDatasetDetail,
+  ApiScenarioTestDatasetItem,
+  ApiScenarioTestDatasetRow,
+  ApiScenarioTestDatasetSavePayload,
   PageResponse,
   SaveApiDefinitionCasePayload,
   SaveApiDefinitionModulePayload,
@@ -520,6 +524,42 @@ function normalizeDataFilePreview(item: ApiDataFilePreview): ApiDataFilePreview 
   }
 }
 
+function normalizeScenarioTestDatasetRow(item: ApiScenarioTestDatasetRow): ApiScenarioTestDatasetRow {
+  return {
+    rowIndex: Number(item.rowIndex || 0),
+    values: item.values || {},
+  }
+}
+
+function normalizeScenarioTestDataset(item: ApiScenarioTestDatasetItem): ApiScenarioTestDatasetItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    scenarioId: Number(item.scenarioId),
+    datasetName: item.datasetName || '-',
+    enabled: Boolean(item.enabled),
+    sourceType: item.sourceType || 'MANUAL',
+    caseDescColumn: item.caseDescColumn || null,
+    rowCount: Number(item.rowCount || 0),
+    columns: Array.isArray(item.columns)
+      ? item.columns.map(column => ({
+          name: column.name || '',
+          sourceType: column.sourceType || 'MANUAL',
+        })).filter(column => column.name)
+      : [],
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeScenarioTestDatasetDetail(item: ApiScenarioTestDatasetDetail): ApiScenarioTestDatasetDetail {
+  return {
+    ...normalizeScenarioTestDataset(item),
+    sourceFileId: item.sourceFileId ?? null,
+    rows: Array.isArray(item.rows) ? item.rows.map(normalizeScenarioTestDatasetRow) : [],
+  }
+}
+
 export const apiAutomationApi = {
   async getEnvironments(workspaceCode = 'ALL') {
     const payload = await httpGet<ApiResponse<PageResponse<ApiAutomationEnvironmentItem>>>('/automation/api/environments', {
@@ -609,6 +649,91 @@ export const apiAutomationApi = {
     const payload = await httpDelete<ApiResponse<null>>(`/automation/api/data-files/${id}`, {
       headers: workspaceHeaders(workspaceCode),
     })
+
+    return unwrapApiResponse(payload)
+  },
+
+  async getScenarioTestDatasets(workspaceCode = 'ALL', scenarioId: number) {
+    const payload = await httpGet<ApiResponse<ApiScenarioTestDatasetItem[]>>(
+      `/automation/api/scenarios/${scenarioId}/test-datasets`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    const items = unwrapApiResponse(payload)
+    return Array.isArray(items) ? items.map(normalizeScenarioTestDataset) : []
+  },
+
+  async getScenarioTestDataset(workspaceCode = 'ALL', scenarioId: number, datasetId: number) {
+    const payload = await httpGet<ApiResponse<ApiScenarioTestDatasetDetail>>(
+      `/automation/api/scenarios/${scenarioId}/test-datasets/${datasetId}`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioTestDatasetDetail(unwrapApiResponse(payload))
+  },
+
+  async createScenarioTestDataset(workspaceCode = 'ALL', scenarioId: number, data: ApiScenarioTestDatasetSavePayload) {
+    const payload = await httpPost<ApiResponse<ApiScenarioTestDatasetDetail>, ApiScenarioTestDatasetSavePayload>(
+      `/automation/api/scenarios/${scenarioId}/test-datasets`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioTestDatasetDetail(unwrapApiResponse(payload))
+  },
+
+  async updateScenarioTestDataset(
+    workspaceCode = 'ALL',
+    scenarioId: number,
+    datasetId: number,
+    data: ApiScenarioTestDatasetSavePayload,
+  ) {
+    const payload = await httpPut<ApiResponse<ApiScenarioTestDatasetDetail>, ApiScenarioTestDatasetSavePayload>(
+      `/automation/api/scenarios/${scenarioId}/test-datasets/${datasetId}`,
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioTestDatasetDetail(unwrapApiResponse(payload))
+  },
+
+  async importScenarioTestDatasetCsv(workspaceCode = 'ALL', scenarioId: number, file: File, datasetName?: string) {
+    const form = new FormData()
+    form.append('file', file)
+    if (datasetName) {
+      form.append('datasetName', datasetName)
+    }
+
+    const response = await fetch(`${env.apiBaseUrl}/automation/api/scenarios/${scenarioId}/test-datasets/import-csv`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: workspaceHeaders(workspaceCode),
+      body: form,
+    })
+
+    if (!response.ok) {
+      throw new Error(await response.text() || `Request failed with status ${response.status}`)
+    }
+
+    const payload = await response.json() as ApiResponse<ApiScenarioTestDatasetDetail>
+    return normalizeScenarioTestDatasetDetail(unwrapApiResponse(payload))
+  },
+
+  async deleteScenarioTestDataset(workspaceCode = 'ALL', scenarioId: number, datasetId: number) {
+    const payload = await httpDelete<ApiResponse<null>>(
+      `/automation/api/scenarios/${scenarioId}/test-datasets/${datasetId}`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
 
     return unwrapApiResponse(payload)
   },

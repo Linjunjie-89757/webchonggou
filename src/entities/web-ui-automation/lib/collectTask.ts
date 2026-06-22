@@ -148,6 +148,13 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
   ]
 }
 
+export function isCollectTaskTerminalStatus(status?: string | null) {
+  return status === 'COMPLETED'
+    || status === 'FAILED'
+    || status === 'DEGRADED'
+    || status === 'CANCELED'
+}
+
 function deriveCollectCurrentStage(status?: string | null) {
   if (status === 'FAILED') return 'FAILED'
   if (status === 'DEGRADED') return 'LOCAL_VALIDATE'

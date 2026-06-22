@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import {
   buildCollectTaskStages,
+  isCollectTaskTerminalStatus,
   normalizeElementCollectTaskResponse,
 } from '../src/entities/web-ui-automation/lib/collectTask.ts'
 
@@ -132,4 +133,13 @@ test('builds running stage model from backend current stage', () => {
     ['LOCAL_VALIDATE', 'pending'],
     ['FINALIZE', 'pending'],
   ])
+})
+
+test('identifies collect task terminal statuses for polling', () => {
+  assert.equal(isCollectTaskTerminalStatus('COMPLETED'), true)
+  assert.equal(isCollectTaskTerminalStatus('FAILED'), true)
+  assert.equal(isCollectTaskTerminalStatus('DEGRADED'), true)
+  assert.equal(isCollectTaskTerminalStatus('CANCELED'), true)
+  assert.equal(isCollectTaskTerminalStatus('PROCESSING'), false)
+  assert.equal(isCollectTaskTerminalStatus('PENDING'), false)
 })

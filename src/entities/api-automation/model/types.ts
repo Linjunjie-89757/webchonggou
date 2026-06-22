@@ -136,6 +136,44 @@ export interface ApiDataFileUpdatePayload {
   ignoreFirstLine?: boolean
 }
 
+export interface ApiScenarioTestDatasetColumn {
+  name: string
+  sourceType?: string | null
+}
+
+export interface ApiScenarioTestDatasetRow {
+  rowIndex: number
+  values: Record<string, string>
+}
+
+export interface ApiScenarioTestDatasetItem {
+  id: number
+  scenarioId: number
+  datasetName: string
+  enabled: boolean
+  sourceType: string
+  caseDescColumn: string | null
+  rowCount: number
+  columns: ApiScenarioTestDatasetColumn[]
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface ApiScenarioTestDatasetDetail extends ApiScenarioTestDatasetItem {
+  sourceFileId: number | null
+  rows: ApiScenarioTestDatasetRow[]
+}
+
+export interface ApiScenarioTestDatasetSavePayload {
+  datasetName: string
+  enabled?: boolean
+  sourceType?: string | null
+  sourceFileId?: number | null
+  caseDescColumn?: string | null
+  columns: ApiScenarioTestDatasetColumn[]
+  rows: ApiScenarioTestDatasetRow[]
+}
+
 export interface ApiDefinitionDetail extends ApiDefinitionItem {
   requestConfig: ApiRequestConfigInput
   assertions: unknown[]

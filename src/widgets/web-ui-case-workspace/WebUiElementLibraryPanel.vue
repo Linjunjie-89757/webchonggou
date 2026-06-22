@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -35,6 +35,7 @@ import {
   saveLocalRunnerAuth,
   type LocalRunnerHealthView,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
+import { isCollectTaskTerminalStatus } from '@/entities/web-ui-automation/lib/collectTask'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -187,6 +188,7 @@ const localRunnerChecking = ref(false)
 const localRunnerOpening = ref(false)
 const localRunnerCapturing = ref(false)
 const collectTaskRefreshing = ref(false)
+const collectTaskPolling = ref(false)
 const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
 const aiSaving = ref(false)
 const aiProviderLoading = ref(false)
@@ -289,6 +291,7 @@ const aiCollectForm = reactive({
   screenshotNote: '',
 })
 const aiCandidateFilter = ref<'ALL' | 'RECOMMENDED' | 'FAILED' | 'LOW_CONFIDENCE'>('ALL')
+let collectTaskPollingTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const batchMoveForm = reactive({
   pageId: null as number | null,
@@ -813,9 +816,7 @@ function openAiCollectDrawer() {
   aiCollectForm.scope = 'ALL'
   aiCollectForm.htmlText = ''
   aiCollectForm.screenshotNote = ''
-  aiCandidates.value = []
-  aiCollectFilterSummary.value = null
-  currentCollectTask.value = null
+  resetAiCollectResults()
   aiCollectDrawerVisible.value = true
   void loadAiProviders()
 }
@@ -825,7 +826,7 @@ function handleAiPageChange(pageId: number | null) {
   aiCollectForm.pageName = page?.pageName || ''
   aiCollectForm.groupId = null
   aiCollectForm.groupName = ''
-  aiCandidates.value = []
+  resetAiCollectResults()
 }
 
 function handleAiModuleChange() {
@@ -833,7 +834,7 @@ function handleAiModuleChange() {
   aiCollectForm.pageName = ''
   aiCollectForm.groupId = null
   aiCollectForm.groupName = ''
-  aiCandidates.value = []
+  resetAiCollectResults()
 }
 
 function handleAiGroupChange(groupId: number | null) {
@@ -1146,6 +1147,86 @@ function applyCollectTaskDetail(taskDetail: WebUiElementCollectTaskResponse, cus
   return candidates
 }
 
+function stopCollectTaskPolling() {
+  collectTaskPolling.value = false
+  if (collectTaskPollingTimer) {
+    window.clearTimeout(collectTaskPollingTimer)
+    collectTaskPollingTimer = null
+  }
+}
+
+function resetAiCollectResults() {
+  stopCollectTaskPolling()
+  aiCandidates.value = []
+  aiCollectFilterSummary.value = null
+  currentCollectTask.value = null
+  aiCandidateFilter.value = 'ALL'
+}
+
+async function fetchCurrentCollectTaskDetail(options: { silent?: boolean; message?: boolean } = {}) {
+  if (!currentCollectTask.value) {
+    if (!options.silent) {
+      ElMessage.warning('暂无可刷新的采集任务')
+    }
+    return null
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    if (!options.silent) {
+      ElMessage.warning('请选择有效的所属模块')
+    }
+    return null
+  }
+
+  if (!options.silent) {
+    collectTaskRefreshing.value = true
+  }
+  try {
+    const customGroupName = getAiCustomGroupName()
+    const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, currentCollectTask.value.taskId)
+    applyCollectTaskDetail(taskDetail, customGroupName)
+    if (options.message) {
+      ElMessage.success('采集任务详情已刷新')
+    }
+    return taskDetail
+  } catch (error) {
+    if (!options.silent) {
+      ElMessage.error(`刷新采集任务失败：${getRequestErrorMessage(error)}`)
+    }
+    throw error
+  } finally {
+    if (!options.silent) {
+      collectTaskRefreshing.value = false
+    }
+  }
+}
+
+function scheduleCollectTaskPolling() {
+  stopCollectTaskPolling()
+  const task = currentCollectTask.value
+  if (!task || isCollectTaskTerminalStatus(task.status)) {
+    return
+  }
+
+  collectTaskPolling.value = true
+  collectTaskPollingTimer = window.setTimeout(async () => {
+    collectTaskPollingTimer = null
+    try {
+      const latestTask = await fetchCurrentCollectTaskDetail({ silent: true })
+      if (latestTask && !isCollectTaskTerminalStatus(latestTask.status) && aiCollectDrawerVisible.value) {
+        scheduleCollectTaskPolling()
+        return
+      }
+    } catch {
+      if (aiCollectDrawerVisible.value) {
+        scheduleCollectTaskPolling()
+        return
+      }
+    }
+    stopCollectTaskPolling()
+  }, 3000)
+}
+
 function selectRecommendedPassedAiCandidates() {
   let selectedCount = 0
   for (const candidate of aiCandidates.value) {
@@ -1336,6 +1417,7 @@ async function generateAiCandidates() {
     return
   }
 
+  resetAiCollectResults()
   aiCollecting.value = true
   try {
     const environment = enabledEnvironments.value.find(item => item.id === aiCollectForm.environmentId)
@@ -1452,6 +1534,7 @@ async function captureLocalRunnerCandidates() {
     return
   }
 
+  resetAiCollectResults()
   localRunnerCapturing.value = true
   try {
     const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
@@ -1488,6 +1571,7 @@ async function captureLocalRunnerCandidates() {
     const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, task.taskId)
     const candidates = applyCollectTaskDetail(taskDetail, customGroupName)
     aiCandidateFilter.value = 'ALL'
+    scheduleCollectTaskPolling()
     localRunnerHealth.value = await checkLocalRunnerHealth()
 
     if (!candidates.length) {
@@ -1507,26 +1591,13 @@ async function captureLocalRunnerCandidates() {
 }
 
 async function refreshCurrentCollectTask() {
-  if (!currentCollectTask.value) {
-    ElMessage.warning('暂无可刷新的采集任务')
-    return
-  }
-  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
-  if (!moduleItem) {
-    ElMessage.warning('请选择有效的所属模块')
-    return
-  }
-
-  collectTaskRefreshing.value = true
   try {
-    const customGroupName = getAiCustomGroupName()
-    const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, currentCollectTask.value.taskId)
-    applyCollectTaskDetail(taskDetail, customGroupName)
-    ElMessage.success('采集任务详情已刷新')
-  } catch (error) {
-    ElMessage.error(`刷新采集任务失败：${getRequestErrorMessage(error)}`)
-  } finally {
-    collectTaskRefreshing.value = false
+    const taskDetail = await fetchCurrentCollectTaskDetail({ message: true })
+    if (taskDetail && !isCollectTaskTerminalStatus(taskDetail.status)) {
+      scheduleCollectTaskPolling()
+    }
+  } catch {
+    // Error message is shown by fetchCurrentCollectTaskDetail.
   }
 }
 
@@ -2715,6 +2786,30 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => aiCollectDrawerVisible.value,
+  (visible) => {
+    if (!visible) {
+      stopCollectTaskPolling()
+    } else {
+      scheduleCollectTaskPolling()
+    }
+  },
+)
+
+watch(
+  () => currentCollectTask.value?.status,
+  (taskStatus) => {
+    if (isCollectTaskTerminalStatus(taskStatus)) {
+      stopCollectTaskPolling()
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  stopCollectTaskPolling()
+})
 </script>
 
 <template>
@@ -3023,6 +3118,7 @@ watch(
       :collect-filter-summary="aiCollectFilterSummary"
       :collect-task="currentCollectTask"
       :collect-task-refreshing="collectTaskRefreshing"
+      :collect-task-polling="collectTaskPolling"
       :selected-count="aiSelectedCandidates.length"
       :candidate-filter="aiCandidateFilter"
       :collecting="aiCollecting"

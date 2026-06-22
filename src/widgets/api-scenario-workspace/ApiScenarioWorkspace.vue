@@ -2857,11 +2857,7 @@ watch(activeScenarioEditorKey, () => {
 
               <ApiScenarioTestDataPanel
                 v-else-if="activeScenarioDetailTab === 'testData'"
-                v-model:enabled="activeScenarioDetail.dataDrivenEnabled"
-                v-model:data-file-id="activeScenarioDetail.dataFileId"
-                v-model:data-file-name-snapshot="activeScenarioDetail.dataFileNameSnapshot"
-                v-model:case-desc-column="activeScenarioDetail.caseDescColumn"
-                v-model:failure-strategy="activeScenarioDetail.dataFailureStrategy"
+                :scenario-id="activeScenarioDetail.id"
                 :workspace-code="activeScenarioDetail.workspaceCode"
                 :workspace-ready="props.workspaceReady"
                 @dirty="markScenarioDirty"
