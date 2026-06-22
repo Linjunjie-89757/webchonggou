@@ -17,6 +17,8 @@ import {
   type ValidateWebUiLocatorResponse,
   type WebUiElementGroupItem,
   type WebUiElementItem,
+  type WebUiElementCollectFilterSummary,
+  type WebUiElementCollectTaskResponse,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
   type WebUiElementValidateResultItem,
@@ -25,6 +27,14 @@ import {
   type WebUiEnvironmentItem,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
+import {
+  captureLocalRunnerPage,
+  checkLocalRunnerHealth,
+  mapRunnerCandidateToCollectCandidate,
+  openLocalRunnerPage,
+  saveLocalRunnerAuth,
+  type LocalRunnerHealthView,
+} from '@/entities/web-ui-automation/lib/localRunnerClient'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -173,6 +183,11 @@ const syncingImpactReferences = ref(false)
 const aiCollectDrawerVisible = ref(false)
 const aiCollectMode = ref<AiCollectMode>('ONLINE')
 const aiCollecting = ref(false)
+const localRunnerChecking = ref(false)
+const localRunnerOpening = ref(false)
+const localRunnerCapturing = ref(false)
+const collectTaskRefreshing = ref(false)
+const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
 const aiSaving = ref(false)
 const aiProviderLoading = ref(false)
 const aiProviders = ref<AiProviderConnectionItem[]>([])
@@ -202,6 +217,8 @@ const impactTargetElements = ref<WebUiElementItem[]>([])
 const impactReferences = ref<ElementImpactReference[]>([])
 const editingElementSnapshot = ref<WebUiElementItem | null>(null)
 const aiCandidates = ref<AiElementCandidate[]>([])
+const aiCollectFilterSummary = ref<WebUiElementCollectFilterSummary | null>(null)
+const currentCollectTask = ref<WebUiElementCollectTaskResponse | null>(null)
 const selectedElements = ref<WebUiElementItem[]>([])
 const qualityIssues = ref<WebUiElementQualityIssue[]>([])
 const localQualityIssues = ref<LocalQualityIssue[]>([])
@@ -797,6 +814,8 @@ function openAiCollectDrawer() {
   aiCollectForm.htmlText = ''
   aiCollectForm.screenshotNote = ''
   aiCandidates.value = []
+  aiCollectFilterSummary.value = null
+  currentCollectTask.value = null
   aiCollectDrawerVisible.value = true
   void loadAiProviders()
 }
@@ -1057,6 +1076,41 @@ function getAiCustomGroupName() {
   return (aiCollectForm.groupName || group?.groupName || '').trim()
 }
 
+type CollectCandidateShape = ReturnType<typeof mapRunnerCandidateToCollectCandidate>
+
+function mapCollectCandidatesToAiCandidates(
+  candidates: CollectCandidateShape[],
+  customGroupName: string,
+) {
+  return candidates.map((item, index) => ({
+    id: `${item.locatorType}-${index}-${item.locatorValue}`,
+    selected: item.recommendedToSave
+      && (item.validationStatus === 'PASSED' || item.validationStatus === 'UNVERIFIED')
+      && !item.saveBlockedReason,
+    groupName: aiCollectForm.groupStrategy === 'CUSTOM' ? customGroupName : item.groupName,
+    elementName: item.elementName,
+    locatorType: item.locatorType,
+    locatorValue: item.locatorValue,
+    confidence: item.confidence,
+    reason: item.reason,
+    tagName: item.tagName,
+    elementType: item.elementType,
+    businessMeaning: item.businessMeaning,
+    candidateSource: item.candidateSource || 'RULE',
+    recommendedToSave: item.recommendedToSave,
+    notRecommendedReason: item.notRecommendedReason,
+    maintenanceSuggestion: item.maintenanceSuggestion,
+    stabilityNote: item.stabilityNote,
+    validationStatus: item.validationStatus,
+    matchCount: item.matchCount,
+    validationMessage: item.validationMessage,
+    screenshotBase64: item.screenshotBase64,
+    saveBlockedReason: item.saveBlockedReason || null,
+    text: item.text,
+    placeholder: item.placeholder,
+  }))
+}
+
 function setAiCandidateFilter(nextFilter: typeof aiCandidateFilter.value) {
   aiCandidateFilter.value = nextFilter
 }
@@ -1072,7 +1126,7 @@ function formatAiValidationStatus(status?: string | null) {
 
 function isAiCandidateSaveable(candidate: AiElementCandidate) {
   return candidate.recommendedToSave
-    && candidate.validationStatus === 'PASSED'
+    && (candidate.validationStatus === 'PASSED' || candidate.validationStatus === 'UNVERIFIED')
     && !candidate.saveBlockedReason
 }
 
@@ -1084,6 +1138,14 @@ function previewAiCandidateScreenshot(candidate: AiElementCandidate) {
   window.open(`data:image/png;base64,${candidate.screenshotBase64}`, '_blank', 'noopener,noreferrer')
 }
 
+function applyCollectTaskDetail(taskDetail: WebUiElementCollectTaskResponse, customGroupName: string) {
+  const candidates = mapCollectCandidatesToAiCandidates(taskDetail.candidates, customGroupName)
+  aiCandidates.value = candidates
+  aiCollectFilterSummary.value = taskDetail.filterSummary
+  currentCollectTask.value = taskDetail
+  return candidates
+}
+
 function selectRecommendedPassedAiCandidates() {
   let selectedCount = 0
   for (const candidate of aiCandidates.value) {
@@ -1093,7 +1155,7 @@ function selectRecommendedPassedAiCandidates() {
       selectedCount += 1
     }
   }
-  ElMessage.success(`已选择 ${selectedCount} 个推荐且验证通过的候选元素`)
+  ElMessage.success(`已选择 ${selectedCount} 个推荐可保存的候选元素`)
 }
 
 function unselectRiskyAiCandidates() {
@@ -1260,8 +1322,8 @@ async function generateAiCandidates() {
     ElMessage.warning('请选择或填写页面对象名称')
     return
   }
-  if (aiCollectMode.value === 'ONLINE' && !aiCollectForm.pageUrl.trim()) {
-    ElMessage.warning('请填写页面 URL')
+  if (aiCollectMode.value === 'ONLINE') {
+    ElMessage.warning('在线采集请使用本地 Runner 的“采集当前页”；离线导入才使用生成候选元素。')
     return
   }
   if (aiCollectMode.value === 'OFFLINE' && !aiCollectForm.htmlText.trim()) {
@@ -1280,8 +1342,8 @@ async function generateAiCandidates() {
     const result = await webUiAutomationApi.collectElements(moduleItem.workspaceCode, {
       providerConnectionId: selectedAiProvider.value.id,
       modelName: selectedAiProvider.value.modelName,
-      pageUrl: aiCollectMode.value === 'ONLINE' ? aiCollectForm.pageUrl.trim() : null,
-      environmentId: aiCollectMode.value === 'ONLINE' ? aiCollectForm.environmentId : null,
+      pageUrl: null,
+      environmentId: null,
       moduleId: aiCollectForm.moduleId,
       pageId: aiCollectForm.pageId,
       pageName: aiCollectForm.pageName.trim(),
@@ -1289,36 +1351,16 @@ async function generateAiCandidates() {
       groupId: aiCollectForm.groupId,
       groupName: customGroupName || aiCollectForm.groupName.trim() || null,
       scope: aiCollectForm.scope,
-      htmlText: aiCollectMode.value === 'OFFLINE' ? aiCollectForm.htmlText.trim() : null,
+      htmlText: aiCollectForm.htmlText.trim(),
       screenshotNote: aiCollectForm.screenshotNote.trim() || null,
       browserType: environment?.browserType || 'CHROMIUM',
       headless: environment?.headless ?? true,
       timeoutMs: environment?.defaultTimeoutMs || 10000,
     })
-    const candidates = result.candidates.map((item, index) => ({
-      id: `${item.locatorType}-${index}-${item.locatorValue}`,
-      selected: item.recommendedToSave && item.validationStatus === 'PASSED' && !item.saveBlockedReason,
-      groupName: aiCollectForm.groupStrategy === 'CUSTOM' ? customGroupName : item.groupName,
-      elementName: item.elementName,
-      locatorType: item.locatorType,
-      locatorValue: item.locatorValue,
-      confidence: item.confidence,
-      reason: item.reason,
-      tagName: item.tagName,
-      elementType: item.elementType,
-      businessMeaning: item.businessMeaning,
-      candidateSource: item.candidateSource || 'RULE',
-      recommendedToSave: item.recommendedToSave,
-      notRecommendedReason: item.notRecommendedReason,
-      maintenanceSuggestion: item.maintenanceSuggestion,
-      stabilityNote: item.stabilityNote,
-      validationStatus: item.validationStatus,
-      matchCount: item.matchCount,
-      validationMessage: item.validationMessage,
-      screenshotBase64: item.screenshotBase64,
-      saveBlockedReason: item.saveBlockedReason || null,
-    }))
+    const candidates = mapCollectCandidatesToAiCandidates(result.candidates, customGroupName)
     aiCandidates.value = candidates
+    aiCollectFilterSummary.value = null
+    currentCollectTask.value = null
     aiCandidateFilter.value = 'ALL'
     if (!candidates.length) {
       ElMessage.warning(result.message || '未识别到候选元素，请缩小范围或补充 HTML 结构后重试')
@@ -1333,9 +1375,158 @@ async function generateAiCandidates() {
     }
   } catch (error) {
     aiCandidates.value = []
+    aiCollectFilterSummary.value = null
+    currentCollectTask.value = null
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     aiCollecting.value = false
+  }
+}
+
+async function checkLocalRunner() {
+  localRunnerChecking.value = true
+  try {
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    if (!localRunnerHealth.value.playwrightAvailable || !localRunnerHealth.value.chromiumInstalled) {
+      ElMessage.warning('本地执行器已连接，但 Playwright 或 Chromium 不可用')
+      return
+    }
+    ElMessage.success('本地执行器已连接')
+  } catch (error) {
+    localRunnerHealth.value = null
+    ElMessage.error(`本地执行器未连接：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerChecking.value = false
+  }
+}
+
+async function openLocalRunnerCollectPage() {
+  if (!aiCollectForm.pageUrl.trim()) {
+    ElMessage.warning('请填写页面 URL')
+    return
+  }
+
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+
+  localRunnerOpening.value = true
+  try {
+    const result = await openLocalRunnerPage({
+      url: aiCollectForm.pageUrl.trim(),
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    if (result.page?.isProbablyLoginPage) {
+      ElMessage.warning('页面可能需要登录，请在本地浏览器完成登录后点击继续采集')
+      return
+    }
+    ElMessage.success('已在本地浏览器打开页面，可继续采集')
+  } catch (error) {
+    ElMessage.error(`打开本地页面失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerOpening.value = false
+  }
+}
+
+async function captureLocalRunnerCandidates() {
+  if (!selectedAiProvider.value?.modelName) {
+    ElMessage.warning('请选择 AI 采集模型')
+    return
+  }
+  if (!aiCollectForm.moduleId) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  if (!aiCollectForm.pageName.trim() && !aiCollectForm.pageId) {
+    ElMessage.warning('请选择或填写页面对象名称')
+    return
+  }
+
+  const customGroupName = getAiCustomGroupName()
+  if (aiCollectForm.groupStrategy === 'CUSTOM' && !customGroupName) {
+    ElMessage.warning('请选择或填写自选分组')
+    return
+  }
+
+  localRunnerCapturing.value = true
+  try {
+    const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+    if (!moduleItem) {
+      ElMessage.warning('请选择有效的所属模块')
+      return
+    }
+    const result = await captureLocalRunnerPage(300)
+    await saveLocalRunnerAuth({
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+    const groupName = customGroupName || aiCollectForm.groupName.trim() || '页面元素'
+    const collectCandidates = result.candidates.map(candidate => mapRunnerCandidateToCollectCandidate({
+      candidate,
+      groupName,
+      screenshotBase64: result.screenshotBase64 || null,
+    }))
+    const task = await webUiAutomationApi.createLocalRunnerCollectTask(moduleItem.workspaceCode, {
+      runnerId: 'local-runner',
+      sessionId: result.session?.sessionId || null,
+      actualUrl: result.page?.url || localRunnerHealth.value?.currentUrl || null,
+      pageTitle: result.page?.title || null,
+      moduleId: aiCollectForm.moduleId,
+      pageId: aiCollectForm.pageId,
+      pageName: aiCollectForm.pageName.trim() || null,
+      scope: aiCollectForm.scope,
+      providerConnectionId: selectedAiProvider.value.id,
+      modelName: selectedAiProvider.value.modelName,
+      rawCount: result.rawCount,
+      screenshotBase64: result.screenshotBase64 || null,
+      candidates: collectCandidates,
+    })
+    const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, task.taskId)
+    const candidates = applyCollectTaskDetail(taskDetail, customGroupName)
+    aiCandidateFilter.value = 'ALL'
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+
+    if (!candidates.length) {
+      ElMessage.warning('本地执行器未采集到候选元素，请确认已进入目标业务页面')
+      return
+    }
+
+    ElMessage.success(task.message || `本地 Runner 已创建采集任务 #${task.taskId}，生成 ${candidates.length} 个静态候选`)
+  } catch (error) {
+    aiCandidates.value = []
+    aiCollectFilterSummary.value = null
+    currentCollectTask.value = null
+    ElMessage.error(`本地采集失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerCapturing.value = false
+  }
+}
+
+async function refreshCurrentCollectTask() {
+  if (!currentCollectTask.value) {
+    ElMessage.warning('暂无可刷新的采集任务')
+    return
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择有效的所属模块')
+    return
+  }
+
+  collectTaskRefreshing.value = true
+  try {
+    const customGroupName = getAiCustomGroupName()
+    const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, currentCollectTask.value.taskId)
+    applyCollectTaskDetail(taskDetail, customGroupName)
+    ElMessage.success('采集任务详情已刷新')
+  } catch (error) {
+    ElMessage.error(`刷新采集任务失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    collectTaskRefreshing.value = false
   }
 }
 
@@ -1361,7 +1552,7 @@ async function saveAiCandidates() {
 
   const blockedCandidate = aiSelectedCandidates.value.find(item => !isAiCandidateSaveable(item))
   if (blockedCandidate) {
-    ElMessage.warning(blockedCandidate.saveBlockedReason || '仅验证通过且推荐保存的候选元素可以入库')
+    ElMessage.warning(blockedCandidate.saveBlockedReason || '仅推荐且未被阻止的候选元素可以入库')
     return
   }
 
@@ -2829,15 +3020,26 @@ watch(
       :candidates="aiCandidates"
       :visible-candidates="visibleAiCandidates"
       :candidate-summary="aiCandidateSummary"
+      :collect-filter-summary="aiCollectFilterSummary"
+      :collect-task="currentCollectTask"
+      :collect-task-refreshing="collectTaskRefreshing"
       :selected-count="aiSelectedCandidates.length"
       :candidate-filter="aiCandidateFilter"
       :collecting="aiCollecting"
+      :local-runner-checking="localRunnerChecking"
+      :local-runner-opening="localRunnerOpening"
+      :local-runner-capturing="localRunnerCapturing"
+      :local-runner-health="localRunnerHealth"
       :saving="aiSaving"
       @module-change="handleAiModuleChange"
       @page-change="handleAiPageChange"
       @group-change="handleAiGroupChange"
       @filter-change="setAiCandidateFilter"
       @generate="generateAiCandidates"
+      @check-local-runner="checkLocalRunner"
+      @open-local-runner-page="openLocalRunnerCollectPage"
+      @capture-local-runner-page="captureLocalRunnerCandidates"
+      @refresh-collect-task="refreshCurrentCollectTask"
       @select-recommended="selectRecommendedPassedAiCandidates"
       @unselect-risky="unselectRiskyAiCandidates"
       @batch-update-group="batchUpdateAiCandidateGroup"

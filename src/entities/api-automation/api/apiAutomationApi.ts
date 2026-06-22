@@ -19,6 +19,12 @@ import type {
   ApiDefinitionModuleItem,
   ApiAutomationEnvironmentItem,
   ApiAutomationVariableSetItem,
+  ApiDataFileDetail,
+  ApiDataFileItem,
+  ApiDataFileListQuery,
+  ApiDataFilePreview,
+  ApiDataFileUpdatePayload,
+  ApiExecutionSuiteDataIteration,
   ApiRunHistoryDetail,
   ApiRunHistoryItem,
   ApiRunPayload,
@@ -207,6 +213,11 @@ function normalizeScenario(item: ApiScenarioItem): ApiScenarioItem {
     globalTimeoutMs: Number(item.globalTimeoutMs || 300000),
     stepFailureRetryCount: Number(item.stepFailureRetryCount || 0),
     defaultStepWaitMs: Number(item.defaultStepWaitMs || 0),
+    dataDrivenEnabled: Boolean(item.dataDrivenEnabled),
+    dataFileId: item.dataFileId ?? null,
+    dataFileNameSnapshot: item.dataFileNameSnapshot || null,
+    caseDescColumn: item.caseDescColumn || 'caseDesc',
+    dataFailureStrategy: item.dataFailureStrategy || 'STOP_ON_ROW_FAILURE',
     lastRunResult: item.lastRunResult || null,
     lastRunAt: item.lastRunAt || null,
     updatedAt: item.updatedAt || null,
@@ -233,7 +244,22 @@ function normalizeRunResult(item: ApiRunResult): ApiRunResult {
     reportName: item.reportName || null,
     result: item.result || null,
     failureSummary: item.failureSummary || null,
+    dataIterations: Array.isArray(item.dataIterations) ? item.dataIterations.map(normalizeDataIteration) : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
+function normalizeDataIteration(item: ApiExecutionSuiteDataIteration): ApiExecutionSuiteDataIteration {
+  return {
+    ...item,
+    rowIndex: Number(item.rowIndex ?? 0),
+    caseDesc: item.caseDesc || null,
+    rowValues: item.rowValues || {},
+    result: item.result || null,
+    failedStep: item.failedStep || null,
+    stepCount: item.stepCount ?? null,
+    durationMs: item.durationMs ?? null,
+    failureSummary: item.failureSummary || null,
   }
 }
 
@@ -294,6 +320,10 @@ function normalizeReportItem(item: ApiAutomationReportItem): ApiAutomationReport
     runOn: item.runOn || null,
     branchName: item.branchName || null,
     triggerSource: item.triggerSource || null,
+    dataDrivenEnabled: Boolean(item.dataDrivenEnabled),
+    dataFileId: item.dataFileId ?? null,
+    dataFileName: item.dataFileName || null,
+    dataRowCount: item.dataRowCount ?? null,
     operatorName: item.operatorName || null,
     createdAt: item.createdAt || null,
     archived: Boolean(item.archived),
@@ -307,6 +337,7 @@ function normalizeReportDetail(item: ApiAutomationReportDetail): ApiAutomationRe
     globalTimeoutMs: item.globalTimeoutMs ?? null,
     stepFailureRetryCount: item.stepFailureRetryCount ?? null,
     defaultStepWaitMs: item.defaultStepWaitMs ?? null,
+    dataIterations: Array.isArray(item.dataIterations) ? item.dataIterations.map(normalizeDataIteration) : [],
     itemSnapshots: Array.isArray(item.itemSnapshots) ? item.itemSnapshots : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
   }
@@ -445,6 +476,50 @@ function normalizeVariableSet(item: ApiAutomationVariableSetItem): ApiAutomation
   }
 }
 
+function normalizeDataFileRow(item: { rowIndex?: number; caseDesc?: string | null; values?: Record<string, string> }) {
+  return {
+    rowIndex: Number(item.rowIndex || 0),
+    caseDesc: item.caseDesc || null,
+    values: item.values || {},
+  }
+}
+
+function normalizeDataFile(item: ApiDataFileItem): ApiDataFileItem {
+  return {
+    ...item,
+    id: Number(item.id),
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || null,
+    fileName: item.fileName || '-',
+    originalFileName: item.originalFileName || null,
+    fileType: item.fileType || 'CSV',
+    encoding: item.encoding || 'UTF-8',
+    delimiter: item.delimiter || ',',
+    ignoreFirstLine: Boolean(item.ignoreFirstLine),
+    caseDescColumn: item.caseDescColumn || null,
+    rowCount: Number(item.rowCount || 0),
+    columns: Array.isArray(item.columns) ? item.columns : [],
+    createdAt: item.createdAt || null,
+    updatedAt: item.updatedAt || null,
+  }
+}
+
+function normalizeDataFileDetail(item: ApiDataFileDetail): ApiDataFileDetail {
+  return {
+    ...normalizeDataFile(item),
+    previewRows: Array.isArray(item.previewRows) ? item.previewRows.map(normalizeDataFileRow) : [],
+  }
+}
+
+function normalizeDataFilePreview(item: ApiDataFilePreview): ApiDataFilePreview {
+  return {
+    id: Number(item.id),
+    columns: Array.isArray(item.columns) ? item.columns : [],
+    rows: Array.isArray(item.rows) ? item.rows.map(normalizeDataFileRow) : [],
+    rowCount: Number(item.rowCount || 0),
+  }
+}
+
 export const apiAutomationApi = {
   async getEnvironments(workspaceCode = 'ALL') {
     const payload = await httpGet<ApiResponse<PageResponse<ApiAutomationEnvironmentItem>>>('/automation/api/environments', {
@@ -460,6 +535,82 @@ export const apiAutomationApi = {
     })
 
     return normalizePageResponse(unwrapApiResponse(payload), normalizeVariableSet)
+  },
+
+  async getDataFiles(workspaceCode = 'ALL', query?: ApiDataFileListQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiDataFileItem>>>('/automation/api/data-files', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
+    })
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeDataFile)
+  },
+
+  async getDataFile(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<ApiDataFileDetail>>(`/automation/api/data-files/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDataFileDetail(unwrapApiResponse(payload))
+  },
+
+  async previewDataFile(workspaceCode = 'ALL', id: number) {
+    const payload = await httpGet<ApiResponse<ApiDataFilePreview>>(`/automation/api/data-files/${id}/preview`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return normalizeDataFilePreview(unwrapApiResponse(payload))
+  },
+
+  async uploadDataFile(
+    workspaceCode = 'ALL',
+    file: File,
+    options?: { fileName?: string; caseDescColumn?: string; ignoreFirstLine?: boolean },
+  ) {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('workspaceCode', workspaceCode)
+    if (options?.fileName) {
+      form.append('fileName', options.fileName)
+    }
+    if (options?.caseDescColumn) {
+      form.append('caseDescColumn', options.caseDescColumn)
+    }
+    if (options?.ignoreFirstLine !== undefined) {
+      form.append('ignoreFirstLine', String(options.ignoreFirstLine))
+    }
+
+    const response = await fetch(`${env.apiBaseUrl}/automation/api/data-files`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: workspaceHeaders(workspaceCode),
+      body: form,
+    })
+
+    if (!response.ok) {
+      throw new Error(await response.text() || `Request failed with status ${response.status}`)
+    }
+
+    const payload = await response.json() as ApiResponse<ApiDataFileDetail>
+    return normalizeDataFileDetail(unwrapApiResponse(payload))
+  },
+
+  async updateDataFile(workspaceCode = 'ALL', id: number, data: ApiDataFileUpdatePayload) {
+    const payload = await httpPut<ApiResponse<ApiDataFileDetail>, ApiDataFileUpdatePayload>(
+      `/automation/api/data-files/${id}`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+
+    return normalizeDataFileDetail(unwrapApiResponse(payload))
+  },
+
+  async deleteDataFile(workspaceCode = 'ALL', id: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/api/data-files/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(payload)
   },
 
   async getDefinitions(workspaceCode = 'ALL', query?: ApiDefinitionListQuery) {

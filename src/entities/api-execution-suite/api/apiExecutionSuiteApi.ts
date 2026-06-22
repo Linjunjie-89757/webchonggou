@@ -95,6 +95,11 @@ function normalizeSuite(item: ApiExecutionSuiteItem): ApiExecutionSuiteItem {
     branchName: item.branchName || null,
     triggerSource: item.triggerSource || null,
     branchNote: item.branchNote || null,
+    dataDrivenEnabled: Boolean(item.dataDrivenEnabled),
+    dataFileId: item.dataFileId ?? null,
+    dataFileNameSnapshot: item.dataFileNameSnapshot || null,
+    caseDescColumn: item.caseDescColumn || null,
+    dataFailureStrategy: item.dataFailureStrategy || 'STOP_ON_ROW_FAILURE',
     lastRunResult: item.lastRunResult || null,
     lastRunAt: item.lastRunAt || null,
     updatedAt: item.updatedAt || null,
@@ -145,6 +150,10 @@ function normalizeRunHistoryItem(item: ApiExecutionSuiteRunHistoryItem): ApiExec
     globalTimeoutMs: Number(item.globalTimeoutMs || 300000),
     stepFailureRetryCount: Number(item.stepFailureRetryCount || 0),
     defaultStepWaitMs: Number(item.defaultStepWaitMs || 0),
+    dataDrivenEnabled: Boolean(item.dataDrivenEnabled),
+    dataFileId: item.dataFileId ?? null,
+    dataFileName: item.dataFileName || null,
+    dataRowCount: Number(item.dataRowCount || 0),
     branchName: item.branchName || null,
     triggerSource: item.triggerSource || null,
     operatorId: item.operatorId ?? null,
@@ -171,6 +180,7 @@ function normalizeRunItemSnapshot(item: ApiExecutionSuiteRunItemSnapshot): ApiEx
 function normalizeRunHistoryDetail(item: ApiExecutionSuiteRunHistoryDetail): ApiExecutionSuiteRunHistoryDetail {
   return {
     ...normalizeRunHistoryItem(item),
+    dataIterations: Array.isArray(item.dataIterations) ? item.dataIterations : [],
     itemSnapshots: Array.isArray(item.itemSnapshots) ? item.itemSnapshots.map(normalizeRunItemSnapshot) : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
   }

@@ -48,6 +48,11 @@ export interface ApiExecutionSuiteItem {
   branchName: string | null
   triggerSource: string | null
   branchNote: string | null
+  dataDrivenEnabled: boolean
+  dataFileId: number | null
+  dataFileNameSnapshot: string | null
+  caseDescColumn: string | null
+  dataFailureStrategy: string | null
   lastRunResult: string | null
   lastRunAt: string | null
   updatedAt: string | null
@@ -78,6 +83,10 @@ export interface SaveApiExecutionSuitePayload {
   branchName?: string | null
   triggerSource?: string | null
   branchNote?: string | null
+  dataDrivenEnabled?: boolean
+  dataFileId?: number | null
+  caseDescColumn?: string | null
+  dataFailureStrategy?: string | null
 }
 
 export interface ApiExecutionSuiteListQuery {
@@ -140,6 +149,10 @@ export interface ApiExecutionSuiteRunHistoryItem {
   globalTimeoutMs: number
   stepFailureRetryCount: number
   defaultStepWaitMs: number
+  dataDrivenEnabled: boolean
+  dataFileId: number | null
+  dataFileName: string | null
+  dataRowCount: number
   branchName: string | null
   triggerSource: string | null
   operatorId: number | null
@@ -160,6 +173,16 @@ export interface ApiExecutionSuiteRunItemSnapshot {
 }
 
 export interface ApiExecutionSuiteRunHistoryDetail extends ApiExecutionSuiteRunHistoryItem {
+  dataIterations: Array<{
+    rowIndex: number
+    caseDesc: string | null
+    rowValues: Record<string, string>
+    result: string | null
+    failedStep: string | null
+    stepCount: number | null
+    durationMs: number | null
+    failureSummary: string | null
+  }>
   itemSnapshots: ApiExecutionSuiteRunItemSnapshot[]
   stepResults: ApiRunResult['stepResults']
 }

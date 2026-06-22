@@ -87,7 +87,7 @@ const props = defineProps<{
 
 const executionSubTabs: Array<{ key: ExecutionSubTabKey; label: string; icon: typeof Layers }> = [
   { key: 'arrange', label: '编排', icon: Layers },
-  { key: 'schedule', label: '定时', icon: Clock },
+  { key: 'schedule', label: '定时任务', icon: Clock },
   { key: 'branch', label: '分支', icon: Zap },
   { key: 'result', label: '运行结果', icon: FileText },
 ]
@@ -384,6 +384,11 @@ function createDraftSuiteDetail(workspaceCode: string, moduleId: number | null, 
     branchName: null,
     triggerSource: null,
     branchNote: null,
+    dataDrivenEnabled: false,
+    dataFileId: null,
+    dataFileNameSnapshot: null,
+    caseDescColumn: 'caseDesc',
+    dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     lastRunResult: null,
     lastRunAt: null,
     updatedAt: null,
@@ -1011,6 +1016,15 @@ function formatSuiteItemType(value?: string | null) {
   return value || '未知'
 }
 
+function formatRowValues(values?: Record<string, string> | null) {
+  const entries = Object.entries(values || {})
+  if (!entries.length) return '无行数据'
+  return entries
+    .slice(0, 6)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('，')
+}
+
 function formatDuration(value?: number | null) {
   const duration = Number(value || 0)
   if (duration >= 1000) return `${(duration / 1000).toFixed(duration >= 10000 ? 0 : 1)}s`
@@ -1193,6 +1207,10 @@ async function handleSaveSuite() {
       branchName: executionBranchName.value.trim() || null,
       triggerSource: executionTriggerSource.value.trim() || null,
       branchNote: executionBranchNote.value.trim() || null,
+      dataDrivenEnabled: false,
+      dataFileId: null,
+      caseDescColumn: null,
+      dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     })
     syncSuiteConfigForm()
     ElMessage.success('套件配置已保存')
@@ -1237,6 +1255,10 @@ async function confirmCreateDraftSuite() {
       branchName: executionBranchName.value.trim() || null,
       triggerSource: executionTriggerSource.value.trim() || null,
       branchNote: executionBranchNote.value.trim() || null,
+      dataDrivenEnabled: false,
+      dataFileId: null,
+      caseDescColumn: null,
+      dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     })
     const tabIndex = openedSuiteTabs.value.findIndex(item => item.id === draftId)
     if (tabIndex >= 0) {
@@ -1511,6 +1533,7 @@ function showPending(message: string) {
                 <small>{{ formatDateTime(history.createdAt) }}</small>
                 <span>通过 {{ history.successCount }}/{{ history.totalCount }}</span>
                 <span>失败 {{ history.failedCount }}</span>
+                <span v-if="history.dataDrivenEnabled">{{ history.dataFileName || '数据文件' }} · {{ history.dataRowCount }} 行</span>
                 <span>{{ formatDuration(history.durationMs) }}</span>
                 <small>{{ history.operatorName || '系统' }}</small>
               </button>
@@ -1544,8 +1567,28 @@ function showPending(message: string) {
                     <span><b>全局超时</b>{{ suiteRunHistoryDetail.globalTimeoutMs }}ms</span>
                     <span v-if="suiteRunHistoryDetail.branchName"><b>分支</b>{{ suiteRunHistoryDetail.branchName }}</span>
                     <span v-if="suiteRunHistoryDetail.triggerSource"><b>触发来源</b>{{ suiteRunHistoryDetail.triggerSource }}</span>
+                    <span v-if="suiteRunHistoryDetail.dataDrivenEnabled"><b>数据文件</b>{{ suiteRunHistoryDetail.dataFileName || '--' }}</span>
+                    <span v-if="suiteRunHistoryDetail.dataDrivenEnabled"><b>数据行数</b>{{ suiteRunHistoryDetail.dataRowCount }}</span>
                   </div>
                   <p v-if="suiteRunHistoryDetail.failureSummary">{{ suiteRunHistoryDetail.failureSummary }}</p>
+                </div>
+                <div v-if="suiteRunHistoryDetail.dataIterations?.length" class="execution-result-items execution-data-iterations">
+                  <strong>数据行迭代</strong>
+                  <div
+                    v-for="iteration in suiteRunHistoryDetail.dataIterations"
+                    :key="iteration.rowIndex"
+                    class="execution-data-iteration"
+                  >
+                    <span :class="['execution-result-badge', runResultClass(iteration.result)]">
+                      {{ formatRunResult(iteration.result) }}
+                    </span>
+                    <small>第 {{ iteration.rowIndex }} 行</small>
+                    <b>{{ iteration.caseDesc || `数据行 ${iteration.rowIndex}` }}</b>
+                    <span>{{ iteration.stepCount ?? 0 }} 步</span>
+                    <span>{{ formatDuration(iteration.durationMs) }}</span>
+                    <code>{{ formatRowValues(iteration.rowValues) }}</code>
+                    <p v-if="iteration.failureSummary">{{ iteration.failureSummary }}</p>
+                  </div>
                 </div>
                 <div v-if="suiteRunHistoryDetail.itemSnapshots.length" class="execution-result-items">
                   <strong>编排项结果</strong>
@@ -2732,6 +2775,12 @@ function showPending(message: string) {
   font-weight: 600;
 }
 
+.execution-field-hint {
+  color: #9ca3af;
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .execution-config-switch {
   display: flex;
   align-items: center;
@@ -3116,6 +3165,52 @@ function showPending(message: string) {
 .execution-result-item small {
   color: #6b7280;
   font-size: 12px;
+}
+
+.execution-data-iteration {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 0;
+  border-top: 1px solid #f3f4f6;
+}
+
+.execution-data-iteration b {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-data-iteration span,
+.execution-data-iteration small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.execution-data-iteration code {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-data-iteration p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #dc2626;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .execution-result-step {

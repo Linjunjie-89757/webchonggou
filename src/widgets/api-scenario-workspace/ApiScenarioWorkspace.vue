@@ -37,6 +37,7 @@ import {
   type ApiKeyValueInput,
   type ApiRequestConfigInput,
   type ApiRunStepResult,
+  type ApiExecutionSuiteDataIteration,
   type ApiScenarioDetail,
   type ApiScenarioItem,
   type ApiScenarioModuleItem,
@@ -48,10 +49,11 @@ import { configApi, type DbConnectionItem } from '@/entities/config'
 import type { WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import ApiCodeEditor from '../api-interface-workspace/ApiCodeEditor.vue'
+import ApiScenarioTestDataPanel from './ApiScenarioTestDataPanel.vue'
 import ScenarioAssertionEditor from './ScenarioAssertionEditor.vue'
 import ScenarioProcessorEditor from './ScenarioProcessorEditor.vue'
 
-type ScenarioDetailTab = 'steps' | 'params' | 'assertions' | 'history' | 'settings'
+type ScenarioDetailTab = 'steps' | 'testData' | 'reports' | 'settings' | 'cicd'
 type ScenarioModuleNodeType = 'root' | 'workspace' | 'module'
 type ScenarioImportTreeNodeType = 'root' | 'workspace' | 'module'
 type ScenarioStepConfigTab = 'params' | 'headers' | 'body' | 'auth' | 'pre' | 'post' | 'tests' | 'settings'
@@ -132,6 +134,7 @@ interface ScenarioEditorTab {
   savedFingerprint: string
   detail: ApiScenarioDetail | null
   lastRunStepResults: ApiRunStepResult[]
+  lastRunDataIterations: ApiExecutionSuiteDataIteration[]
   lastRunResult: string | null
   lastRunFailureSummary: string | null
 }
@@ -245,6 +248,7 @@ const scenarioEditorTabs = ref<ScenarioEditorTab[]>([
     savedFingerprint: '',
     detail: null,
     lastRunStepResults: [],
+    lastRunDataIterations: [],
     lastRunResult: null,
     lastRunFailureSummary: null,
   },
@@ -290,6 +294,7 @@ const activeScenarioEditorTab = computed(() => (
 
 const activeScenarioDetail = computed(() => activeScenarioEditorTab.value?.detail || buildEmptyScenarioDetail())
 const activeScenarioRunSteps = computed(() => activeScenarioEditorTab.value?.lastRunStepResults || [])
+const activeScenarioRunDataIterations = computed(() => activeScenarioEditorTab.value?.lastRunDataIterations || [])
 const activeScenarioRunResult = computed(() => activeScenarioEditorTab.value?.lastRunResult || activeScenarioDetail.value.lastRunResult || null)
 const activeScenarioRunFailureSummary = computed(() => activeScenarioEditorTab.value?.lastRunFailureSummary || '')
 
@@ -414,14 +419,6 @@ const scenarioStepBodyModes: Array<{ label: string; value: ScenarioBodyType }> =
 ]
 
 const requestMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
-const scenarioAssertionTypeOptions = [
-  { label: '全部步骤通过', value: 'ALL_STEPS_PASSED' },
-  { label: '失败数等于', value: 'FAILED_COUNT_EQUALS' },
-  { label: '失败数小于等于', value: 'FAILED_COUNT_LTE' },
-  { label: '总耗时小于', value: 'TOTAL_DURATION_LT' },
-  { label: '执行步骤数等于', value: 'STEP_COUNT_EQUALS' },
-]
-const scenarioVariableTypeOptions = ['string', 'number', 'boolean', 'object']
 
 const scenarioReferenceOptions = computed(() => scenarios.value
   .filter(item => item.id !== activeScenarioDetail.value.id)
@@ -543,6 +540,18 @@ const activeScenarioRunSummary = computed(() => {
   const duration = steps.reduce((sum, item) => sum + Number(item.durationMs || 0), 0)
   return {
     total: steps.length,
+    passed,
+    failed,
+    duration,
+  }
+})
+const activeScenarioRunDataSummary = computed(() => {
+  const rows = activeScenarioRunDataIterations.value
+  const passed = rows.filter(item => scenarioRunResultTone(item.result) === 'passed').length
+  const failed = rows.filter(item => scenarioRunResultTone(item.result) === 'failed').length
+  const duration = rows.reduce((sum, item) => sum + Number(item.durationMs || 0), 0)
+  return {
+    total: rows.length,
     passed,
     failed,
     duration,
@@ -1093,6 +1102,11 @@ function fingerprintScenarioDetail(detail: ApiScenarioDetail) {
     globalTimeoutMs: detail.globalTimeoutMs ?? SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: detail.stepFailureRetryCount ?? 0,
     defaultStepWaitMs: detail.defaultStepWaitMs ?? 0,
+    dataDrivenEnabled: Boolean(detail.dataDrivenEnabled),
+    dataFileId: detail.dataFileId ?? null,
+    dataFileNameSnapshot: detail.dataFileNameSnapshot || null,
+    caseDescColumn: detail.caseDescColumn || 'caseDesc',
+    dataFailureStrategy: detail.dataFailureStrategy || 'STOP_ON_ROW_FAILURE',
     relatedCaseId: detail.relatedCaseId ?? null,
     scenarioVariables: detail.scenarioVariables || [],
     scenarioAssertions: detail.scenarioAssertions || [],
@@ -1337,6 +1351,11 @@ function buildEmptyScenarioDetail(): ApiScenarioDetail {
     globalTimeoutMs: SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: 0,
     defaultStepWaitMs: 0,
+    dataDrivenEnabled: false,
+    dataFileId: null,
+    dataFileNameSnapshot: null,
+    caseDescColumn: 'caseDesc',
+    dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     lastRunResult: null,
     lastRunAt: null,
     updatedAt: null,
@@ -1359,6 +1378,7 @@ function openNewScenarioTab() {
     savedFingerprint: fingerprintScenarioDetail(detail),
     detail,
     lastRunStepResults: [],
+    lastRunDataIterations: [],
     lastRunResult: null,
     lastRunFailureSummary: null,
   })
@@ -1392,6 +1412,7 @@ async function selectScenario(id: number) {
       savedFingerprint: fingerprintScenarioDetail(detail),
       detail,
       lastRunStepResults: [],
+      lastRunDataIterations: [],
       lastRunResult: detail.lastRunResult,
       lastRunFailureSummary: null,
     })
@@ -1597,6 +1618,7 @@ async function copyScenario(row: ApiScenarioItem) {
       savedFingerprint: fingerprintScenarioDetail(cloneScenarioDetail(copy)),
       detail: copy,
       lastRunStepResults: [],
+      lastRunDataIterations: [],
       lastRunResult: null,
       lastRunFailureSummary: null,
     })
@@ -1627,51 +1649,6 @@ async function removeScenarioFromList(row: ApiScenarioItem) {
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   }
-}
-
-function addScenarioVariable() {
-  activeScenarioDetail.value.scenarioVariables.push({
-    name: '',
-    value: '',
-    type: 'string',
-    sensitive: false,
-    description: '',
-  })
-  markScenarioDirty()
-}
-
-function removeScenarioVariable(index: number) {
-  activeScenarioDetail.value.scenarioVariables.splice(index, 1)
-  markScenarioDirty()
-}
-
-function addScenarioAssertion() {
-  activeScenarioDetail.value.scenarioAssertions.push({
-    id: `scenario-assertion-${Date.now()}`,
-    name: '全部步骤通过',
-    assertionType: 'ALL_STEPS_PASSED',
-    operator: 'EQUALS',
-    expectedValue: 'true',
-    enabled: true,
-  })
-  markScenarioDirty()
-}
-
-function handleScenarioAssertionTypeChange(row: { assertionType: string; name?: string; expectedValue?: string; operator?: string }) {
-  const option = scenarioAssertionTypeOptions.find(item => item.value === row.assertionType)
-  row.name = option?.label || row.name || '场景断言'
-  row.operator = row.assertionType === 'TOTAL_DURATION_LT' ? 'LT' : row.assertionType === 'FAILED_COUNT_LTE' ? 'LTE' : 'EQUALS'
-  if (row.assertionType === 'ALL_STEPS_PASSED') {
-    row.expectedValue = 'true'
-  } else if (!row.expectedValue) {
-    row.expectedValue = '0'
-  }
-  markScenarioDirty()
-}
-
-function removeScenarioAssertion(index: number) {
-  activeScenarioDetail.value.scenarioAssertions.splice(index, 1)
-  markScenarioDirty()
 }
 
 function scenarioStepTypeBadgeLabel(type?: ApiScenarioStepType | null) {
@@ -2317,6 +2294,11 @@ function buildScenarioPayload(): SaveApiScenarioPayload {
     globalTimeoutMs: detail.globalTimeoutMs ?? SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: detail.stepFailureRetryCount ?? 0,
     defaultStepWaitMs: detail.defaultStepWaitMs ?? 0,
+    dataDrivenEnabled: Boolean(detail.dataDrivenEnabled),
+    dataFileId: detail.dataFileId ?? null,
+    dataFileNameSnapshot: detail.dataFileNameSnapshot || null,
+    caseDescColumn: detail.caseDescColumn || 'caseDesc',
+    dataFailureStrategy: detail.dataFailureStrategy || 'STOP_ON_ROW_FAILURE',
     relatedCaseId: detail.relatedCaseId,
     scenarioVariables: Array.isArray(detail.scenarioVariables) ? detail.scenarioVariables : [],
     scenarioAssertions: Array.isArray(detail.scenarioAssertions) ? detail.scenarioAssertions : [],
@@ -2394,11 +2376,12 @@ async function runScenario() {
       variableSetId: detail.variableSetId,
     })
     activeScenarioEditorTab.value.lastRunStepResults = response.stepResults || []
+    activeScenarioEditorTab.value.lastRunDataIterations = response.dataIterations || []
     activeScenarioEditorTab.value.lastRunResult = response.result
     activeScenarioEditorTab.value.lastRunFailureSummary = response.failureSummary || null
     detail.lastRunResult = response.result
     ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
-    activeScenarioDetailTab.value = 'history'
+    activeScenarioDetailTab.value = 'reports'
     await loadScenarioWorkspace()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -2727,10 +2710,10 @@ watch(activeScenarioEditorKey, () => {
               <div class="scenario-edit-toolbar">
                 <div class="scenario-detail-tabs">
                   <button :class="{ active: activeScenarioDetailTab === 'steps' }" @click="activeScenarioDetailTab = 'steps'">步骤</button>
-                  <button :class="{ active: activeScenarioDetailTab === 'params' }" @click="activeScenarioDetailTab = 'params'">参数</button>
-                  <button :class="{ active: activeScenarioDetailTab === 'assertions' }" @click="activeScenarioDetailTab = 'assertions'">断言</button>
-                  <button :class="{ active: activeScenarioDetailTab === 'history' }" @click="activeScenarioDetailTab = 'history'">执行历史</button>
+                  <button :class="{ active: activeScenarioDetailTab === 'testData' }" @click="activeScenarioDetailTab = 'testData'">测试数据</button>
+                  <button :class="{ active: activeScenarioDetailTab === 'reports' }" @click="activeScenarioDetailTab = 'reports'">测试报告</button>
                   <button :class="{ active: activeScenarioDetailTab === 'settings' }" @click="activeScenarioDetailTab = 'settings'">设置</button>
+                  <button :class="{ active: activeScenarioDetailTab === 'cicd' }" @click="activeScenarioDetailTab = 'cicd'">CI/CD</button>
                 </div>
               </div>
 
@@ -2872,79 +2855,23 @@ watch(activeScenarioEditorKey, () => {
                 <div v-else class="scenario-step-empty" aria-label="暂无步骤"></div>
               </div>
 
-              <div v-else-if="activeScenarioDetailTab === 'params'" class="scenario-placeholder-panel">
-                <div class="scenario-step-toolbar">
-                  <div>
-                    <span>场景变量</span>
-                    <small>可在步骤中通过 &#123;&#123;变量名&#125;&#125; 引用</small>
-                  </div>
-                  <el-button text @click="addScenarioVariable">新增变量</el-button>
-                </div>
-                <div class="scenario-detail-table scenario-variable-table">
-                  <div v-if="activeScenarioDetail.scenarioVariables.length" class="scenario-variable-header">
-                    <span>变量名</span>
-                    <span>默认值</span>
-                    <span>类型</span>
-                    <span>敏感</span>
-                    <span>描述</span>
-                    <span></span>
-                  </div>
-                  <div
-                    v-for="(row, index) in activeScenarioDetail.scenarioVariables"
-                    :key="`scenario-var-${index}`"
-                    class="scenario-kv-row"
-                  >
-                    <el-input v-model="row.name" placeholder="变量名" @input="markScenarioDirty" />
-                    <el-input v-model="row.value" placeholder="默认值 / {{variable}}" :show-password="row.sensitive" @input="markScenarioDirty" />
-                    <el-select v-model="row.type" placeholder="类型" @change="markScenarioDirty">
-                      <el-option v-for="item in scenarioVariableTypeOptions" :key="item" :label="item" :value="item" />
-                    </el-select>
-                    <el-switch v-model="row.sensitive" @change="markScenarioDirty" />
-                    <el-input v-model="row.description" placeholder="描述" @input="markScenarioDirty" />
-                    <el-button text @click="removeScenarioVariable(index)">删除</el-button>
-                  </div>
-                  <div v-if="!activeScenarioDetail.scenarioVariables.length" class="scenario-mini-empty">暂无场景变量</div>
-                </div>
-              </div>
+              <ApiScenarioTestDataPanel
+                v-else-if="activeScenarioDetailTab === 'testData'"
+                v-model:enabled="activeScenarioDetail.dataDrivenEnabled"
+                v-model:data-file-id="activeScenarioDetail.dataFileId"
+                v-model:data-file-name-snapshot="activeScenarioDetail.dataFileNameSnapshot"
+                v-model:case-desc-column="activeScenarioDetail.caseDescColumn"
+                v-model:failure-strategy="activeScenarioDetail.dataFailureStrategy"
+                :workspace-code="activeScenarioDetail.workspaceCode"
+                :workspace-ready="props.workspaceReady"
+                @dirty="markScenarioDirty"
+              />
 
-              <div v-else-if="activeScenarioDetailTab === 'assertions'" class="scenario-placeholder-panel">
-                <div class="scenario-step-toolbar">
-                  <div>
-                    <span>场景级断言</span>
-                    <small>判断整个流程是否通过</small>
-                  </div>
-                  <el-button text @click="addScenarioAssertion">新增断言</el-button>
-                </div>
-                <div class="scenario-detail-table scenario-assertion-table">
-                  <div v-if="activeScenarioDetail.scenarioAssertions.length" class="scenario-assertion-header">
-                    <span>断言名称</span>
-                    <span>断言类型</span>
-                    <span>期望值</span>
-                    <span>启用</span>
-                    <span>操作</span>
-                  </div>
-                  <div
-                    v-for="(row, index) in activeScenarioDetail.scenarioAssertions"
-                    :key="row.id || index"
-                    class="scenario-assertion-row"
-                  >
-                    <el-input v-model="row.name" placeholder="断言名称" @input="markScenarioDirty" />
-                    <el-select v-model="row.assertionType" @change="handleScenarioAssertionTypeChange(row)">
-                      <el-option v-for="option in scenarioAssertionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-                    </el-select>
-                    <el-input v-model="row.expectedValue" :placeholder="row.assertionType === 'ALL_STEPS_PASSED' ? 'true' : '数值'" @input="markScenarioDirty" />
-                    <el-switch v-model="row.enabled" @change="markScenarioDirty" />
-                    <el-button text @click="removeScenarioAssertion(index)">删除</el-button>
-                  </div>
-                  <div v-if="!activeScenarioDetail.scenarioAssertions.length" class="scenario-mini-empty">暂无场景级断言</div>
-                </div>
-              </div>
-
-              <div v-else-if="activeScenarioDetailTab === 'history'" class="scenario-placeholder-panel">
+              <div v-else-if="activeScenarioDetailTab === 'reports'" class="scenario-placeholder-panel">
                 <div class="scenario-run-history-head">
                   <div>
-                    <span class="scenario-run-history-title">执行历史</span>
-                    <small>最近一次执行结果</small>
+                    <span class="scenario-run-history-title">测试报告</span>
+                    <small>最近一次运行结果，后续展示最近 10 次场景报告</small>
                   </div>
                   <span
                     v-if="activeScenarioRunResult"
@@ -2953,26 +2880,58 @@ watch(activeScenarioEditorKey, () => {
                     {{ scenarioRunResultLabel(activeScenarioRunResult) }}
                   </span>
                 </div>
+                <div v-if="activeScenarioRunDataIterations.length" class="scenario-run-data-meta">
+                  <span><b>数据文件</b>{{ activeScenarioDetail.dataFileNameSnapshot || '-' }}</span>
+                  <span><b>数据行数</b>{{ activeScenarioRunDataSummary.total }}</span>
+                  <span><b>用例描述列</b>{{ activeScenarioDetail.caseDescColumn || 'caseDesc' }}</span>
+                  <span><b>行失败策略</b>{{ activeScenarioDetail.dataFailureStrategy === 'CONTINUE_ON_ROW_FAILURE' ? '失败后继续下一行' : '失败后停止' }}</span>
+                </div>
                 <div class="scenario-run-summary-grid">
                   <div>
-                    <span>总步骤</span>
-                    <strong>{{ activeScenarioRunSummary.total }}</strong>
+                    <span>{{ activeScenarioRunDataIterations.length ? '总行数' : '总步骤' }}</span>
+                    <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.total : activeScenarioRunSummary.total }}</strong>
                   </div>
                   <div>
                     <span>通过</span>
-                    <strong class="is-passed">{{ activeScenarioRunSummary.passed }}</strong>
+                    <strong class="is-passed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.passed : activeScenarioRunSummary.passed }}</strong>
                   </div>
                   <div>
                     <span>失败</span>
-                    <strong class="is-failed">{{ activeScenarioRunSummary.failed }}</strong>
+                    <strong class="is-failed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.failed : activeScenarioRunSummary.failed }}</strong>
                   </div>
                   <div>
                     <span>总耗时</span>
-                    <strong>{{ activeScenarioRunSummary.duration }} ms</strong>
+                    <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.duration : activeScenarioRunSummary.duration }} ms</strong>
                   </div>
                 </div>
                 <div v-if="activeScenarioRunFailureSummary" class="scenario-run-failure-summary">
                   {{ activeScenarioRunFailureSummary }}
+                </div>
+                <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table">
+                  <div class="scenario-step-table-header">
+                    <span>行号</span>
+                    <span>用例描述</span>
+                    <span>结果</span>
+                    <span>步骤数</span>
+                    <span>耗时 ms</span>
+                    <span>失败步骤</span>
+                    <span>错误原因</span>
+                  </div>
+                  <div
+                    v-for="row in activeScenarioRunDataIterations"
+                    :key="row.rowIndex"
+                    class="scenario-step-table-row"
+                  >
+                    <span>{{ row.rowIndex }}</span>
+                    <span>{{ row.caseDesc || '-' }}</span>
+                    <span :class="['scenario-run-step-result', `is-${scenarioRunResultTone(row.result)}`]">
+                      {{ scenarioRunResultLabel(row.result) }}
+                    </span>
+                    <span>{{ row.stepCount ?? '-' }}</span>
+                    <span>{{ row.durationMs ?? '-' }}</span>
+                    <span>{{ row.failedStep || '-' }}</span>
+                    <span class="scenario-run-step-error">{{ row.failureSummary || '-' }}</span>
+                  </div>
                 </div>
                 <div class="scenario-step-table scenario-run-history-table">
                   <div class="scenario-step-table-header">
@@ -2997,11 +2956,11 @@ watch(activeScenarioEditorKey, () => {
                     <span>{{ row.durationMs ?? '-' }}</span>
                     <span class="scenario-run-step-error">{{ row.errorMessage || '-' }}</span>
                   </div>
-                  <div v-if="!activeScenarioRunSteps.length" class="scenario-step-empty">暂无执行历史</div>
+                  <div v-if="!activeScenarioRunSteps.length" class="scenario-step-empty">暂无测试报告</div>
                 </div>
               </div>
 
-              <div v-else class="scenario-placeholder-panel">
+              <div v-else-if="activeScenarioDetailTab === 'settings'" class="scenario-placeholder-panel">
                 <div class="scenario-settings-panel">
                   <div class="scenario-settings-card">
                     <div>
@@ -3065,6 +3024,17 @@ watch(activeScenarioEditorKey, () => {
                         @change="markScenarioDirty"
                       />
                     </label>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="scenario-placeholder-panel">
+                <div class="scenario-cicd-panel">
+                  <strong>CI/CD</strong>
+                  <p>后续将提供命令、CI token、Webhook 和流水线参数配置。本期先保留基础占位，不伪造已完成能力。</p>
+                  <div class="scenario-cicd-command">
+                    <span>命令示例</span>
+                    <code>api-automation run scenario --id {{ activeScenarioDetail.id || 'SCENARIO_ID' }}</code>
                   </div>
                 </div>
               </div>
@@ -5046,6 +5016,32 @@ watch(activeScenarioEditorKey, () => {
   grid-template-columns: 56px minmax(160px, 1.2fr) 96px 96px 96px minmax(180px, 1fr);
 }
 
+.scenario-run-data-table .scenario-step-table-header,
+.scenario-run-data-table .scenario-step-table-row {
+  grid-template-columns: 64px minmax(160px, 1.1fr) 96px 80px 96px minmax(120px, 0.8fr) minmax(180px, 1.2fr);
+}
+
+.scenario-run-data-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 12px 16px 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.scenario-run-data-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-run-data-meta b {
+  color: #344054;
+  font-weight: 600;
+}
+
 .scenario-run-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5095,63 +5091,6 @@ watch(activeScenarioEditorKey, () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.scenario-detail-table {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-  padding: 16px;
-}
-
-.scenario-kv-row,
-.scenario-assertion-row,
-.scenario-variable-header,
-.scenario-assertion-header {
-  display: grid;
-  align-items: center;
-  gap: 12px;
-}
-
-.scenario-variable-header,
-.scenario-assertion-header {
-  min-height: 32px;
-  border-radius: 4px;
-  background: #f9fafb;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-  padding: 0 10px;
-}
-
-.scenario-kv-row,
-.scenario-variable-header {
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr) 112px 72px minmax(160px, 1fr) 64px;
-}
-
-.scenario-kv-row {
-  min-height: 36px;
-}
-
-.scenario-assertion-row,
-.scenario-assertion-header {
-  grid-template-columns: minmax(160px, 1fr) 220px minmax(180px, 1fr) 70px 64px;
-}
-
-.scenario-assertion-row {
-  min-height: 36px;
-}
-
-.scenario-kv-row :deep(.el-input__wrapper),
-.scenario-kv-row :deep(.el-select__wrapper),
-.scenario-assertion-row :deep(.el-input__wrapper),
-.scenario-assertion-row :deep(.el-select__wrapper) {
-  min-height: 32px;
-  border-radius: 4px;
 }
 
 .scenario-mini-empty {
@@ -6274,5 +6213,51 @@ watch(activeScenarioEditorKey, () => {
 .scenario-soft-dialog__submit.is-danger:hover {
   border-color: #b91c1c;
   background: #b91c1c;
+}
+
+.scenario-cicd-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 16px;
+}
+
+.scenario-cicd-panel strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.scenario-cicd-panel p {
+  max-width: 720px;
+  margin: 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.scenario-cicd-command {
+  display: grid;
+  max-width: 720px;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.scenario-cicd-command span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.scenario-cicd-command code {
+  overflow: hidden;
+  color: #344054;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

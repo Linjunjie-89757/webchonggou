@@ -317,6 +317,55 @@ export interface WebUiElementCollectResponse {
   fallbackReason: string | null
 }
 
+export interface LocalRunnerCollectTaskPayload {
+  runnerId?: string | null
+  sessionId?: string | null
+  actualUrl?: string | null
+  pageTitle?: string | null
+  moduleId?: number | null
+  pageId?: number | null
+  pageName?: string | null
+  scope?: WebUiElementCollectScope
+  providerConnectionId?: number | null
+  modelName?: string | null
+  rawCount?: number | null
+  screenshotBase64?: string | null
+  candidates: WebUiElementCollectCandidate[]
+}
+
+export interface WebUiElementCollectTaskResponse {
+  taskId: number
+  status: string
+  currentStage: string
+  progressPercent: number
+  source: string
+  actualUrl: string | null
+  pageTitle: string | null
+  rawCount: number
+  finalCount: number
+  filterSummary: WebUiElementCollectFilterSummary | null
+  filterLogs: WebUiElementCollectFilterLog[]
+  candidates: WebUiElementCollectCandidate[]
+  message: string | null
+  createdAt: string | null
+  completedAt: string | null
+}
+
+export interface WebUiElementCollectFilterSummary {
+  originalCount: number
+  emptyLocatorCount: number
+  duplicateCount: number
+  lowStabilityCount: number
+  finalCount: number
+}
+
+export interface WebUiElementCollectFilterLog {
+  stage: string
+  reason: string
+  count: number
+  message: string | null
+}
+
 export interface WebUiElementQualityIssue {
   id: string
   level: WebUiElementQualityIssueLevel

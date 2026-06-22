@@ -4105,7 +4105,7 @@ onBeforeUnmount(() => {
       <div class="api-interface-tab-nav">
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'definitions' }]" type="button" @click="activeTopTab = 'definitions'">接口</button>
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'scenarios' }]" type="button" @click="activeTopTab = 'scenarios'">场景</button>
-        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'execution' }]" type="button" @click="activeTopTab = 'execution'">执行</button>
+        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'execution' }]" type="button" @click="activeTopTab = 'execution'">执行套件</button>
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'reports' }]" type="button" @click="activeTopTab = 'reports'">报告</button>
         <button class="api-interface-tab" type="button" disabled>设置</button>
       </div>

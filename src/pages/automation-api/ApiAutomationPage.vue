@@ -62,7 +62,7 @@ watch(selectedWorkspaceCode, (value) => {
 <template>
   <AppPage
     title="接口自动化"
-    description="先接入接口模块、接口定义和接口用例读取闭环，后续再补齐编辑、调试和场景编排。"
+    description="管理接口、场景、执行套件、报告和设置。"
     fill
   >
     <div class="api-automation-page">
@@ -85,3 +85,4 @@ watch(selectedWorkspaceCode, (value) => {
   flex-direction: column;
 }
 </style>
+

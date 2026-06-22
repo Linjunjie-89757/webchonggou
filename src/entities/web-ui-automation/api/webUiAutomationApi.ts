@@ -1,5 +1,9 @@
 import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shared/api/request'
 import { env } from '@/shared/config/env'
+import {
+  normalizeElementCollectCandidate,
+  normalizeElementCollectTaskResponse,
+} from '../lib/collectTask'
 
 import type {
   BatchDeleteWebUiElementPayload,
@@ -7,6 +11,7 @@ import type {
   BatchUpdateWebUiElementStatusPayload,
   BatchValidateWebUiElementPayload,
   CollectWebUiElementsPayload,
+  LocalRunnerCollectTaskPayload,
   PageResponse,
   SaveWebUiCasePayload,
   SaveWebUiCaseTemplatePayload,
@@ -35,8 +40,8 @@ import type {
   WebUiElementBatchBlockedItem,
   WebUiElementBatchResult,
   WebUiElementBatchValidateResult,
-  WebUiElementCollectCandidate,
   WebUiElementCollectResponse,
+  WebUiElementCollectTaskResponse,
   WebUiElementItem,
   WebUiElementListQuery,
   WebUiElementQualityCheckResult,
@@ -323,35 +328,6 @@ function normalizeElementBatchValidateResult(item: WebUiElementBatchValidateResu
     passedCount: Number(item.passedCount || 0),
     failedCount: Number(item.failedCount || 0),
     results: Array.isArray(item.results) ? item.results.map(normalizeElementValidateResultItem) : [],
-  }
-}
-
-function normalizeElementCollectCandidate(item: WebUiElementCollectCandidate): WebUiElementCollectCandidate {
-  return {
-    groupName: item.groupName || '页面元素',
-    candidateSource: item.candidateSource || 'RULE',
-    elementName: item.elementName || '-',
-    locatorType: item.locatorType || 'CSS',
-    locatorValue: item.locatorValue || '',
-    confidence: Number(item.confidence || 0),
-    reason: item.reason || '',
-    tagName: item.tagName || null,
-    elementType: item.elementType || null,
-    text: item.text || null,
-    placeholder: item.placeholder || null,
-    ariaLabel: item.ariaLabel || null,
-    labelText: item.labelText || null,
-    nearbyHeading: item.nearbyHeading || null,
-    businessMeaning: item.businessMeaning || null,
-    recommendedToSave: item.recommendedToSave !== false,
-    notRecommendedReason: item.notRecommendedReason || null,
-    maintenanceSuggestion: item.maintenanceSuggestion || null,
-    stabilityNote: item.stabilityNote || null,
-    validationStatus: item.validationStatus || 'SKIPPED',
-    matchCount: item.matchCount === null || item.matchCount === undefined ? null : Number(item.matchCount),
-    validationMessage: item.validationMessage || null,
-    screenshotBase64: item.screenshotBase64 || null,
-    saveBlockedReason: item.saveBlockedReason || null,
   }
 }
 
@@ -859,6 +835,23 @@ export const webUiAutomationApi = {
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeElementCollectResponse(unwrapApiResponse(payload))
+  },
+
+  async createLocalRunnerCollectTask(workspaceCode = 'ALL', data: LocalRunnerCollectTaskPayload) {
+    const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectTaskPayload>(
+      '/automation/web/elements/collect-tasks/local-runner',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async getLocalRunnerCollectTask(workspaceCode = 'ALL', taskId: number) {
+    const payload = await httpGet<ApiResponse<WebUiElementCollectTaskResponse>>(
+      `/automation/web/elements/collect-tasks/${taskId}`,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
   },
 
   async getElementTree(workspaceCode = 'ALL') {

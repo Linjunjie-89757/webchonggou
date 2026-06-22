@@ -89,6 +89,53 @@ export interface ApiAutomationVariableSetItem {
   status: number | null
 }
 
+export interface ApiDataFileRowPreview {
+  rowIndex: number
+  caseDesc: string | null
+  values: Record<string, string>
+}
+
+export interface ApiDataFileItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  fileName: string
+  originalFileName: string | null
+  fileType: string
+  encoding: string
+  delimiter: string
+  ignoreFirstLine: boolean
+  caseDescColumn: string | null
+  rowCount: number
+  columns: string[]
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface ApiDataFileDetail extends ApiDataFileItem {
+  previewRows: ApiDataFileRowPreview[]
+}
+
+export interface ApiDataFilePreview {
+  id: number
+  columns: string[]
+  rows: ApiDataFileRowPreview[]
+  rowCount: number
+}
+
+export interface ApiDataFileListQuery {
+  keyword?: string
+  pageNo?: number
+  pageSize?: number
+}
+
+export interface ApiDataFileUpdatePayload {
+  workspaceCode?: string
+  fileName: string
+  caseDescColumn?: string | null
+  ignoreFirstLine?: boolean
+}
+
 export interface ApiDefinitionDetail extends ApiDefinitionItem {
   requestConfig: ApiRequestConfigInput
   assertions: unknown[]
@@ -254,6 +301,11 @@ export interface ApiScenarioItem {
   globalTimeoutMs: number
   stepFailureRetryCount: number
   defaultStepWaitMs: number
+  dataDrivenEnabled: boolean
+  dataFileId: number | null
+  dataFileNameSnapshot: string | null
+  caseDescColumn: string | null
+  dataFailureStrategy: string | null
   lastRunResult: string | null
   lastRunAt: string | null
   updatedAt: string | null
@@ -283,6 +335,11 @@ export interface SaveApiScenarioPayload {
   globalTimeoutMs: number
   stepFailureRetryCount: number
   defaultStepWaitMs: number
+  dataDrivenEnabled?: boolean
+  dataFileId?: number | null
+  dataFileNameSnapshot?: string | null
+  caseDescColumn?: string | null
+  dataFailureStrategy?: string | null
   relatedCaseId?: number | null
   scenarioVariables: ApiScenarioVariableItem[]
   scenarioAssertions: ApiScenarioAssertionConfig[]
@@ -375,6 +432,7 @@ export interface ApiRunPayload {
   variableSetId?: number | null
   branchName?: string | null
   triggerSource?: string | null
+  rowVariables?: Record<string, string> | null
 }
 
 export interface ApiRequestSnapshot {
@@ -434,6 +492,7 @@ export interface ApiRunResult {
   reportName: string | null
   result: string | null
   failureSummary: string | null
+  dataIterations?: ApiExecutionSuiteDataIteration[]
   stepResults: ApiRunStepResult[]
 }
 
@@ -469,6 +528,18 @@ export interface ApiExecutionSuiteRunItemSnapshot {
   sortOrder: number | null
   enabled: boolean | null
   result: string | null
+  failedStep: string | null
+  stepCount: number | null
+  durationMs: number | null
+  failureSummary: string | null
+}
+
+export interface ApiExecutionSuiteDataIteration {
+  rowIndex: number
+  caseDesc: string | null
+  rowValues: Record<string, string>
+  result: string | null
+  failedStep: string | null
   stepCount: number | null
   durationMs: number | null
   failureSummary: string | null
@@ -501,6 +572,10 @@ export interface ApiAutomationReportItem {
   runOn: string | null
   branchName: string | null
   triggerSource: string | null
+  dataDrivenEnabled: boolean
+  dataFileId: number | null
+  dataFileName: string | null
+  dataRowCount: number | null
   operatorName: string | null
   createdAt: string | null
   archived: boolean
@@ -511,6 +586,7 @@ export interface ApiAutomationReportDetail extends ApiAutomationReportItem {
   globalTimeoutMs: number | null
   stepFailureRetryCount: number | null
   defaultStepWaitMs: number | null
+  dataIterations: ApiExecutionSuiteDataIteration[]
   itemSnapshots: ApiExecutionSuiteRunItemSnapshot[]
   stepResults: ApiRunStepResult[]
 }
