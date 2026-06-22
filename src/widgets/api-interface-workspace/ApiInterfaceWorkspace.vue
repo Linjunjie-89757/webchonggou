@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowDown,
   ArrowUp,
   Close,
@@ -33,6 +35,10 @@ import {
   type ApiAiCaseGenerationOptionPayload,
   type ApiAiGeneratedCaseDraft,
   type ApiAutomationEnvironmentItem,
+  type ApiAutomationReportAnalysis,
+  type ApiAutomationReportDetail,
+  type ApiAutomationReportItem,
+  type ApiAutomationReportStatistics,
   type ApiAutomationVariableSetItem,
   type ApiDefinitionCaseDetail,
   type ApiDefinitionCaseItem,
@@ -76,6 +82,7 @@ type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
+type ApiReportArchiveFilter = 'active' | 'archived' | 'all'
 type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
 type ApiBodyLanguage = 'json' | 'xml' | 'text'
 type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
@@ -267,6 +274,12 @@ const selectedDirectoryKey = ref('definition-root')
 const expandedKeys = ref<string[]>(['definition-root'])
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
+const editorTabNavRef = ref<HTMLElement | null>(null)
+const editorTabOverflow = ref({
+  overflow: false,
+  arrivedLeft: true,
+  arrivedRight: true,
+})
 const urlInputRef = ref<{ focus: () => void } | null>(null)
 const saving = ref(false)
 const sending = ref(false)
@@ -321,6 +334,26 @@ const selectedCaseRunHistoryId = ref<number | null>(null)
 const selectedCaseRunHistoryDetail = ref<ApiRunHistoryDetail | null>(null)
 const caseRunHistoryDetailLoading = ref(false)
 const caseRunHistoryDetailErrorMessage = ref('')
+const reportLoading = ref(false)
+const reportItems = ref<ApiAutomationReportItem[]>([])
+const reportTotal = ref(0)
+const reportPageNo = ref(1)
+const reportPageSize = ref(10)
+const reportKeyword = ref('')
+const reportObjectType = ref('')
+const reportResult = ref('')
+const reportArchiveFilter = ref<ApiReportArchiveFilter>('active')
+const reportCreatedRange = ref<[string, string] | null>(null)
+const reportAnalysis = ref<ApiAutomationReportAnalysis | null>(null)
+const reportAnalysisLoading = ref(false)
+const reportStatistics = ref<ApiAutomationReportStatistics | null>(null)
+const reportStatisticsLoading = ref(false)
+const reportDetailVisible = ref(false)
+const reportDetailLoading = ref(false)
+const reportDetailErrorMessage = ref('')
+const selectedReportDetail = ref<ApiAutomationReportDetail | null>(null)
+const reportExporting = ref(false)
+const reportActionLoadingKey = ref('')
 const maxDebugFileBytes = 5 * 1024 * 1024
 const aiCaseDrawerVisible = ref(false)
 const aiCaseProviders = ref<AiProviderConnectionItem[]>([])
@@ -844,7 +877,7 @@ const aiCaseResultFilterOptions = computed<Array<{ label: string; value: ApiAiCa
   { label: '全部', value: 'all', count: aiCaseGeneratedResults.value.length },
   { label: '待处理', value: 'pending', count: aiCasePendingResults.value.length },
   { label: '已采纳', value: 'accepted', count: aiCaseAcceptedResults.value.length },
-  { label: '已弃用', value: 'discarded', count: aiCaseDiscardedResults.value.length },
+  { label: '已丢弃', value: 'discarded', count: aiCaseDiscardedResults.value.length },
 ])
 const aiCaseResultGroupOptions = computed(() => {
   const options = new Map<string, string>()
@@ -1127,6 +1160,183 @@ function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   return keys
 }
 
+function reportArchivedQueryValue() {
+  if (reportArchiveFilter.value === 'all') return null
+  return reportArchiveFilter.value === 'archived'
+}
+
+function currentReportQuery() {
+  return {
+    keyword: reportKeyword.value,
+    objectType: reportObjectType.value,
+    result: reportResult.value,
+    createdFrom: reportCreatedRange.value?.[0],
+    createdTo: reportCreatedRange.value?.[1],
+    archived: reportArchivedQueryValue(),
+  }
+}
+
+async function loadReports() {
+  if (!props.workspaceReady) return
+  reportLoading.value = true
+  try {
+    const page = await apiAutomationApi.getReports(props.workspaceCode || 'ALL', {
+      ...currentReportQuery(),
+      pageNo: reportPageNo.value,
+      pageSize: reportPageSize.value,
+    })
+    reportItems.value = page.items
+    reportTotal.value = page.total
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+async function loadReportAnalysis() {
+  if (!props.workspaceReady) return
+  reportAnalysisLoading.value = true
+  try {
+    reportAnalysis.value = await apiAutomationApi.getReportAnalysis(props.workspaceCode || 'ALL', {
+      ...currentReportQuery(),
+    })
+  } catch (error) {
+    reportAnalysis.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportAnalysisLoading.value = false
+  }
+}
+
+async function loadReportStatistics() {
+  if (!props.workspaceReady) return
+  reportStatisticsLoading.value = true
+  try {
+    reportStatistics.value = await apiAutomationApi.getReportStatistics(props.workspaceCode || 'ALL', {
+      ...currentReportQuery(),
+    })
+  } catch (error) {
+    reportStatistics.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportStatisticsLoading.value = false
+  }
+}
+
+async function refreshReportWorkspace() {
+  await Promise.all([loadReports(), loadReportAnalysis(), loadReportStatistics()])
+}
+
+function searchReports() {
+  reportPageNo.value = 1
+  void refreshReportWorkspace()
+}
+
+function resetReportFilters() {
+  reportKeyword.value = ''
+  reportObjectType.value = ''
+  reportResult.value = ''
+  reportArchiveFilter.value = 'active'
+  reportCreatedRange.value = null
+  reportPageNo.value = 1
+  void refreshReportWorkspace()
+}
+
+async function openReportDetail(item: ApiAutomationReportItem) {
+  if (!item.reportKey) return
+  reportDetailVisible.value = true
+  reportDetailLoading.value = true
+  reportDetailErrorMessage.value = ''
+  selectedReportDetail.value = null
+  try {
+    selectedReportDetail.value = await apiAutomationApi.getReportDetail(item.workspaceCode || props.workspaceCode || 'ALL', item.reportKey)
+  } catch (error) {
+    reportDetailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    reportDetailLoading.value = false
+  }
+}
+
+async function exportReports() {
+  if (reportExporting.value) return
+  reportExporting.value = true
+  try {
+    const blob = await apiAutomationApi.exportReports(props.workspaceCode || 'ALL', currentReportQuery())
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `api-automation-reports-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    ElMessage.success('报告已导出')
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportExporting.value = false
+  }
+}
+
+async function rerunReport(item: ApiAutomationReportItem) {
+  if (!item.reportKey || reportActionLoadingKey.value) return
+  reportActionLoadingKey.value = `rerun:${item.reportKey}`
+  try {
+    await apiAutomationApi.rerunReport(item.workspaceCode || props.workspaceCode || 'ALL', item.reportKey, {
+      workspaceCode: item.workspaceCode || props.workspaceCode || 'ALL',
+      environmentId: item.environmentId,
+      variableSetId: item.variableSetId,
+      branchName: item.branchName,
+      triggerSource: 'REPORT_RERUN',
+    })
+    ElMessage.success('复跑完成，已生成新的报告')
+    reportPageNo.value = 1
+    await refreshReportWorkspace()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportActionLoadingKey.value = ''
+  }
+}
+
+async function archiveReport(item: ApiAutomationReportItem) {
+  if (!item.reportKey || item.archived || reportActionLoadingKey.value) return
+  try {
+    await ElMessageBox.confirm(`确定归档报告「${item.objectName}」吗？归档后默认列表和统计将不再展示。`, '归档报告', {
+      confirmButtonText: '归档',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  reportActionLoadingKey.value = `archive:${item.reportKey}`
+  try {
+    const archived = await apiAutomationApi.archiveReport(item.workspaceCode || props.workspaceCode || 'ALL', item.reportKey)
+    if (selectedReportDetail.value?.reportKey === item.reportKey) {
+      selectedReportDetail.value = archived
+    }
+    ElMessage.success('报告已归档')
+    await refreshReportWorkspace()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    reportActionLoadingKey.value = ''
+  }
+}
+
+function handleReportPageChange(pageNo: number) {
+  reportPageNo.value = pageNo
+  void loadReports()
+}
+
+function handleReportPageSizeChange(pageSize: number) {
+  reportPageSize.value = pageSize
+  reportPageNo.value = 1
+  void loadReports()
+}
+
 watch(
   () => [directoryKeyword.value, directoryTree.value],
   () => {
@@ -1245,6 +1455,14 @@ const caseHistoryConsole = computed(() => buildRunConsolePreview(
   selectedCaseHistoryStep.value?.extractionResults ?? [],
 ))
 const caseHistoryAssertionRows = computed(() => selectedCaseHistoryStep.value?.assertionResults ?? [])
+const caseRunHistoryMeta = computed(() => {
+  const detail = selectedCaseRunHistoryDetail.value
+  return {
+    environmentName: detail?.environmentName || '默认',
+    variableSetName: detail?.variableSetName || '未选择',
+    operator: detail?.operator || '-',
+  }
+})
 const responseSize = computed(() => {
   const text = responseBody.value || ''
   if (!text) {
@@ -1526,6 +1744,76 @@ function runResultClass(result?: string | null) {
   if (['PASSED', 'SUCCESS', 'DONE'].includes(normalized)) return 'is-passed'
   if (['FAILED', 'FAILURE', 'ERROR'].includes(normalized)) return 'is-failed'
   return 'is-neutral'
+}
+
+function reportObjectTypeLabel(value?: string | null) {
+  const normalized = String(value || '').toUpperCase()
+  if (normalized === 'API_CASE') return '接口用例'
+  if (normalized === 'SUITE') return '执行套件'
+  if (normalized === 'SCENARIO') return '场景'
+  return value || '-'
+}
+
+function reportPassedText(item: Pick<ApiAutomationReportItem, 'successCount' | 'totalCount' | 'statusCode'>) {
+  if (item.totalCount != null) {
+    return `${item.successCount ?? 0}/${item.totalCount}`
+  }
+  return item.statusCode == null ? '-' : `HTTP ${item.statusCode}`
+}
+
+function reportFailureRateText(value?: number | null) {
+  if (value == null) return '0%'
+  const normalized = value > 1 ? value : value * 100
+  return `${normalized.toFixed(normalized >= 10 || normalized === 0 ? 0 : 1)}%`
+}
+
+function reportAnalysisSummaryRows(analysis: ApiAutomationReportAnalysis | null) {
+  return [
+    { label: '运行总数', value: String(analysis?.totalCount ?? 0), tone: 'neutral' },
+    { label: '失败数', value: String(analysis?.failedCount ?? 0), tone: (analysis?.failedCount ?? 0) > 0 ? 'danger' : 'neutral' },
+    { label: '失败率', value: reportFailureRateText(analysis?.failureRate), tone: (analysis?.failureRate ?? 0) > 0 ? 'danger' : 'neutral' },
+    { label: '平均耗时', value: formatDuration(analysis?.averageDurationMs), tone: 'neutral' },
+  ]
+}
+
+function reportTrendBarWidth(totalCount?: number | null) {
+  const maxCount = Math.max(1, ...(reportStatistics.value?.trendPoints.map(point => point.totalCount) ?? [1]))
+  return `${Math.max(4, Math.round(((totalCount ?? 0) / maxCount) * 100))}%`
+}
+
+function reportFailureRateWidth(value?: number | null) {
+  const normalized = value == null ? 0 : value > 1 ? value : value * 100
+  return `${Math.max(0, Math.min(100, normalized))}%`
+}
+
+function reportDistributionWidth(count?: number | null, source: 'result' | 'objectType' = 'result') {
+  const items = source === 'result'
+    ? reportStatistics.value?.resultDistribution
+    : reportStatistics.value?.objectTypeDistribution
+  const maxCount = Math.max(1, ...(items?.map(item => item.count) ?? [1]))
+  return `${Math.max(4, Math.round(((count ?? 0) / maxCount) * 100))}%`
+}
+
+function reportDetailSummaryRows(detail: ApiAutomationReportDetail) {
+  return [
+    ['对象类型', reportObjectTypeLabel(detail.objectType)],
+    ['执行对象', detail.objectName || '-'],
+    ['\u6240\u5c5e\u7a7a\u95f4', detail.workspaceName || detail.workspaceCode || '-'],
+    ['执行结果', runResultLabel(detail.result)],
+    ['\u901a\u8fc7\u6570', reportPassedText(detail)],
+    ['\u5931\u8d25\u6570', String(detail.failedCount ?? 0)],
+    ['\u8df3\u8fc7\u6570', String(detail.skippedCount ?? 0)],
+    ['状态码', detail.statusCode == null ? '-' : String(detail.statusCode)],
+    ['耗时', formatDuration(detail.durationMs)],
+    ['响应大小', formatResponseSize(detail.responseSize)],
+    ['执行环境', detail.environmentName || '默认'],
+    ['\u53d8\u91cf\u96c6', detail.variableSetName || '\u672a\u9009\u62e9'],
+    ['运行模式', detail.runMode || '-'],
+    ['\u8fd0\u884c\u4e8e', detail.runOn || '-'],
+    ['触发来源', detail.triggerSource || '-'],
+    ['执行中', detail.operatorName || '系统'],
+    ['执行时间', formatDateTime(detail.createdAt)],
+  ].filter(([, value]) => value !== '-' || detail.objectType === 'SUITE')
 }
 
 function hasBodyContent(body: ApiDefinitionDetail['requestConfig']['body']) {
@@ -2287,7 +2575,7 @@ function normalizeProcessorExtractByType(item: ApiProcessorExtractItem) {
 
 function processorExtractExpressionPlaceholder(item: ApiProcessorExtractItem) {
   if (item.extractType === 'X_PATH') return '例如 /response/data/token'
-  if (item.extractType === 'REGEX') return '例如 "token":"([^"]+)"'
+  if (item.extractType === 'REGEX') return '例如 \"token\":\"([^\"]+)\"'
   return '例如 $.data.token'
 }
 
@@ -2570,7 +2858,7 @@ function hasConcreteEditorWorkspace(editor: EditorTab) {
 function guardAllWorkspaceAction(editor: EditorTab, actionText: string) {
   if (!isAllWorkspaceSelected()) return true
   if (editor.definitionId && hasConcreteEditorWorkspace(editor)) return true
-  ElMessage.warning(`请先切换到具体工作空间后再${actionText}`)
+  ElMessage.warning(`请先切换到具体工作空间后${actionText}`)
   return false
 }
 
@@ -2655,6 +2943,7 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
   activeEditorKey.value = key
   void nextTick(() => {
     urlInputRef.value?.focus()
+    scrollActiveEditorTabIntoView()
   })
 }
 
@@ -2662,6 +2951,7 @@ async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
   const existed = tabs.value.find(tab => tab.definitionId === item.id)
   if (existed) {
     activeEditorKey.value = existed.key
+    void nextTick(scrollActiveEditorTabIntoView)
     if (syncDirectory) {
       selectedDirectoryKey.value = `request:${item.id}`
     }
@@ -2697,6 +2987,7 @@ async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
 
   tabs.value.push(tab)
   activeEditorKey.value = tab.key
+  void nextTick(scrollActiveEditorTabIntoView)
   if (syncDirectory) {
     selectedDirectoryKey.value = `request:${item.id}`
   }
@@ -2726,6 +3017,7 @@ async function closeEditorTab(key: string, force = false) {
   if (activeEditorKey.value === key) {
     activeEditorKey.value = tabs.value[Math.max(index - 1, 0)]?.key || ''
   }
+  void nextTick(updateEditorTabOverflow)
 }
 
 async function closeOtherTabs() {
@@ -2736,6 +3028,7 @@ async function closeOtherTabs() {
     if (!confirmed) return
   }
   tabs.value = [activeEditor.value]
+  void nextTick(updateEditorTabOverflow)
 }
 
 async function closeDraftTabs() {
@@ -2753,6 +3046,7 @@ async function closeDraftTabs() {
   if (activeWillClose) {
     activeEditorKey.value = tabs.value[0]?.key || ''
   }
+  void nextTick(updateEditorTabOverflow)
 }
 
 async function handleEditorTabMenu(command: string | number | object) {
@@ -2768,6 +3062,35 @@ async function handleEditorTabMenu(command: string | number | object) {
   } catch {
     // User cancelled a tab-management confirmation.
   }
+}
+
+function updateEditorTabOverflow() {
+  const nav = editorTabNavRef.value
+  if (!nav) return
+  const maxScrollLeft = Math.max(0, nav.scrollWidth - nav.clientWidth)
+  editorTabOverflow.value = {
+    overflow: nav.scrollWidth > nav.clientWidth + 1,
+    arrivedLeft: nav.scrollLeft <= 1,
+    arrivedRight: nav.scrollLeft >= maxScrollLeft - 1,
+  }
+}
+
+function scrollEditorTabStrip(direction: 'left' | 'right') {
+  const nav = editorTabNavRef.value
+  if (!nav) return
+  nav.scrollBy({
+    left: direction === 'left' ? -220 : 220,
+    behavior: 'smooth',
+  })
+  window.setTimeout(updateEditorTabOverflow, 180)
+}
+
+function scrollActiveEditorTabIntoView() {
+  const nav = editorTabNavRef.value
+  if (!nav) return
+  const active = nav.querySelector<HTMLElement>('.api-editor-tab.is-active')
+  active?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  updateEditorTabOverflow()
 }
 
 function handleDirectorySelect(node: DirectoryNode) {
@@ -3519,7 +3842,7 @@ function resolveCaseItemWorkspaceCode(item?: ApiDefinitionCaseItem | null) {
 
 function requireConcreteCaseWorkspace(workspaceCode: string, actionText: string) {
   if (workspaceCode && workspaceCode !== 'ALL') return true
-  ElMessage.warning(`请先切换到具体工作空间后再${actionText}`)
+  ElMessage.warning(`请先切换到具体工作空间后${actionText}`)
   return false
 }
 
@@ -3739,17 +4062,40 @@ watch(
     activeEditorKey.value = ''
     selectedDirectoryKey.value = 'definition-root'
     cases.value = []
+    reportItems.value = []
+    reportTotal.value = 0
+    selectedReportDetail.value = null
     void loadWorkspaceData()
+    if (activeTopTab.value === 'reports') {
+      void refreshReportWorkspace()
+    }
   },
 )
+
+watch(activeTopTab, tab => {
+  if (tab === 'reports') {
+    void refreshReportWorkspace()
+  }
+})
+
+watch(tabs, () => {
+  void nextTick(updateEditorTabOverflow)
+}, { deep: true })
+
+watch(activeEditorKey, () => {
+  void nextTick(updateEditorTabOverflow)
+})
 
 onMounted(() => {
   restoreResponsePanelHeight()
   void loadWorkspaceData()
+  window.addEventListener('resize', updateEditorTabOverflow)
+  void nextTick(updateEditorTabOverflow)
 })
 
 onBeforeUnmount(() => {
   stopResponseResize()
+  window.removeEventListener('resize', updateEditorTabOverflow)
 })
 </script>
 
@@ -3760,7 +4106,7 @@ onBeforeUnmount(() => {
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'definitions' }]" type="button" @click="activeTopTab = 'definitions'">接口</button>
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'scenarios' }]" type="button" @click="activeTopTab = 'scenarios'">场景</button>
         <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'execution' }]" type="button" @click="activeTopTab = 'execution'">执行</button>
-        <button class="api-interface-tab" type="button" disabled>报告</button>
+        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'reports' }]" type="button" @click="activeTopTab = 'reports'">报告</button>
         <button class="api-interface-tab" type="button" disabled>设置</button>
       </div>
     </div>
@@ -3863,7 +4209,17 @@ onBeforeUnmount(() => {
 
       <section class="api-interface-main">
         <div class="api-editor-tabs">
-          <div class="api-editor-tabs__nav">
+          <button
+            v-if="editorTabOverflow.overflow"
+            type="button"
+            class="api-editor-tab-scroll"
+            :disabled="editorTabOverflow.arrivedLeft"
+            aria-label="向左滚动标签"
+            @click="scrollEditorTabStrip('left')"
+          >
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <div ref="editorTabNavRef" class="api-editor-tabs__nav" @scroll="updateEditorTabOverflow">
             <button
               v-for="item in tabs"
               :key="item.key"
@@ -3880,6 +4236,16 @@ onBeforeUnmount(() => {
               </span>
             </button>
           </div>
+          <button
+            v-if="editorTabOverflow.overflow"
+            type="button"
+            class="api-editor-tab-scroll"
+            :disabled="editorTabOverflow.arrivedRight"
+            aria-label="向右滚动标签"
+            @click="scrollEditorTabStrip('right')"
+          >
+            <el-icon><ArrowRight /></el-icon>
+          </button>
           <button type="button" class="api-editor-tab-add" @click="openNewRequestTab()">
             <el-icon><Plus /></el-icon>
           </button>
@@ -3930,8 +4296,7 @@ onBeforeUnmount(() => {
               @click="sendActiveEditor"
             >
               <LucidePlay class="api-send-button__icon" />
-              发送
-            </button>
+              发送            </button>
             <el-dropdown
               split-button
               class="api-save-dropdown"
@@ -4003,7 +4368,7 @@ onBeforeUnmount(() => {
                     <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markDirty" />
                     <div class="api-length-range">
                       <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
-                      <span>至</span>
+                      <span>-</span>
                       <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
                     </div>
                     <el-switch v-model="row.encode" size="small" @change="markDirty" />
@@ -4081,7 +4446,7 @@ onBeforeUnmount(() => {
                         'is-empty': activeEditor.detail.requestConfig.body.type === 'NONE',
                         'is-code': isRawBodyType(activeEditor.detail.requestConfig.body.type),
                       },
-                    ]"
+                    ]""
                   >
                     <div v-if="activeEditor.detail.requestConfig.body.type === 'NONE'" class="api-empty-body">请求没有 Body</div>
                     <ApiCodeEditor
@@ -4134,7 +4499,7 @@ onBeforeUnmount(() => {
                         <el-input v-else v-model="row.value" placeholder="参数值" @input="markDirty" />
                         <div class="api-length-range">
                           <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
-                          <span>至</span>
+                          <span>-</span>
                           <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
                         </div>
                         <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
@@ -4168,8 +4533,7 @@ onBeforeUnmount(() => {
                             <span v-if="activeEditor.detail.requestConfig.body.fileSize" class="api-binary-file-size">{{ formatFileSize(activeEditor.detail.requestConfig.body.fileSize) }}</span>
                           </template>
                           <template v-else>
-                            尚未选择二进制文件
-                          </template>
+                            尚未选择二进制文件                          </template>
                         </div>
                       </div>
                     </div>
@@ -4460,7 +4824,7 @@ onBeforeUnmount(() => {
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
                             <button type="button" @click="copyAssertionItem(activeAssertion.assertions || [], index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.assertions || [], index, { header: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
@@ -4503,7 +4867,7 @@ onBeforeUnmount(() => {
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
                             <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
                             <button type="button" @click="copyAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType), condition: 'EQUALS', expectedValue: '' })">删除</button>
@@ -4532,7 +4896,7 @@ onBeforeUnmount(() => {
                             <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
                               <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
                             </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
+                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
                             <button type="button" @click="copyAssertionItem(activeAssertion.variableAssertionItems || [], index)">复制</button>
                             <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.variableAssertionItems || [], index, { variableName: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
                           </div>
@@ -4907,8 +5271,7 @@ onBeforeUnmount(() => {
                       <el-input v-model="processor.description" placeholder="说明" @input="markDirty" />
                     </div>
                     <div v-if="!activeProcessorRows().length" class="api-empty-body">
-                      暂无{{ activeProcessorStage() === 'pre' ? '前置' : '后置' }}处理器
-                    </div>
+                      暂无{{ activeProcessorStage() === 'pre' ? '前置' : '后置' }}处理器                    </div>
                   </div>
                 </div>
               </template>
@@ -4999,10 +5362,10 @@ onBeforeUnmount(() => {
                     <el-table-column label="条件" width="100">
                       <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                     </el-table-column>
-                    <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                    <el-table-column label="期望值:" min-width="120" show-overflow-tooltip>
                       <template #default="{ row }">{{ row.expectedValue ?? '-' }}</template>
                     </el-table-column>
-                    <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                    <el-table-column label="实际值:" min-width="120" show-overflow-tooltip>
                       <template #default="{ row }">{{ row.actualValue ?? '-' }}</template>
                     </el-table-column>
                     <el-table-column label="结果" width="90">
@@ -5042,6 +5405,273 @@ onBeforeUnmount(() => {
       :environments="environments"
       :variable-sets="variableSets"
     />
+
+    <div v-else-if="activeTopTab === 'reports'" class="api-report-workspace" v-loading="reportLoading">
+      <div class="api-report-toolbar">
+        <el-input
+          v-model="reportKeyword"
+          class="api-report-search"
+          clearable
+          placeholder="搜索报告、对象或执行人"
+          @keyup.enter="searchReports"
+          @clear="searchReports"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-select v-model="reportObjectType" class="api-report-filter" placeholder="全部类型" clearable @change="searchReports">
+          <el-option label="接口用例" value="API_CASE" />
+          <el-option label="执行套件" value="SUITE" />
+        </el-select>
+        <el-select v-model="reportResult" class="api-report-filter" placeholder="全部结果" clearable @change="searchReports">
+          <el-option label="通过" value="SUCCESS" />
+          <el-option label="失败" value="FAILED" />
+          <el-option label="无断言" value="NO_ASSERTION" />
+        </el-select>
+        <el-select v-model="reportArchiveFilter" class="api-report-filter is-archive" @change="searchReports">
+          <el-option label="活跃报告" value="active" />
+          <el-option label="归档报告" value="archived" />
+          <el-option label="全部报告" value="all" />
+        </el-select>
+        <el-button :loading="reportExporting" @click="exportReports">导出</el-button>
+        <el-date-picker
+          v-model="reportCreatedRange"
+          class="api-report-date-range"
+          type="datetimerange"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          value-format="YYYY-MM-DDTHH:mm:ss"
+          format="YYYY-MM-DD HH:mm"
+          clearable
+          @change="searchReports"
+        />
+        <el-button type="primary" @click="searchReports">查询</el-button>
+        <el-button @click="resetReportFilters">清空</el-button>
+        <el-button @click="refreshReportWorkspace">刷新</el-button>
+      </div>
+
+      <div class="api-report-analysis" v-loading="reportAnalysisLoading">
+        <div class="api-report-analysis__summary">
+          <div
+            v-for="item in reportAnalysisSummaryRows(reportAnalysis)"
+            :key="item.label"
+            :class="['api-report-analysis-card', `is-${item.tone}`]"
+          >
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </div>
+        <div class="api-report-analysis__panel">
+          <div class="api-report-analysis__title">
+            <strong>失败原因</strong>
+            <span>Top {{ reportAnalysis?.failureReasons.length || 0 }}</span>
+          </div>
+          <el-scrollbar v-if="reportAnalysis?.failureReasons.length" class="api-report-rank-list" max-height="96px">
+            <button
+              v-for="item in reportAnalysis.failureReasons"
+              :key="item.key"
+              type="button"
+              class="api-report-rank-row"
+              @click="reportKeyword = item.label; searchReports()"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.count }}</strong>
+            </button>
+          </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无失败原因</div>
+        </div>
+        <div class="api-report-analysis__panel">
+          <div class="api-report-analysis__title">
+            <strong>高频失败对象</strong>
+            <span>Top {{ reportAnalysis?.topFailedObjects.length || 0 }}</span>
+          </div>
+          <el-scrollbar v-if="reportAnalysis?.topFailedObjects.length" class="api-report-rank-list" max-height="96px">
+            <button
+              v-for="item in reportAnalysis.topFailedObjects"
+              :key="item.key"
+              type="button"
+              class="api-report-rank-row"
+              @click="reportKeyword = item.label; searchReports()"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.count }}</strong>
+              <small>{{ formatDuration(item.durationMs) }}</small>
+            </button>
+          </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无失败对象</div>
+        </div>
+        <div class="api-report-analysis__panel">
+          <div class="api-report-analysis__title">
+            <strong>最近失败</strong>
+            <span>{{ reportAnalysis?.recentFailures.length || 0 }} 条</span>
+          </div>
+          <el-scrollbar v-if="reportAnalysis?.recentFailures.length" class="api-report-recent-list" max-height="96px">
+            <button
+              v-for="item in reportAnalysis.recentFailures"
+              :key="item.reportKey"
+              type="button"
+              class="api-report-recent-row"
+              @click="openReportDetail(item)"
+              >
+                <span :class="['api-report-result', runResultClass(item.result)]">{{ runResultLabel(item.result) }}</span>
+                <div>
+                  <strong>{{ item.objectName }}</strong>
+                </div>
+              </button>
+          </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无失败记录</div>
+        </div>
+      </div>
+
+      <div class="api-report-statistics" v-loading="reportStatisticsLoading">
+        <section class="api-report-stat-panel is-trend">
+          <div class="api-report-analysis__title">
+            <strong>运行趋势</strong>
+            <span>{{ reportStatistics?.trendPoints.length || 0 }} 天</span>
+          </div>
+            <el-scrollbar v-if="reportStatistics?.trendPoints.length" class="api-report-trend-list" max-height="132px">
+              <div v-for="point in reportStatistics.trendPoints" :key="point.date" class="api-report-trend-row">
+                <span class="api-report-trend-date">{{ point.date }}</span>
+                <div class="api-report-trend-bar">
+                <i :style="{ width: reportTrendBarWidth(point.totalCount) }"></i>
+                <em :style="{ width: reportFailureRateWidth(point.failureRate) }"></em>
+              </div>
+                <strong>{{ point.totalCount }}</strong>
+                <small>失败 {{ point.failedCount }} · {{ reportFailureRateText(point.failureRate) }}</small>
+              </div>
+            </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无趋势数据</div>
+        </section>
+
+        <section class="api-report-stat-panel">
+          <div class="api-report-analysis__title">
+            <strong>结果分布</strong>
+            <span>{{ reportStatistics?.resultDistribution.length || 0 }} 项</span>
+          </div>
+            <el-scrollbar v-if="reportStatistics?.resultDistribution.length" class="api-report-distribution-list" max-height="132px">
+              <div v-for="item in reportStatistics.resultDistribution" :key="item.key" class="api-report-distribution-row">
+                <span>{{ item.label }}</span>
+                <div><i :style="{ width: reportDistributionWidth(item.count, 'result') }"></i></div>
+                <strong>{{ item.count }}</strong>
+              </div>
+            </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无结果分布</div>
+        </section>
+
+        <section class="api-report-stat-panel">
+          <div class="api-report-analysis__title">
+            <strong>对象类型</strong>
+            <span>{{ reportStatistics?.objectTypeDistribution.length || 0 }} 项</span>
+          </div>
+            <el-scrollbar v-if="reportStatistics?.objectTypeDistribution.length" class="api-report-distribution-list" max-height="132px">
+              <div v-for="item in reportStatistics.objectTypeDistribution" :key="item.key" class="api-report-distribution-row">
+                <span>{{ item.label }}</span>
+                <div><i :style="{ width: reportDistributionWidth(item.count, 'objectType') }"></i></div>
+                <strong>{{ item.count }}</strong>
+              </div>
+            </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无对象类型</div>
+        </section>
+
+        <section class="api-report-stat-panel">
+          <div class="api-report-analysis__title">
+            <strong>慢运行</strong>
+            <span>Top {{ reportStatistics?.slowestRuns.length || 0 }}</span>
+          </div>
+            <el-scrollbar v-if="reportStatistics?.slowestRuns.length" class="api-report-slowest-list" max-height="132px">
+              <button
+                v-for="item in reportStatistics.slowestRuns"
+                :key="item.reportKey"
+              type="button"
+              class="api-report-slowest-row"
+              @click="openReportDetail(item)"
+            >
+              <span>{{ reportObjectTypeLabel(item.objectType) }}</span>
+                <strong>{{ item.objectName }}</strong>
+                <small>{{ formatDuration(item.durationMs) }}</small>
+              </button>
+            </el-scrollbar>
+          <div v-else class="api-report-analysis-empty">暂无慢运行数据</div>
+        </section>
+      </div>
+
+      <div class="api-report-table-shell">
+        <el-table
+          :data="reportItems"
+          height="100%"
+          class="api-report-table"
+          empty-text="暂无报告"
+          @row-click="openReportDetail"
+        >
+          <el-table-column label="结果" width="96">
+            <template #default="{ row }">
+              <span :class="['api-report-result', runResultClass(row.result)]">{{ runResultLabel(row.result) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ reportObjectTypeLabel(row.objectType) }}</template>
+          </el-table-column>
+          <el-table-column label="执行对象" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <strong class="api-report-object">{{ row.objectName }}</strong>
+            </template>
+          </el-table-column>
+          <el-table-column label="通过" width="100">
+            <template #default="{ row }">{{ reportPassedText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="耗时" width="110">
+            <template #default="{ row }">{{ formatDuration(row.durationMs) }}</template>
+          </el-table-column>
+          <el-table-column label="环境" width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.environmentName || '默认' }}</template>
+          </el-table-column>
+          <el-table-column label="变量集" width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.variableSetName || '未选择' }}</template>
+          </el-table-column>
+          <el-table-column label="执行人" width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.operatorName || '系统' }}</template>
+          </el-table-column>
+          <el-table-column label="执行时间" width="180">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="170" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click.stop="openReportDetail(row)">详情</el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="reportActionLoadingKey === `rerun:${row.reportKey}`"
+                @click.stop="rerunReport(row)"
+              >
+                复跑
+              </el-button>
+              <el-button
+                v-if="!row.archived"
+                link
+                type="warning"
+                :loading="reportActionLoadingKey === `archive:${row.reportKey}`"
+                @click.stop="archiveReport(row)"
+              >
+                归档
+              </el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <div class="api-report-pagination">
+        <el-pagination
+          v-model:current-page="reportPageNo"
+          v-model:page-size="reportPageSize"
+          :total="reportTotal"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next"
+          @current-change="handleReportPageChange"
+          @size-change="handleReportPageSizeChange"
+        />
+      </div>
+    </div>
 
     <el-dialog
       v-model="softPromptVisible"
@@ -5295,7 +5925,7 @@ onBeforeUnmount(() => {
                       <el-input :model-value="row.value" disabled placeholder="参数值" />
                       <div class="api-length-range">
                         <el-input-number :model-value="row.minLength" :controls="false" disabled placeholder="最小" />
-                        <span>至</span>
+                        <span>-</span>
                         <el-input-number :model-value="row.maxLength" :controls="false" disabled placeholder="最大" />
                       </div>
                       <el-switch :model-value="row.encode" size="small" disabled />
@@ -5351,7 +5981,7 @@ onBeforeUnmount(() => {
                           <el-input :model-value="row.fileName || row.value" disabled placeholder="参数值" />
                           <div class="api-length-range">
                             <el-input-number :model-value="row.minLength" :controls="false" disabled placeholder="最小" />
-                            <span>至</span>
+                            <span>-</span>
                             <el-input-number :model-value="row.maxLength" :controls="false" disabled placeholder="最大" />
                           </div>
                           <el-input :model-value="row.description" disabled placeholder="描述" />
@@ -5518,10 +6148,10 @@ onBeforeUnmount(() => {
                       <el-table-column label="条件" width="92">
                         <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                       </el-table-column>
-                      <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                      <el-table-column label="期望值:" min-width="120" show-overflow-tooltip>
                         <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
                       </el-table-column>
-                      <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                      <el-table-column label="实际值:" min-width="120" show-overflow-tooltip>
                         <template #default="{ row }">{{ row.actualValue || '-' }}</template>
                       </el-table-column>
                       <el-table-column label="结果" width="78">
@@ -5608,9 +6238,9 @@ onBeforeUnmount(() => {
               <div v-if="caseRunHistoryDetailErrorMessage" class="api-empty-body">{{ caseRunHistoryDetailErrorMessage }}</div>
               <div v-else-if="!selectedCaseRunHistoryDetail" class="api-empty-body">选择一条执行记录查看详情</div>
               <div v-else-if="!selectedCaseRunHistoryDetail.stepResults.length" class="api-empty-body">该历史暂无步骤详情</div>
-              <div v-else class="case-drawer-history-section">
+                <div v-else class="case-drawer-history-section">
                 <div class="case-drawer-history-meta">
-                  <span>执行环境 {{ selectedCaseRunHistoryDetail.environmentName || '默认' }}</span>
+                  <span>执行环境 {{ caseRunHistoryMeta.environmentName }}</span>
                   <span>变量集 {{ selectedCaseRunHistoryDetail.variableSetName || '未选择' }}</span>
                   <span>执行人 {{ selectedCaseRunHistoryDetail.operator || '-' }}</span>
                 </div>
@@ -5698,10 +6328,10 @@ onBeforeUnmount(() => {
                     <el-table-column label="条件" width="92">
                       <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                     </el-table-column>
-                    <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                    <el-table-column label="期望值:" min-width="120" show-overflow-tooltip>
                       <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
                     </el-table-column>
-                    <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                    <el-table-column label="实际值:" min-width="120" show-overflow-tooltip>
                       <template #default="{ row }">{{ row.actualValue || '-' }}</template>
                     </el-table-column>
                     <el-table-column label="结果" width="78">
@@ -5741,8 +6371,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="aiCaseProviderErrorMessage" class="api-case-failure-box">{{ aiCaseProviderErrorMessage }}</div>
           <div v-else-if="!aiCaseProvidersLoading && !aiCaseAvailableProviders.length" class="api-empty-body">
-            暂无可用 AI 模型，请先到 AI 连接池配置个人模型。
-          </div>
+            暂无可用 AI 模型，请先到 AI 连接池配置个人模型。          </div>
           <div class="api-ai-case-config-grid">
             <label>模型</label>
             <el-select v-model="aiCaseSelectedProviderId" :loading="aiCaseProvidersLoading" placeholder="选择 AI 模型">
@@ -5845,7 +6474,7 @@ onBeforeUnmount(() => {
                   <strong>{{ item.draft.name || 'AI 生成接口用例' }}</strong>
                   <span>{{ item.draft.group || '未分组' }} · {{ item.draft.type || '接口用例' }}</span>
                 </div>
-                <span :class="['api-ai-result-status', `is-${item.status}`]">{{ item.status === 'accepted' ? '已采纳' : item.status === 'discarded' ? '已弃用' : item.status === 'failed' ? '失败' : '待处理' }}</span>
+                <span :class="['api-ai-result-status', `is-${item.status}`]">{{ item.status === 'accepted' ? '已采纳' : item.status === 'discarded' ? '已丢弃' : item.status === 'failed' ? '失败' : '待处理' }}</span>
               </div>
               <p v-if="item.draft.description">{{ item.draft.description }}</p>
               <p v-if="item.draft.expected">预期：{{ item.draft.expected }}</p>
@@ -5908,7 +6537,7 @@ onBeforeUnmount(() => {
           </div>
           <div>
             <span>结果状态</span>
-            <strong>{{ aiCaseDetailResult.status === 'accepted' ? '已采纳' : aiCaseDetailResult.status === 'discarded' ? '已弃用' : aiCaseDetailResult.status === 'failed' ? '失败' : '待处理' }}</strong>
+            <strong>{{ aiCaseDetailResult.status === 'accepted' ? '已采纳' : aiCaseDetailResult.status === 'discarded' ? '已丢弃' : aiCaseDetailResult.status === 'failed' ? '失败' : '待处理' }}</strong>
           </div>
           <div>
             <span>请求方法</span>
@@ -5932,7 +6561,7 @@ onBeforeUnmount(() => {
           <p>{{ aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason') }}</p>
         </section>
         <section v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')" class="api-ai-case-detail-section">
-          <strong>覆盖点</strong>
+          <strong>覆盖率</strong>
           <pre>{{ toPrettyJson(aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')) }}</pre>
         </section>
         <section v-if="aiCaseDetailResult.draft.tags?.length" class="api-ai-case-detail-section">
@@ -5991,6 +6620,93 @@ onBeforeUnmount(() => {
       :config="fastExtractionConfig"
       @apply="applyFastExtraction"
     />
+
+    <el-drawer
+      v-model="reportDetailVisible"
+      append-to-body
+      size="760px"
+      class="api-report-detail-drawer"
+      :with-header="false"
+    >
+      <div class="api-report-detail" v-loading="reportDetailLoading">
+        <div class="api-report-detail__header">
+          <div>
+            <span :class="['api-report-result', runResultClass(selectedReportDetail?.result)]">
+              {{ runResultLabel(selectedReportDetail?.result) }}
+            </span>
+            <strong>{{ selectedReportDetail?.objectName || '报告详情' }}</strong>
+            <small>{{ formatDateTime(selectedReportDetail?.createdAt) }}</small>
+          </div>
+          <button type="button" class="api-report-detail__close" @click="reportDetailVisible = false">
+            <LucideX :size="16" />
+          </button>
+        </div>
+
+        <div v-if="reportDetailErrorMessage" class="api-report-empty">{{ reportDetailErrorMessage }}</div>
+        <template v-else-if="selectedReportDetail">
+          <section class="api-report-detail-section">
+            <h3>概览</h3>
+            <div class="api-report-summary-grid">
+              <div v-for="[label, value] in reportDetailSummaryRows(selectedReportDetail)" :key="label">
+                <span>{{ label }}</span>
+                <strong>{{ value }}</strong>
+              </div>
+            </div>
+            <p v-if="selectedReportDetail.failureSummary" class="api-report-failure">
+              {{ selectedReportDetail.failureSummary }}
+            </p>
+          </section>
+
+          <section v-if="selectedReportDetail.itemSnapshots.length" class="api-report-detail-section">
+            <h3>编排项结果</h3>
+            <div class="api-report-item-list">
+              <div
+                v-for="item in selectedReportDetail.itemSnapshots"
+                :key="`${item.itemType}-${item.itemId}-${item.sortOrder}`"
+                class="api-report-item-row"
+              >
+                <span :class="['api-report-result', runResultClass(item.result)]">{{ runResultLabel(item.result) }}</span>
+                <small>{{ reportObjectTypeLabel(item.itemType) }}</small>
+                <strong>{{ item.itemName }}</strong>
+                <span>{{ item.stepCount ?? 0 }} 步</span>
+                <span>{{ formatDuration(item.durationMs) }}</span>
+                <p v-if="item.failureSummary">{{ item.failureSummary }}</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="api-report-detail-section">
+            <h3>步骤结果</h3>
+            <div v-if="!selectedReportDetail.stepResults.length" class="api-report-empty">暂无步骤结果</div>
+            <div v-else class="api-report-step-list">
+              <div
+                v-for="step in selectedReportDetail.stepResults"
+                :key="`${step.stepOrder}-${step.stepName}-${step.createdAt}`"
+                class="api-report-step-row"
+              >
+                <span :class="['api-report-result', step.success ? 'is-passed' : 'is-failed']">
+                  {{ step.success ? '通过' : '失败' }}
+                </span>
+                <div>
+                  <strong>{{ step.stepName || `步骤 ${step.stepOrder}` }}</strong>
+                  <small>
+                    第 {{ step.stepOrder }} 步 · {{ formatDuration(step.durationMs) }}
+                    <template v-if="step.response?.statusCode"> · HTTP {{ step.response.statusCode }}</template>
+                  </small>
+                  <p v-if="step.errorMessage">{{ step.errorMessage }}</p>
+                  <div class="api-report-step-meta">
+                    <span v-if="step.assertionResults?.length">断言 {{ step.assertionResults.length }}</span>
+                    <span v-if="step.extractionResults?.length">提取 {{ step.extractionResults.length }}</span>
+                    <span v-if="step.processorResults?.length">处理 {{ step.processorResults.length }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
+        <div v-else class="api-report-empty">选择一条报告查看详情</div>
+      </div>
+    </el-drawer>
   </section>
 </template>
 
@@ -6124,6 +6840,591 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1;
   grid-template-columns: 272px minmax(0, 1fr);
+}
+
+.api-report-workspace {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.api-report-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--app-border);
+  background: #fff;
+}
+
+.api-report-search {
+  width: 280px;
+}
+
+.api-report-filter {
+  width: 136px;
+}
+
+.api-report-date-range {
+  width: 330px;
+}
+
+.api-report-analysis {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr 1.1fr 1.2fr;
+  gap: 10px;
+  padding: 12px 16px 0;
+}
+
+.api-report-analysis__summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.api-report-analysis-card,
+.api-report-analysis__panel {
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-report-analysis-card {
+  display: flex;
+  min-height: 54px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 10px;
+}
+
+.api-report-analysis-card span,
+.api-report-analysis__title span,
+.api-report-analysis-empty,
+.api-report-rank-row small,
+.api-report-recent-row small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-analysis-card strong {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 24px;
+}
+
+.api-report-analysis-card.is-danger strong {
+  color: #b91c1c;
+}
+
+.api-report-analysis__panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.api-report-analysis__title {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.api-report-analysis__title strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-report-rank-list,
+.api-report-recent-list {
+  min-height: 0;
+}
+
+.api-report-rank-list :deep(.el-scrollbar__view),
+.api-report-recent-list :deep(.el-scrollbar__view) {
+  display: flex;
+  flex-direction: column;
+}
+
+.api-report-rank-row,
+.api-report-recent-row {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: 1px solid #f8fafc;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.api-report-rank-row {
+  grid-template-columns: minmax(0, 1fr) 36px 64px;
+  padding: 0 10px;
+}
+
+.api-report-rank-row:not(:has(small)) {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.api-report-rank-row:hover,
+.api-report-recent-row:hover {
+  background: #f8fafc;
+}
+
+.api-report-rank-row span,
+.api-report-recent-row strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-rank-row span {
+  color: #374151;
+  font-size: 12px;
+}
+
+.api-report-rank-row strong {
+  justify-self: end;
+  color: #b91c1c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.api-report-rank-row small {
+  justify-self: end;
+}
+
+.api-report-recent-row {
+  grid-template-columns: 58px minmax(0, 1fr);
+  padding: 6px 10px;
+}
+
+.api-report-recent-row > div {
+  display: block;
+  min-width: 0;
+}
+
+.api-report-recent-row strong {
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-report-analysis-empty {
+  display: flex;
+  height: 96px;
+  align-items: center;
+  justify-content: center;
+}
+
+.api-report-statistics {
+  display: grid;
+  grid-template-columns: 1.5fr 0.9fr 0.9fr 1.1fr;
+  gap: 10px;
+  padding: 10px 16px 0;
+}
+
+.api-report-stat-panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-report-trend-list,
+.api-report-distribution-list,
+.api-report-slowest-list {
+  min-height: 0;
+}
+
+.api-report-trend-list :deep(.el-scrollbar__view),
+.api-report-distribution-list :deep(.el-scrollbar__view),
+.api-report-slowest-list :deep(.el-scrollbar__view) {
+  display: flex;
+  flex-direction: column;
+}
+
+.api-report-trend-row {
+  display: grid;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 78px minmax(0, 1fr) 36px 92px;
+  padding: 0 10px;
+  border-bottom: 1px solid #f8fafc;
+}
+
+.api-report-trend-date,
+.api-report-trend-row small,
+.api-report-distribution-row span,
+.api-report-slowest-row span,
+.api-report-slowest-row small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-trend-bar,
+.api-report-distribution-row div {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #eef2f7;
+}
+
+.api-report-trend-bar i,
+.api-report-trend-bar em,
+.api-report-distribution-row i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.api-report-trend-bar i {
+  background: #bfdbfe;
+}
+
+.api-report-trend-bar em {
+  min-width: 0;
+  background: #fca5a5;
+}
+
+.api-report-trend-row strong,
+.api-report-distribution-row strong {
+  justify-self: end;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.api-report-distribution-row {
+  display: grid;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 64px minmax(0, 1fr) 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid #f8fafc;
+}
+
+.api-report-distribution-row i {
+  background: #93c5fd;
+}
+
+.api-report-slowest-row {
+  display: grid;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  grid-template-columns: 58px minmax(0, 1fr) 64px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid #f8fafc;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.api-report-slowest-row:hover {
+  background: #f8fafc;
+}
+
+.api-report-slowest-row strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-slowest-row small {
+  justify-self: end;
+}
+
+.api-report-table-shell {
+  min-height: 0;
+  flex: 1;
+  padding: 14px 16px 0;
+}
+
+.api-report-table {
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+}
+
+.api-report-table :deep(.el-table__row) {
+  cursor: pointer;
+}
+
+.api-report-object {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.api-report-result {
+  display: inline-flex;
+  min-width: 52px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  white-space: nowrap;
+}
+
+.api-report-result.is-passed,
+.api-report-result.is-success {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.api-report-result.is-failed,
+.api-report-result.is-danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.api-report-result.is-neutral {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
+.api-report-pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--app-border);
+  background: #fff;
+}
+
+:global(.api-report-detail-drawer) {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+}
+
+.api-report-detail {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+.api-report-detail__header {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--app-border);
+  background: #fff;
+}
+
+.api-report-detail__header > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-report-detail__header strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-detail__header small {
+  color: #6b7280;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.api-report-detail__close {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.api-report-detail__close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+.api-report-detail-section {
+  margin: 14px 16px 0;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-report-detail-section h3 {
+  margin: 0 0 12px;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.api-report-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-report-summary-grid div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #f3f4f6;
+  padding-bottom: 8px;
+}
+
+.api-report-summary-grid span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-summary-grid strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-failure {
+  margin: 12px 0 0;
+  border-radius: 8px;
+  background: #fef2f2;
+  padding: 10px 12px;
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.api-report-item-list,
+.api-report-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.api-report-item-row,
+.api-report-step-row {
+  display: grid;
+  min-height: 48px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 10px 12px;
+}
+
+.api-report-item-row {
+  grid-template-columns: 64px 72px minmax(0, 1fr) 58px 84px;
+}
+
+.api-report-item-row strong,
+.api-report-step-row strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-item-row small,
+.api-report-step-row small,
+.api-report-item-row span:not(.api-report-result) {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-item-row p,
+.api-report-step-row p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.api-report-step-row {
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: flex-start;
+}
+
+.api-report-step-row > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.api-report-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.api-report-step-meta span {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  border-radius: 999px;
+  background: #eef2ff;
+  padding: 0 8px;
+  color: #4338ca;
+  font-size: 12px;
+}
+
+.api-report-empty {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  font-size: 13px;
 }
 
 .api-interface-sidebar {
@@ -6268,6 +7569,7 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-title button,
+.api-editor-tab-scroll,
 .api-editor-tab-add,
 .api-editor-tab-more {
   display: inline-flex;
@@ -6283,18 +7585,32 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-title button:hover,
+.api-editor-tab-scroll:hover:not(:disabled),
 .api-editor-tab-add:hover,
 .api-editor-tab-more:hover {
   background: var(--app-bg-page);
   color: var(--app-primary);
 }
 
+.api-editor-tab-scroll,
 .api-editor-tab-add,
 .api-editor-tab-more {
   width: 36px;
   height: 40px;
   border-radius: 0;
   color: #909399;
+}
+
+.api-editor-tab-scroll {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: var(--app-radius-sm);
+}
+
+.api-editor-tab-scroll:disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
 }
 
 .api-directory-body {

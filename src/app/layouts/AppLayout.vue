@@ -102,6 +102,7 @@ const navigationItems: NavigationItem[] = [
       { path: '/automation/web/runs', label: '执行记录' },
       { path: '/automation/web/batches', label: '批次报告' },
       { path: '/automation/web/environments', label: '环境配置' },
+      { path: '/automation/web/variables', label: '变量集设置' },
     ],
   },
   { path: '/automation/app', label: 'APP 自动化', icon: Tools },

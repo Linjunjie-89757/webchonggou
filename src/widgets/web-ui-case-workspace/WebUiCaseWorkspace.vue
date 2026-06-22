@@ -24,6 +24,8 @@ import {
   buildWebUiDraftFromTemplateDetail,
   formatBrowserType,
   formatDurationMs,
+  formatLocatorType,
+  formatStepType,
   formatWebUiDateTime,
   parseWebUiCaseImportJson,
   webUiAutomationApi,
@@ -114,6 +116,7 @@ const appliedFilter = ref({
 })
 const editorVisible = ref(false)
 const editingCaseId = ref<number | null>(null)
+const focusedEditorStepId = ref<number | null>(null)
 const draftCase = ref<WebUiCaseDetail | null>(null)
 const deletingCaseId = ref<number | null>(null)
 const runningCaseId = ref<number | null>(null)
@@ -145,6 +148,7 @@ const templateFormDialogVisible = ref(false)
 const savingTemplate = ref(false)
 const deletingTemplateId = ref<number | null>(null)
 const applyingTemplateId = ref<number | string | null>(null)
+const focusedTemplateStepId = ref<number | null>(null)
 const initializingTemplates = ref(false)
 const savingTemplateCaseId = ref<number | null>(null)
 const importDialogVisible = ref(false)
@@ -390,8 +394,29 @@ async function syncReportDeepLink() {
   const tab = queryTab || props.mode
   const runId = getSingleQueryNumber(route.query.runId)
   const batchId = getSingleQueryNumber(route.query.batchId)
-  const key = `${tab || ''}:${runId || ''}:${batchId || ''}:${props.workspaceCode}`
+  const caseId = getSingleQueryNumber(route.query.caseId)
+  const stepId = getSingleQueryNumber(route.query.stepId)
+  const templateId = getSingleQueryNumber(route.query.templateId)
+  const key = `${tab || ''}:${runId || ''}:${batchId || ''}:${caseId || ''}:${templateId || ''}:${stepId || ''}:${props.workspaceCode}`
   if (key === consumedDeepLinkKey) {
+    return
+  }
+
+  if ((tab === 'cases' || props.mode === 'cases') && caseId) {
+    consumedDeepLinkKey = key
+    copyCaseRequestSeq += 1
+    drawerStateSeq += 1
+    editingCaseId.value = caseId
+    focusedEditorStepId.value = stepId
+    draftCase.value = null
+    editorVisible.value = true
+    return
+  }
+
+  const templateStepId = getSingleQueryNumber(route.query.stepId)
+  if ((tab === 'templates' || props.mode === 'templates') && templateId) {
+    consumedDeepLinkKey = key
+    await openTemplateDeepLink(templateId, templateStepId)
     return
   }
 
@@ -718,6 +743,7 @@ function openCreateDrawer() {
   copyCaseRequestSeq += 1
   drawerStateSeq += 1
   editingCaseId.value = null
+  focusedEditorStepId.value = null
   draftCase.value = null
   editorVisible.value = true
 }
@@ -736,6 +762,7 @@ function openDraftCase(detail: WebUiCaseDetail) {
   copyCaseRequestSeq += 1
   drawerStateSeq += 1
   editingCaseId.value = null
+  focusedEditorStepId.value = null
   draftCase.value = detail
   editorVisible.value = true
 }
@@ -760,6 +787,7 @@ async function createCaseFromTemplate(template: WebUiCaseTemplate | WebUiCaseTem
 }
 
 function openCreateTemplateDialog() {
+  focusedTemplateStepId.value = null
   Object.assign(templateForm, {
     id: null,
     name: '',
@@ -779,6 +807,37 @@ async function openEditTemplateDialog(template: WebUiCaseTemplateItem) {
   applyingTemplateId.value = template.id
   try {
     const detail = await webUiAutomationApi.getTemplateDetail(props.workspaceCode, template.id)
+    Object.assign(templateForm, {
+      id: detail.id,
+      name: detail.name,
+      moduleName: detail.moduleName || '',
+      description: detail.description || '',
+      baseUrl: detail.baseUrl || '',
+      browserType: detail.browserType,
+      headless: detail.headless,
+      defaultTimeoutMs: detail.defaultTimeoutMs,
+      status: detail.status,
+      steps: detail.steps,
+    })
+    templateFormDialogVisible.value = true
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    applyingTemplateId.value = null
+  }
+}
+
+async function openTemplateDeepLink(templateId: number, stepId: number | null) {
+  focusedTemplateStepId.value = stepId
+  const template = templates.value.find(item => item.id === templateId)
+  if (template) {
+    await openEditTemplateDialog(template)
+    return
+  }
+
+  applyingTemplateId.value = templateId
+  try {
+    const detail = await webUiAutomationApi.getTemplateDetail(props.workspaceCode, templateId)
     Object.assign(templateForm, {
       id: detail.id,
       name: detail.name,
@@ -938,10 +997,19 @@ function getTemplateName(template: WebUiCaseTemplate | WebUiCaseTemplateItem) {
   return template.name
 }
 
+function isFocusedTemplateStep(step: WebUiCaseTemplateDetail['steps'][number]) {
+  return Boolean(focusedTemplateStepId.value && step.id === focusedTemplateStepId.value)
+}
+
+function getTemplateStepRowClassName({ row }: { row: WebUiCaseTemplateDetail['steps'][number] }) {
+  return isFocusedTemplateStep(row) ? 'web-ui-template-step-table__row--focused' : ''
+}
+
 function openEditDrawer(caseItem: WebUiCaseItem) {
   copyCaseRequestSeq += 1
   drawerStateSeq += 1
   editingCaseId.value = caseItem.id
+  focusedEditorStepId.value = null
   draftCase.value = null
   editorVisible.value = true
 }
@@ -965,6 +1033,7 @@ async function openCopyDrawer(caseItem: WebUiCaseItem) {
     }
     drawerStateSeq += 1
     editingCaseId.value = null
+    focusedEditorStepId.value = null
     draftCase.value = {
       ...detail,
       id: 0,
@@ -1368,6 +1437,7 @@ function handleLocateRunStep(payload: { caseId: number | null; step: WebUiRunSte
   copyCaseRequestSeq += 1
   drawerStateSeq += 1
   editingCaseId.value = payload.caseId
+  focusedEditorStepId.value = payload.step.caseStepId ?? null
   draftCase.value = null
   editorVisible.value = true
   ElMessage.info(`已打开用例编辑器，请查看第 ${payload.step.sortOrder} 步：${stepName}`)
@@ -1398,6 +1468,12 @@ watch(editorVisible, () => {
   copyCaseRequestSeq += 1
 })
 
+watch(templateFormDialogVisible, (visible) => {
+  if (!visible) {
+    focusedTemplateStepId.value = null
+  }
+})
+
 watch(
   () => [props.workspaceCode, props.workspaceReady] as const,
   () => {
@@ -1424,6 +1500,7 @@ watch(
     batchPageNo.value = 1
     editorVisible.value = false
     editingCaseId.value = null
+    focusedEditorStepId.value = null
     draftCase.value = null
     runDetailVisible.value = false
     selectedRunId.value = null
@@ -2139,7 +2216,7 @@ watch(
       </div>
     </el-dialog>
 
-    <el-dialog v-model="templateFormDialogVisible" :title="templateForm.id ? '编辑模板' : '新建模板'" width="620px">
+    <el-dialog v-model="templateFormDialogVisible" :title="templateForm.id ? '编辑模板' : '新建模板'" width="760px">
       <el-form label-width="96px">
         <el-form-item label="模板名称" required>
           <el-input v-model="templateForm.name" maxlength="80" show-word-limit />
@@ -2173,10 +2250,50 @@ watch(
           <span>{{ templateForm.steps.length }} 步</span>
           <div class="web-ui-run-context-tip">模板步骤建议通过“用例列表 - 保存为模板”沉淀，编辑模板时先维护基础信息。</div>
         </el-form-item>
+        <el-form-item v-if="focusedTemplateStepId" label="引用定位">
+          <el-alert
+            type="info"
+            show-icon
+            :closable="false"
+            title="已从元素引用定位到模板步骤，高亮行即为引用该元素的步骤。"
+          />
+        </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="templateForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
         </el-form-item>
       </el-form>
+      <section v-if="templateForm.steps.length" class="web-ui-template-step-preview">
+        <header>
+          <strong>模板步骤</strong>
+          <span v-if="focusedTemplateStepId && !templateForm.steps.some(step => step.id === focusedTemplateStepId)">
+            未找到链接里的步骤，可能该模板步骤已被删除或重新生成。
+          </span>
+        </header>
+        <el-table
+          :data="templateForm.steps"
+          row-key="id"
+          border
+          :row-class-name="getTemplateStepRowClassName"
+        >
+          <el-table-column label="#" width="56">
+            <template #default="{ row }">{{ row.sortOrder }}</template>
+          </el-table-column>
+          <el-table-column label="名称" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.name || formatStepType(row.type) }}</template>
+          </el-table-column>
+          <el-table-column label="类型" width="120">
+            <template #default="{ row }">{{ formatStepType(row.type) }}</template>
+          </el-table-column>
+          <el-table-column label="元素" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.elementName || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="定位器" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.locatorType ? `${formatLocatorType(row.locatorType)}：${row.locatorValue || '-'}` : '-' }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </section>
       <template #footer>
         <AppButton @click="templateFormDialogVisible = false">取消</AppButton>
         <AppButton type="primary" :loading="savingTemplate" @click="saveTemplateForm">保存</AppButton>
@@ -2208,6 +2325,7 @@ watch(
       v-model="editorVisible"
       :workspace-code="workspaceCode"
       :case-id="editingCaseId"
+      :focus-step-id="focusedEditorStepId"
       :draft-case="draftCase"
       @saved="handleCaseSaved"
       @debug-run-finished="handleDebugRunFinished"
@@ -2489,6 +2607,28 @@ watch(
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--app-space-2);
+}
+
+.web-ui-template-step-preview {
+  display: grid;
+  gap: var(--app-space-2);
+  margin-top: var(--app-space-3);
+}
+
+.web-ui-template-step-preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
+.web-ui-template-step-preview header span {
+  color: var(--app-warning);
+  font-size: var(--app-font-size-xs);
+}
+
+.web-ui-template-step-preview :deep(.web-ui-template-step-table__row--focused > td) {
+  background: #ecf5ff;
 }
 
 .web-ui-import-dialog {

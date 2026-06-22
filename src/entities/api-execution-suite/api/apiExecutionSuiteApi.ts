@@ -9,6 +9,7 @@ import type {
   ApiExecutionSuiteModuleItem,
   ApiExecutionSuiteRunHistoryDetail,
   ApiExecutionSuiteRunHistoryItem,
+  ApiExecutionSuiteRunItemSnapshot,
   ApiExecutionSuiteRunPayload,
   ApiExecutionSuiteRunResult,
   MoveApiExecutionSuiteModulePayload,
@@ -125,6 +126,9 @@ function normalizeRunHistoryItem(item: ApiExecutionSuiteRunHistoryItem): ApiExec
     workspaceCode: item.workspaceCode || 'ALL',
     workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
     suiteName: item.suiteName || '-',
+    moduleId: item.moduleId ?? null,
+    moduleName: item.moduleName || null,
+    priority: item.priority || null,
     reportId: item.reportId ?? null,
     result: item.result || 'UNKNOWN',
     failureSummary: item.failureSummary || null,
@@ -135,15 +139,39 @@ function normalizeRunHistoryItem(item: ApiExecutionSuiteRunHistoryItem): ApiExec
     durationMs: Number(item.durationMs || 0),
     environmentId: item.environmentId ?? null,
     variableSetId: item.variableSetId ?? null,
+    runMode: item.runMode || null,
+    runOn: item.runOn || null,
+    continueOnFailure: Boolean(item.continueOnFailure),
+    globalTimeoutMs: Number(item.globalTimeoutMs || 300000),
+    stepFailureRetryCount: Number(item.stepFailureRetryCount || 0),
+    defaultStepWaitMs: Number(item.defaultStepWaitMs || 0),
+    branchName: item.branchName || null,
+    triggerSource: item.triggerSource || null,
     operatorId: item.operatorId ?? null,
     operatorName: item.operatorName || null,
     createdAt: item.createdAt || null,
   }
 }
 
+function normalizeRunItemSnapshot(item: ApiExecutionSuiteRunItemSnapshot): ApiExecutionSuiteRunItemSnapshot {
+  return {
+    ...item,
+    itemId: item.itemId ?? null,
+    itemType: item.itemType || null,
+    itemName: item.itemName || '-',
+    sortOrder: item.sortOrder ?? null,
+    enabled: item.enabled !== false,
+    result: item.result || null,
+    stepCount: Number(item.stepCount || 0),
+    durationMs: Number(item.durationMs || 0),
+    failureSummary: item.failureSummary || null,
+  }
+}
+
 function normalizeRunHistoryDetail(item: ApiExecutionSuiteRunHistoryDetail): ApiExecutionSuiteRunHistoryDetail {
   return {
     ...normalizeRunHistoryItem(item),
+    itemSnapshots: Array.isArray(item.itemSnapshots) ? item.itemSnapshots.map(normalizeRunItemSnapshot) : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
   }
 }

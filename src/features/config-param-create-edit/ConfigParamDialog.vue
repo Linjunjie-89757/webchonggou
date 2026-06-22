@@ -10,6 +10,7 @@ import {
   buildCreateParamPayload,
   createConfigParamFormFromItem,
   createDefaultConfigParamForm,
+  createDefaultWebUiVariableSetForm,
   createDefaultWebUiVariable,
   parseWebUiVariables,
   type ConfigParamDialogMode,
@@ -24,6 +25,7 @@ const props = withDefaults(
     param?: ParamSetItem | null
     saving?: boolean
     defaultWorkspaceCode?: string
+    fixedParamType?: string
   }>(),
   {
     param: null,
@@ -45,9 +47,14 @@ function resetForm() {
   const nextForm =
     props.mode === 'edit' && props.param
       ? createConfigParamFormFromItem(props.param)
-      : createDefaultConfigParamForm(props.defaultWorkspaceCode)
+      : props.fixedParamType === 'WEB_UI_VARIABLE_SET'
+        ? createDefaultWebUiVariableSetForm(props.defaultWorkspaceCode)
+        : createDefaultConfigParamForm(props.defaultWorkspaceCode)
 
   Object.assign(form, nextForm)
+  if (props.fixedParamType) {
+    form.paramType = props.fixedParamType
+  }
   formError.message = ''
 }
 
@@ -134,7 +141,9 @@ watch(
 <template>
   <AppDialog
     :model-value="modelValue"
-    :title="mode === 'create' ? '新增参数' : '编辑参数'"
+    :title="fixedParamType === 'WEB_UI_VARIABLE_SET'
+      ? (mode === 'create' ? '新增变量集' : '编辑变量集')
+      : (mode === 'create' ? '新增参数' : '编辑参数')"
     width="760px"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -146,10 +155,13 @@ watch(
 
       <div class="config-param-dialog__field">
         <span>参数名 *</span>
-        <el-input v-model="form.paramName" placeholder="例如：REQUEST_TIMEOUT" />
+        <el-input
+          v-model="form.paramName"
+          :placeholder="fixedParamType === 'WEB_UI_VARIABLE_SET' ? '例如：测试环境管理员变量集' : '例如：REQUEST_TIMEOUT'"
+        />
       </div>
 
-      <div class="config-param-dialog__field">
+      <div v-if="!fixedParamType" class="config-param-dialog__field">
         <span>参数类型</span>
         <div class="config-param-dialog__segment">
           <button

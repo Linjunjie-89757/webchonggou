@@ -176,6 +176,7 @@ export interface SaveWebUiEnvironmentPayload {
   browserType?: WebUiBrowserType
   headless?: boolean
   defaultTimeoutMs?: number
+  defaultVariableSetId?: number | null
   status?: WebUiEnvironmentStatus
 }
 
@@ -239,6 +240,8 @@ export interface BatchValidateWebUiElementPayload {
   browserType?: WebUiBrowserType
   headless?: boolean
   timeoutMs?: number | null
+  providerConnectionId?: number | null
+  modelName?: string | null
 }
 
 export interface WebUiElementValidateResultItem {
@@ -255,6 +258,63 @@ export interface WebUiElementBatchValidateResult {
   passedCount: number
   failedCount: number
   results: WebUiElementValidateResultItem[]
+}
+
+export type WebUiElementCollectScope = 'ALL' | 'FORM' | 'BUTTON' | 'TABLE' | 'DIALOG'
+export type WebUiElementCollectGroupStrategy = 'AI' | 'CUSTOM'
+
+export interface CollectWebUiElementsPayload {
+  pageUrl?: string | null
+  environmentId?: number | null
+  moduleId?: number | null
+  pageId?: number | null
+  pageName?: string | null
+  groupStrategy?: WebUiElementCollectGroupStrategy
+  groupId?: number | null
+  groupName?: string | null
+  scope?: WebUiElementCollectScope
+  htmlText?: string | null
+  screenshotNote?: string | null
+  browserType?: WebUiBrowserType
+  headless?: boolean
+  timeoutMs?: number | null
+  providerConnectionId?: number | null
+  modelName?: string | null
+}
+
+export interface WebUiElementCollectCandidate {
+  candidateSource?: 'RULE' | 'AI_SUPPLEMENT' | string | null
+  groupName: string
+  elementName: string
+  locatorType: WebUiLocatorType
+  locatorValue: string
+  confidence: number
+  reason: string
+  tagName: string | null
+  elementType: string | null
+  text: string | null
+  placeholder: string | null
+  ariaLabel: string | null
+  labelText: string | null
+  nearbyHeading: string | null
+  businessMeaning: string | null
+  recommendedToSave: boolean
+  notRecommendedReason: string | null
+  maintenanceSuggestion: string | null
+  stabilityNote: string | null
+  validationStatus: 'PASSED' | 'FAILED' | 'MULTIPLE' | 'SKIPPED' | string
+  matchCount: number | null
+  validationMessage: string | null
+  screenshotBase64: string | null
+  saveBlockedReason?: string | null
+}
+
+export interface WebUiElementCollectResponse {
+  candidates: WebUiElementCollectCandidate[]
+  source: 'HTML' | 'PLAYWRIGHT' | string
+  message: string | null
+  aiEnhanced: boolean
+  fallbackReason: string | null
 }
 
 export interface WebUiElementQualityIssue {

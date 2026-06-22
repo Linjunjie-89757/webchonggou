@@ -249,6 +249,24 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'automation/web/variables',
+        name: 'automation-web-variables',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 变量集设置',
+          description: '维护 Web UI 用例运行、调试和采集使用的变量集。',
+        },
+      },
+      {
+        path: 'automation/web/variables/:id',
+        name: 'automation-web-variable-detail',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI 变量集详情',
+          description: '查看和维护变量集基础信息、变量列表和 JSON 导入导出。',
+        },
+      },
+      {
         path: 'automation/app',
         name: 'automation-app',
         component: PlaceholderPage,

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay } from '@element-plus/icons-vue'
+import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
+import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
 import {
   formatLocatorType,
-  formatStepType,
   formatWebUiDateTime,
   webUiAutomationApi,
   WEB_UI_CASE_STATUS_OPTIONS,
@@ -19,16 +19,22 @@ import {
   type WebUiElementItem,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
+  type WebUiElementValidateResultItem,
   type WebUiElementQualityIssue,
   type WebUiElementReferenceItem,
   type WebUiEnvironmentItem,
   type WebUiLocatorType,
-  type WebUiStepType,
 } from '@/entities/web-ui-automation'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
+import WebUiElementAiCollectDrawer from './WebUiElementAiCollectDrawer.vue'
+import WebUiElementDetailDrawer from './WebUiElementDetailDrawer.vue'
+import WebUiElementImpactDrawer from './WebUiElementImpactDrawer.vue'
+import WebUiElementQualityDrawer from './WebUiElementQualityDrawer.vue'
+import WebUiElementReferenceDrawer from './WebUiElementReferenceDrawer.vue'
+import WebUiElementValidateDrawer from './WebUiElementValidateDrawer.vue'
 
 type DirectoryNodeType = 'ALL' | 'WORKSPACE' | 'MODULE' | 'PAGE' | 'GROUP'
 
@@ -53,6 +59,50 @@ type TreeSelection = {
 type AiCollectMode = 'ONLINE' | 'OFFLINE'
 type AiCollectScope = 'ALL' | 'FORM' | 'BUTTON' | 'TABLE' | 'DIALOG'
 type AiCollectGroupStrategy = 'AI' | 'CUSTOM'
+type ElementImportRow = {
+  moduleName?: string
+  pageName?: string
+  pagePath?: string
+  groupName?: string
+  elementName?: string
+  locatorType?: WebUiLocatorType | string
+  locatorValue?: string
+  description?: string
+  status?: 'ENABLED' | 'DISABLED' | string
+}
+type LocalQualityIssueLevel = WebUiElementQualityIssue['level']
+type LocalQualityIssueKind = 'DUPLICATE_NAME' | 'DUPLICATE_LOCATOR' | 'DISABLED_USED' | 'EMPTY_PAGE' | 'EMPTY_GROUP'
+type QualityIssueFilter = 'ALL' | 'DUPLICATE' | 'DISABLED_USED' | 'EMPTY' | 'BACKEND'
+type LocalQualityIssue = {
+  id: string
+  level: LocalQualityIssueLevel
+  kind: LocalQualityIssueKind
+  title: string
+  description: string
+  elementId?: number | null
+  elementName?: string
+  workspaceCode?: string | null
+  pageId?: number | null
+  groupId?: number | null
+  pageName?: string
+  groupName?: string | null
+  locatorType?: WebUiLocatorType | null
+  locatorValue?: string | null
+  usageCount?: number
+}
+type ElementImpactReference = WebUiElementReferenceItem & {
+  elementId: number
+  elementName: string
+  elementLocatorType: WebUiLocatorType
+  elementLocatorValue: string
+}
+type ElementImpactSummary = {
+  elementCount: number
+  referenceCount: number
+  caseCount: number
+  templateCount: number
+  elementNames: string[]
+}
 
 interface AiElementCandidate {
   id: string
@@ -63,6 +113,19 @@ interface AiElementCandidate {
   locatorValue: string
   confidence: number
   reason: string
+  tagName: string | null
+  elementType: string | null
+  businessMeaning: string | null
+  candidateSource: string
+  recommendedToSave: boolean
+  notRecommendedReason: string | null
+  maintenanceSuggestion: string | null
+  stabilityNote: string | null
+  validationStatus: string
+  matchCount: number | null
+  validationMessage: string | null
+  screenshotBase64: string | null
+  saveBlockedReason: string | null
 }
 
 const props = defineProps<{
@@ -102,32 +165,60 @@ const moduleDialogVisible = ref(false)
 const pageDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
 const referenceDrawerVisible = ref(false)
+const impactDrawerVisible = ref(false)
 const loadingReferences = ref(false)
 const syncingReferences = ref(false)
+const loadingImpactReferences = ref(false)
+const syncingImpactReferences = ref(false)
 const aiCollectDrawerVisible = ref(false)
 const aiCollectMode = ref<AiCollectMode>('ONLINE')
 const aiCollecting = ref(false)
 const aiSaving = ref(false)
+const aiProviderLoading = ref(false)
+const aiProviders = ref<AiProviderConnectionItem[]>([])
 const batchOperating = ref(false)
 const batchMoveDialogVisible = ref(false)
+const batchValidateDrawerVisible = ref(false)
+const batchValidateFilter = ref<'ALL' | 'FAILED'>('ALL')
 const qualityDrawerVisible = ref(false)
+const importDialogVisible = ref(false)
 const qualityChecking = ref(false)
+const importingElements = ref(false)
 const editingId = ref<number | null>(null)
 const moduleDialogWorkspaceCode = ref<string | null>(null)
 const pageDialogWorkspaceCode = ref<string | null>(null)
 const groupDialogWorkspaceCode = ref<string | null>(null)
 const elementDialogWorkspaceCode = ref<string | null>(null)
 const validateDialogVisible = ref(false)
+const detailDrawerVisible = ref(false)
 const validateTarget = ref<WebUiElementItem | null>(null)
+const detailTarget = ref<WebUiElementItem | null>(null)
 const validateEnvironmentId = ref<number | null>(null)
 const validateBaseUrl = ref('')
 const validateResult = ref<ValidateWebUiLocatorResponse | null>(null)
 const referenceTarget = ref<WebUiElementItem | null>(null)
 const elementReferences = ref<WebUiElementReferenceItem[]>([])
+const impactTargetElements = ref<WebUiElementItem[]>([])
+const impactReferences = ref<ElementImpactReference[]>([])
 const editingElementSnapshot = ref<WebUiElementItem | null>(null)
 const aiCandidates = ref<AiElementCandidate[]>([])
 const selectedElements = ref<WebUiElementItem[]>([])
 const qualityIssues = ref<WebUiElementQualityIssue[]>([])
+const localQualityIssues = ref<LocalQualityIssue[]>([])
+const qualityIssueFilter = ref<QualityIssueFilter>('ALL')
+const batchValidateResults = ref<WebUiElementValidateResultItem[]>([])
+const importJsonText = ref('')
+const batchValidateSummary = reactive({
+  totalCount: 0,
+  passedCount: 0,
+  failedCount: 0,
+})
+const lastBatchValidateOptions = ref<{
+  baseUrl: string
+  browserType: 'CHROMIUM' | 'FIREFOX' | 'WEBKIT'
+  headless: boolean
+  timeoutMs: number
+} | null>(null)
 
 const form = reactive<SaveWebUiElementPayload>({
   pageId: null,
@@ -167,6 +258,7 @@ const groupForm = reactive<SaveWebUiElementGroupPayload>({
 })
 
 const aiCollectForm = reactive({
+  providerConnectionId: null as number | null,
   environmentId: null as number | null,
   pageUrl: '',
   moduleId: null as number | null,
@@ -179,6 +271,7 @@ const aiCollectForm = reactive({
   htmlText: '',
   screenshotNote: '',
 })
+const aiCandidateFilter = ref<'ALL' | 'RECOMMENDED' | 'FAILED' | 'LOW_CONFIDENCE'>('ALL')
 
 const batchMoveForm = reactive({
   pageId: null as number | null,
@@ -192,6 +285,10 @@ const selectedWorkspaceCode = computed(() => selectedTree.value.workspaceCode ||
 const currentQueryWorkspaceCode = computed(() => selectedWorkspaceCode.value || props.workspaceCode || 'ALL')
 const directoryTotal = computed(() => modules.value.reduce((sum, item) => sum + Number(item.elementCount || 0), 0))
 const enabledEnvironments = computed(() => (props.environments || []).filter(item => item.status !== 0))
+const availableAiProviders = computed(() => aiProviders.value.filter(item => item.status !== 0 && Boolean(item.modelName)))
+const selectedAiProvider = computed(() =>
+  availableAiProviders.value.find(item => item.id === aiCollectForm.providerConnectionId) || null,
+)
 const elementPageOptions = computed(() => {
   const workspaceCode = elementDialogWorkspaceCode.value
   return workspaceCode ? pages.value.filter(item => item.workspaceCode === workspaceCode) : pages.value
@@ -230,6 +327,36 @@ const aiCollectGroupOptions = computed(() => {
   return groups.value.filter(item => item.pageId === aiCollectForm.pageId)
 })
 const aiSelectedCandidates = computed(() => aiCandidates.value.filter(item => item.selected))
+const aiCandidateSummary = computed(() => {
+  const total = aiCandidates.value.length
+  const recommended = aiCandidates.value.filter(item => item.recommendedToSave).length
+  const passed = aiCandidates.value.filter(item => item.validationStatus === 'PASSED').length
+  const abnormal = aiCandidates.value.filter(item => item.validationStatus === 'FAILED' || item.validationStatus === 'MULTIPLE').length
+  const lowConfidence = aiCandidates.value.filter(item => item.confidence < 70).length
+  const aiSupplement = aiCandidates.value.filter(item => item.candidateSource === 'AI_SUPPLEMENT').length
+  const blocked = aiCandidates.value.filter(item => Boolean(item.saveBlockedReason)).length
+  return {
+    total,
+    recommended,
+    passed,
+    abnormal,
+    lowConfidence,
+    aiSupplement,
+    blocked,
+  }
+})
+const visibleAiCandidates = computed(() => {
+  if (aiCandidateFilter.value === 'RECOMMENDED') {
+    return aiCandidates.value.filter(item => item.recommendedToSave)
+  }
+  if (aiCandidateFilter.value === 'FAILED') {
+    return aiCandidates.value.filter(item => item.validationStatus === 'FAILED' || item.validationStatus === 'MULTIPLE')
+  }
+  if (aiCandidateFilter.value === 'LOW_CONFIDENCE') {
+    return aiCandidates.value.filter(item => item.confidence < 70)
+  }
+  return aiCandidates.value
+})
 const batchMoveGroupOptions = computed(() => {
   if (!batchMoveForm.pageId) {
     return []
@@ -239,6 +366,74 @@ const batchMoveGroupOptions = computed(() => {
 const highQualityIssues = computed(() => qualityIssues.value.filter(item => item.level === 'HIGH'))
 const mediumQualityIssues = computed(() => qualityIssues.value.filter(item => item.level === 'MEDIUM'))
 const lowQualityIssues = computed(() => qualityIssues.value.filter(item => item.level === 'LOW'))
+const highLocalQualityIssues = computed(() => localQualityIssues.value.filter(item => item.level === 'HIGH'))
+const mediumLocalQualityIssues = computed(() => localQualityIssues.value.filter(item => item.level === 'MEDIUM'))
+const lowLocalQualityIssues = computed(() => localQualityIssues.value.filter(item => item.level === 'LOW'))
+const totalHighQualityIssueCount = computed(() => highQualityIssues.value.length + highLocalQualityIssues.value.length)
+const totalMediumQualityIssueCount = computed(() => mediumQualityIssues.value.length + mediumLocalQualityIssues.value.length)
+const totalLowQualityIssueCount = computed(() => lowQualityIssues.value.length + lowLocalQualityIssues.value.length)
+const hasAnyQualityIssue = computed(() => qualityIssues.value.length > 0 || localQualityIssues.value.length > 0)
+const visibleLocalQualityIssues = computed(() => {
+  if (qualityIssueFilter.value === 'ALL') return localQualityIssues.value
+  if (qualityIssueFilter.value === 'BACKEND') return []
+  if (qualityIssueFilter.value === 'DUPLICATE') {
+    return localQualityIssues.value.filter(item => item.kind === 'DUPLICATE_NAME' || item.kind === 'DUPLICATE_LOCATOR')
+  }
+  if (qualityIssueFilter.value === 'DISABLED_USED') {
+    return localQualityIssues.value.filter(item => item.kind === 'DISABLED_USED')
+  }
+  if (qualityIssueFilter.value === 'EMPTY') {
+    return localQualityIssues.value.filter(item => item.kind === 'EMPTY_PAGE' || item.kind === 'EMPTY_GROUP')
+  }
+  return localQualityIssues.value
+})
+const visibleBackendQualityIssues = computed(() => (qualityIssueFilter.value === 'ALL' || qualityIssueFilter.value === 'BACKEND'
+  ? qualityIssues.value
+  : []))
+const failedBatchValidateResults = computed(() => batchValidateResults.value.filter(item => !item.matched))
+const visibleBatchValidateResults = computed(() => (
+  batchValidateFilter.value === 'FAILED'
+    ? failedBatchValidateResults.value
+    : batchValidateResults.value
+))
+const detailModuleName = computed(() => {
+  const target = detailTarget.value
+  if (!target) return '-'
+  const page = pages.value.find(item => item.id === target.pageId)
+  const moduleItem = page ? modules.value.find(item => item.id === page.moduleId) : null
+  return moduleItem?.moduleName || '-'
+})
+const detailValidateTagType = computed(() => {
+  const result = detailTarget.value?.lastValidateResult
+  if (result === 'PASSED') return 'success'
+  if (result === 'FAILED') return 'danger'
+  return 'info'
+})
+const detailValidateLabel = computed(() => {
+  const target = detailTarget.value
+  if (!target?.lastValidateResult) return '未验证'
+  if (target.lastValidateResult === 'PASSED') {
+    return `通过${target.lastMatchCount === null || target.lastMatchCount === undefined ? '' : ` ${target.lastMatchCount}`}`
+  }
+  if (target.lastValidateResult === 'FAILED') return '失败'
+  return target.lastValidateResult
+})
+const impactReferenceStats = computed(() => {
+  const caseCount = impactReferences.value.filter(item => item.sourceType !== 'TEMPLATE').length
+  const templateCount = impactReferences.value.filter(item => item.sourceType === 'TEMPLATE').length
+  const unsyncedCount = impactReferences.value.filter(item => !isImpactReferenceLocatorSynced(item)).length
+  return {
+    caseCount,
+    templateCount,
+    unsyncedCount,
+    totalCount: impactReferences.value.length,
+  }
+})
+const unsyncedImpactElementIds = computed(() => Array.from(new Set(
+  impactReferences.value
+    .filter(item => !isImpactReferenceLocatorSynced(item))
+    .map(item => item.elementId),
+)))
 
 const treeData = computed<ElementDirectoryNode[]>(() => {
   const keywordText = directoryKeyword.value.trim().toLowerCase()
@@ -411,6 +606,13 @@ function getSelectedPageForGroup() {
   return null
 }
 
+function getSelectedGroup() {
+  if (selectedTree.value.type !== 'GROUP') {
+    return null
+  }
+  return groups.value.find(item => item.id === selectedTree.value.rawId) || null
+}
+
 async function loadTreeAssets() {
   if (!isWorkspaceReady()) {
     return
@@ -540,6 +742,40 @@ function openCreateDialog() {
   dialogVisible.value = true
 }
 
+async function loadAiProviders() {
+  aiProviderLoading.value = true
+  try {
+    const items = await aiProviderApi.getProviderConnections(props.workspaceCode || 'ALL')
+    aiProviders.value = Array.isArray(items) ? items : []
+  } catch (error) {
+    aiProviders.value = []
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    aiProviderLoading.value = false
+  }
+}
+
+function openEditDialog(item: WebUiElementItem) {
+  editingId.value = item.id
+  editingElementSnapshot.value = item
+  elementDialogWorkspaceCode.value = item.workspaceCode
+  form.pageId = item.pageId
+  form.groupId = item.groupId
+  form.pageName = item.pageName
+  form.groupName = item.groupName || ''
+  form.elementName = item.elementName
+  form.locatorType = item.locatorType
+  form.locatorValue = item.locatorValue
+  form.description = item.description || ''
+  form.status = item.status
+  dialogVisible.value = true
+}
+
+function openDetailDrawer(item: WebUiElementItem) {
+  detailTarget.value = item
+  detailDrawerVisible.value = true
+}
+
 function openAiCollectDrawer() {
   const moduleItem = getSelectedModule()
   const page = selectedTree.value.type === 'PAGE'
@@ -548,6 +784,7 @@ function openAiCollectDrawer() {
       ? pages.value.find(item => item.id === groups.value.find(group => group.id === selectedTree.value.rawId)?.pageId) || null
     : null
   aiCollectMode.value = 'ONLINE'
+  aiCollectForm.providerConnectionId = null
   aiCollectForm.environmentId = enabledEnvironments.value[0]?.id ?? null
   aiCollectForm.pageUrl = ''
   aiCollectForm.moduleId = moduleItem?.id ?? modules.value[0]?.id ?? null
@@ -561,6 +798,7 @@ function openAiCollectDrawer() {
   aiCollectForm.screenshotNote = ''
   aiCandidates.value = []
   aiCollectDrawerVisible.value = true
+  void loadAiProviders()
 }
 
 function handleAiPageChange(pageId: number | null) {
@@ -584,6 +822,233 @@ function handleAiGroupChange(groupId: number | null) {
   aiCollectForm.groupName = group?.groupName || ''
 }
 
+function openImportDialog() {
+  const selectedModule = getSelectedModule()
+  const selectedPage = getSelectedPageForGroup()
+  const selectedGroup = getSelectedGroup()
+  importJsonText.value = JSON.stringify([
+    {
+      moduleName: selectedModule?.moduleName || '订单模块',
+      pageName: selectedPage?.pageName || '订单列表页',
+      pagePath: selectedPage?.pagePath || '/orders',
+      groupName: selectedGroup?.groupName || '查询区',
+      elementName: '订单号输入框',
+      locatorType: 'CSS',
+      locatorValue: 'input[name="orderNo"]',
+      description: '批量导入示例',
+      status: 'ENABLED',
+    },
+  ], null, 2)
+  importDialogVisible.value = true
+}
+
+function normalizeImportRows() {
+  let raw: unknown
+  try {
+    raw = JSON.parse(importJsonText.value)
+  } catch {
+    ElMessage.warning('请输入合法的 JSON 数组')
+    return null
+  }
+
+  if (!Array.isArray(raw)) {
+    ElMessage.warning('导入内容必须是 JSON 数组')
+    return null
+  }
+
+  const selectedModule = getSelectedModule()
+  const selectedPage = getSelectedPageForGroup()
+  const selectedGroup = getSelectedGroup()
+  const rows = raw.map((item, index) => {
+    const row = item as ElementImportRow
+    const locatorType = String(row.locatorType || 'CSS').trim().toUpperCase()
+    const normalized: ElementImportRow = {
+      moduleName: String(row.moduleName || selectedModule?.moduleName || '').trim(),
+      pageName: String(row.pageName || selectedPage?.pageName || '').trim(),
+      pagePath: String(row.pagePath || selectedPage?.pagePath || '').trim(),
+      groupName: String(row.groupName || selectedGroup?.groupName || '').trim(),
+      elementName: String(row.elementName || '').trim(),
+      locatorType,
+      locatorValue: String(row.locatorValue || '').trim(),
+      description: String(row.description || '').trim(),
+      status: row.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
+    }
+
+    if (!normalized.moduleName) {
+      throw new Error(`第 ${index + 1} 行缺少模块名称`)
+    }
+    if (!normalized.pageName) {
+      throw new Error(`第 ${index + 1} 行缺少页面对象名称`)
+    }
+    if (!normalized.elementName) {
+      throw new Error(`第 ${index + 1} 行缺少元素名称`)
+    }
+    if (!WEB_UI_LOCATOR_OPTIONS.some(option => option.value === locatorType)) {
+      throw new Error(`第 ${index + 1} 行定位方式不支持：${locatorType}`)
+    }
+    if (!normalized.locatorValue) {
+      throw new Error(`第 ${index + 1} 行缺少定位值`)
+    }
+
+    return normalized
+  })
+
+  return rows
+}
+
+async function resolveImportModule(workspaceCode: string, moduleName: string) {
+  const existing = modules.value.find(item => item.workspaceCode === workspaceCode && item.moduleName === moduleName)
+  if (existing) {
+    return existing
+  }
+
+  const created = await webUiAutomationApi.createElementModule(workspaceCode, {
+    workspaceCode,
+    moduleName,
+    description: '批量导入创建',
+    sortOrder: modules.value.filter(item => item.workspaceCode === workspaceCode).length + 1,
+    status: 'ENABLED',
+  })
+  modules.value.push(created)
+  return created
+}
+
+async function resolveImportPage(workspaceCode: string, moduleItem: WebUiElementModuleItem, row: ElementImportRow) {
+  const existing = pages.value.find(item => (
+    item.workspaceCode === workspaceCode
+    && item.moduleId === moduleItem.id
+    && item.pageName === row.pageName
+  ))
+  if (existing) {
+    return existing
+  }
+
+  const created = await webUiAutomationApi.createElementPage(workspaceCode, {
+    workspaceCode,
+    moduleId: moduleItem.id,
+    moduleName: moduleItem.moduleName,
+    pageName: row.pageName || '',
+    pagePath: row.pagePath || null,
+    description: '批量导入创建',
+    sortOrder: pages.value.filter(item => item.moduleId === moduleItem.id).length + 1,
+    status: 'ENABLED',
+  })
+  pages.value.push(created)
+  return created
+}
+
+async function resolveImportGroup(workspaceCode: string, page: WebUiElementPageItem, row: ElementImportRow) {
+  if (!row.groupName) {
+    return null
+  }
+
+  const existing = groups.value.find(item => (
+    item.workspaceCode === workspaceCode
+    && item.pageId === page.id
+    && item.groupName === row.groupName
+  ))
+  if (existing) {
+    return existing
+  }
+
+  const created = await webUiAutomationApi.createElementGroup(workspaceCode, {
+    workspaceCode,
+    pageId: page.id,
+    groupName: row.groupName,
+    description: '批量导入创建',
+    sortOrder: groups.value.filter(item => item.pageId === page.id).length + 1,
+    status: 'ENABLED',
+  })
+  groups.value.push(created)
+  return created
+}
+
+async function importElementsFromJson() {
+  const workspaceCode = getWorkspaceCodeForCreate()
+  if (!workspaceCode) {
+    ElMessage.warning('请先切换到具体工作空间或选择具体空间节点')
+    return
+  }
+
+  let rows: ElementImportRow[] | null = null
+  try {
+    rows = normalizeImportRows()
+  } catch (error) {
+    ElMessage.warning(error instanceof Error ? error.message : '导入内容校验失败')
+    return
+  }
+  if (rows === null) {
+    return
+  }
+  if (!rows.length) {
+    ElMessage.warning('请至少提供 1 条元素数据')
+    return
+  }
+
+  importingElements.value = true
+  try {
+    for (const row of rows) {
+      const moduleItem = await resolveImportModule(workspaceCode, row.moduleName || '')
+      const page = await resolveImportPage(workspaceCode, moduleItem, row)
+      const group = await resolveImportGroup(workspaceCode, page, row)
+      await webUiAutomationApi.createElement(workspaceCode, {
+        workspaceCode,
+        pageId: page.id,
+        groupId: group?.id ?? null,
+        pageName: page.pageName,
+        groupName: group?.groupName || row.groupName || null,
+        elementName: row.elementName || '',
+        locatorType: row.locatorType as WebUiLocatorType,
+        locatorValue: row.locatorValue || '',
+        description: row.description || null,
+        status: row.status === 'DISABLED' ? 'DISABLED' : 'ENABLED',
+      })
+    }
+    ElMessage.success(`已导入 ${rows.length} 个元素`)
+    importDialogVisible.value = false
+    await reloadAll()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    importingElements.value = false
+  }
+}
+
+async function exportCurrentElements() {
+  try {
+    const page = await webUiAutomationApi.getElements(currentQueryWorkspaceCode.value, {
+      keyword: keyword.value,
+      moduleId: selectedModuleId.value,
+      pageId: selectedPageId.value,
+      groupId: selectedGroupId.value,
+      status: status.value,
+      pageNo: 1,
+      pageSize: Math.max(total.value || elements.value.length || 1, 500),
+    })
+    const exportRows = page.items.map(item => ({
+      moduleName: pages.value.find(pageItem => pageItem.id === item.pageId)?.moduleName || '',
+      pageName: item.pageName,
+      pagePath: pages.value.find(pageItem => pageItem.id === item.pageId)?.pagePath || '',
+      groupName: item.groupName || '',
+      elementName: item.elementName,
+      locatorType: item.locatorType,
+      locatorValue: item.locatorValue,
+      description: item.description || '',
+      status: item.status,
+    }))
+    const blob = new Blob([JSON.stringify(exportRows, null, 2)], { type: 'application/json;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `web-ui-elements-${new Date().toISOString().slice(0, 10)}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${exportRows.length} 条元素 JSON`)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  }
+}
+
 function getAiCustomGroupName() {
   if (aiCollectForm.groupStrategy !== 'CUSTOM') {
     return ''
@@ -592,9 +1057,203 @@ function getAiCustomGroupName() {
   return (aiCollectForm.groupName || group?.groupName || '').trim()
 }
 
-function generateAiCandidates() {
+function setAiCandidateFilter(nextFilter: typeof aiCandidateFilter.value) {
+  aiCandidateFilter.value = nextFilter
+}
+
+function formatAiValidationStatus(status?: string | null) {
+  if (status === 'AI_UNVERIFIED') return 'AI 建议未验证'
+  if (status === 'PASSED') return '已验证'
+  if (status === 'FAILED') return '未找到'
+  if (status === 'MULTIPLE') return '多匹配'
+  if (status === 'SKIPPED') return '未验证'
+  return status || '未验证'
+}
+
+function isAiCandidateSaveable(candidate: AiElementCandidate) {
+  return candidate.recommendedToSave
+    && candidate.validationStatus === 'PASSED'
+    && !candidate.saveBlockedReason
+}
+
+function previewAiCandidateScreenshot(candidate: AiElementCandidate) {
+  if (!candidate.screenshotBase64) {
+    ElMessage.warning('该候选元素没有验证截图')
+    return
+  }
+  window.open(`data:image/png;base64,${candidate.screenshotBase64}`, '_blank', 'noopener,noreferrer')
+}
+
+function selectRecommendedPassedAiCandidates() {
+  let selectedCount = 0
+  for (const candidate of aiCandidates.value) {
+    const shouldSelect = isAiCandidateSaveable(candidate)
+    candidate.selected = shouldSelect
+    if (shouldSelect) {
+      selectedCount += 1
+    }
+  }
+  ElMessage.success(`已选择 ${selectedCount} 个推荐且验证通过的候选元素`)
+}
+
+function unselectRiskyAiCandidates() {
+  let unselectedCount = 0
+  for (const candidate of aiCandidates.value) {
+    const risky = candidate.confidence < 70
+      || candidate.validationStatus === 'FAILED'
+      || candidate.validationStatus === 'MULTIPLE'
+      || Boolean(candidate.saveBlockedReason)
+    if (risky && candidate.selected) {
+      candidate.selected = false
+      unselectedCount += 1
+    }
+  }
+  ElMessage.success(`已取消 ${unselectedCount} 个低稳定性或验证异常候选`)
+}
+
+async function batchUpdateAiCandidateGroup() {
+  if (!aiSelectedCandidates.value.length) {
+    ElMessage.warning('请先选择候选元素')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('请输入要批量设置的分组名称', '批量设置分组', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
+      inputErrorMessage: '分组名称不能为空',
+    })
+    const groupName = String(value || '').trim()
+    if (!groupName) {
+      return
+    }
+    for (const candidate of aiSelectedCandidates.value) {
+      candidate.groupName = groupName
+    }
+    ElMessage.success(`已将 ${aiSelectedCandidates.value.length} 个候选元素设置为「${groupName}」`)
+  } catch {
+    // user cancelled
+  }
+}
+
+function buildAiCandidateDescription(candidate: AiElementCandidate) {
+  const parts = [
+    '来源：智能采集',
+    `稳定性：${candidate.confidence}%`,
+    candidate.reason ? `规则依据：${candidate.reason}` : '',
+    candidate.businessMeaning ? `业务含义：${candidate.businessMeaning}` : '',
+    candidate.maintenanceSuggestion ? `维护建议：${candidate.maintenanceSuggestion}` : '',
+    candidate.stabilityNote ? `稳定性说明：${candidate.stabilityNote}` : '',
+    candidate.validationStatus ? `验证结果：${formatAiValidationStatus(candidate.validationStatus)}${candidate.matchCount === null ? '' : `，匹配 ${candidate.matchCount} 个`}` : '',
+    candidate.validationMessage ? `验证信息：${candidate.validationMessage}` : '',
+  ]
+  return parts.filter(Boolean).join('；')
+}
+
+function isDuplicateAiCandidate(existingElements: WebUiElementItem[], pageId: number, groupName: string, candidate: AiElementCandidate) {
+  const elementName = candidate.elementName.trim()
+  const locatorValue = candidate.locatorValue.trim()
+  return existingElements.some(item => (
+    item.pageId === pageId
+    && (
+      ((item.groupName || '') === groupName && item.elementName === elementName)
+      || (item.locatorType === candidate.locatorType && item.locatorValue === locatorValue)
+    )
+  ))
+}
+
+async function loadAiDuplicateBaseline(workspaceCode: string, pageId: number) {
+  const localMatches = elements.value.filter(item => item.pageId === pageId)
+  try {
+    const response = await webUiAutomationApi.getElements(workspaceCode, {
+      pageId,
+      pageNo: 1,
+      pageSize: 1000,
+    })
+    return response.items
+  } catch {
+    return localMatches
+  }
+}
+
+async function focusElementScope(page: WebUiElementPageItem, group: WebUiElementGroupItem | null) {
+  await loadTreeAssets()
+  const moduleItem = modules.value.find(item => item.id === page.moduleId) || null
+  const targetId = group ? `group-${group.id}` : `page-${page.id}`
+  selectedTree.value = {
+    id: targetId,
+    type: group ? 'GROUP' : 'PAGE',
+    rawId: group?.id ?? page.id,
+    workspaceCode: page.workspaceCode,
+    label: group?.groupName || page.pageName,
+  }
+  expandedTreeKeys.value = Array.from(new Set([
+    ...expandedTreeKeys.value,
+    `workspace-${page.workspaceCode}`,
+    moduleItem ? `module-${moduleItem.id}` : '',
+    `page-${page.id}`,
+  ].filter(Boolean)))
+  pageNo.value = 1
+  await loadElements()
+}
+
+function estimateAiSaveSummary(existingElements: WebUiElementItem[], pageId: number) {
+  let duplicateCount = 0
+  let abnormalCount = 0
+  const seenNameKeys = new Set<string>()
+  const seenLocatorKeys = new Set<string>()
+  for (const item of existingElements.filter(item => item.pageId === pageId)) {
+    seenNameKeys.add(`${item.groupName || ''}::${item.elementName}`)
+    seenLocatorKeys.add(`${item.locatorType}::${item.locatorValue}`)
+  }
+  for (const candidate of aiSelectedCandidates.value) {
+    const groupName = candidate.groupName.trim()
+    const elementName = candidate.elementName.trim()
+    const locatorValue = candidate.locatorValue.trim()
+    const nameKey = `${groupName}::${elementName}`
+    const locatorKey = `${candidate.locatorType}::${locatorValue}`
+    if (candidate.validationStatus === 'FAILED' || candidate.validationStatus === 'MULTIPLE' || candidate.confidence < 70) {
+      abnormalCount += 1
+    }
+    if (seenNameKeys.has(nameKey) || seenLocatorKeys.has(locatorKey)) {
+      duplicateCount += 1
+    } else {
+      seenNameKeys.add(nameKey)
+      seenLocatorKeys.add(locatorKey)
+    }
+  }
+  return {
+    selectedCount: aiSelectedCandidates.value.length,
+    createCount: Math.max(aiSelectedCandidates.value.length - duplicateCount, 0),
+    duplicateCount,
+    abnormalCount,
+  }
+}
+
+async function confirmAiSaveSummary(summary: ReturnType<typeof estimateAiSaveSummary>) {
+  await ElMessageBox.confirm(
+    `本次选择 ${summary.selectedCount} 个候选元素，预计新增 ${summary.createCount} 个，跳过重复 ${summary.duplicateCount} 个，包含异常候选 ${summary.abnormalCount} 个。是否继续保存？`,
+    '确认批量保存',
+    {
+      confirmButtonText: '继续保存',
+      cancelButtonText: '取消',
+      type: summary.abnormalCount || summary.duplicateCount ? 'warning' : 'info',
+    },
+  )
+}
+
+async function generateAiCandidates() {
+  if (!selectedAiProvider.value?.modelName) {
+    ElMessage.warning('请选择 AI 采集模型')
+    return
+  }
   if (!aiCollectForm.moduleId) {
     ElMessage.warning('请选择所属模块')
+    return
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择有效的所属模块')
     return
   }
   if (!aiCollectForm.pageName.trim() && !aiCollectForm.pageId) {
@@ -616,81 +1275,68 @@ function generateAiCandidates() {
   }
 
   aiCollecting.value = true
-  window.setTimeout(() => {
-    const scope = aiCollectForm.scope
-    const candidates: AiElementCandidate[] = []
-    const includeForm = scope === 'ALL' || scope === 'FORM'
-    const includeButton = scope === 'ALL' || scope === 'BUTTON'
-    const includeTable = scope === 'ALL' || scope === 'TABLE'
-    const includeDialog = scope === 'ALL' || scope === 'DIALOG'
-
-    if (includeForm) {
-      candidates.push(
-        {
-          id: 'username-input',
-          selected: true,
-          groupName: '表单区',
-          elementName: '用户名输入框',
-          locatorType: 'CSS',
-          locatorValue: '#username',
-          confidence: 92,
-          reason: '优先使用 id，定位稳定',
-        },
-        {
-          id: 'password-input',
-          selected: true,
-          groupName: '表单区',
-          elementName: '密码输入框',
-          locatorType: 'CSS',
-          locatorValue: 'input[type="password"]',
-          confidence: 82,
-          reason: '根据输入类型识别，建议后续补充 data-testid',
-        },
-      )
+  try {
+    const environment = enabledEnvironments.value.find(item => item.id === aiCollectForm.environmentId)
+    const result = await webUiAutomationApi.collectElements(moduleItem.workspaceCode, {
+      providerConnectionId: selectedAiProvider.value.id,
+      modelName: selectedAiProvider.value.modelName,
+      pageUrl: aiCollectMode.value === 'ONLINE' ? aiCollectForm.pageUrl.trim() : null,
+      environmentId: aiCollectMode.value === 'ONLINE' ? aiCollectForm.environmentId : null,
+      moduleId: aiCollectForm.moduleId,
+      pageId: aiCollectForm.pageId,
+      pageName: aiCollectForm.pageName.trim(),
+      groupStrategy: aiCollectForm.groupStrategy,
+      groupId: aiCollectForm.groupId,
+      groupName: customGroupName || aiCollectForm.groupName.trim() || null,
+      scope: aiCollectForm.scope,
+      htmlText: aiCollectMode.value === 'OFFLINE' ? aiCollectForm.htmlText.trim() : null,
+      screenshotNote: aiCollectForm.screenshotNote.trim() || null,
+      browserType: environment?.browserType || 'CHROMIUM',
+      headless: environment?.headless ?? true,
+      timeoutMs: environment?.defaultTimeoutMs || 10000,
+    })
+    const candidates = result.candidates.map((item, index) => ({
+      id: `${item.locatorType}-${index}-${item.locatorValue}`,
+      selected: item.recommendedToSave && item.validationStatus === 'PASSED' && !item.saveBlockedReason,
+      groupName: aiCollectForm.groupStrategy === 'CUSTOM' ? customGroupName : item.groupName,
+      elementName: item.elementName,
+      locatorType: item.locatorType,
+      locatorValue: item.locatorValue,
+      confidence: item.confidence,
+      reason: item.reason,
+      tagName: item.tagName,
+      elementType: item.elementType,
+      businessMeaning: item.businessMeaning,
+      candidateSource: item.candidateSource || 'RULE',
+      recommendedToSave: item.recommendedToSave,
+      notRecommendedReason: item.notRecommendedReason,
+      maintenanceSuggestion: item.maintenanceSuggestion,
+      stabilityNote: item.stabilityNote,
+      validationStatus: item.validationStatus,
+      matchCount: item.matchCount,
+      validationMessage: item.validationMessage,
+      screenshotBase64: item.screenshotBase64,
+      saveBlockedReason: item.saveBlockedReason || null,
+    }))
+    aiCandidates.value = candidates
+    aiCandidateFilter.value = 'ALL'
+    if (!candidates.length) {
+      ElMessage.warning(result.message || '未识别到候选元素，请缩小范围或补充 HTML 结构后重试')
+      return
     }
-    if (includeButton) {
-      candidates.push({
-        id: 'submit-button',
-        selected: true,
-        groupName: '操作区',
-        elementName: '提交按钮',
-        locatorType: 'ROLE',
-        locatorValue: 'button:提交',
-        confidence: 88,
-        reason: '按钮文本清晰，Role 定位可读性较好',
-      })
+    if (result.aiEnhanced) {
+      ElMessage.success(result.message || `已智能生成 ${candidates.length} 个候选元素，请确认后批量保存`)
+    } else if (result.fallbackReason) {
+      ElMessage.warning(`已生成 ${candidates.length} 个规则候选元素，AI 增强未启用：${result.fallbackReason}`)
+    } else {
+      ElMessage.success(`已生成 ${candidates.length} 个候选元素，请确认后批量保存`)
     }
-    if (includeTable) {
-      candidates.push({
-        id: 'result-table',
-        selected: true,
-        groupName: '表格区',
-        elementName: '结果表格',
-        locatorType: 'CSS',
-        locatorValue: '.el-table',
-        confidence: 76,
-        reason: '识别到 Element Plus 表格容器，建议确认页面唯一性',
-      })
-    }
-    if (includeDialog) {
-      candidates.push({
-        id: 'confirm-dialog',
-        selected: false,
-        groupName: '弹窗区',
-        elementName: '确认弹窗',
-        locatorType: 'CSS',
-        locatorValue: '.el-dialog',
-        confidence: 70,
-        reason: '弹窗容器可能复用，保存前建议调整为更精确定位',
-      })
-    }
-
-    aiCandidates.value = aiCollectForm.groupStrategy === 'CUSTOM'
-      ? candidates.map(item => ({ ...item, groupName: customGroupName }))
-      : candidates
+  } catch (error) {
+    aiCandidates.value = []
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
     aiCollecting.value = false
-    ElMessage.success('已生成候选元素，请确认后批量保存')
-  }, 300)
+  }
 }
 
 async function saveAiCandidates() {
@@ -713,6 +1359,12 @@ async function saveAiCandidates() {
     return
   }
 
+  const blockedCandidate = aiSelectedCandidates.value.find(item => !isAiCandidateSaveable(item))
+  if (blockedCandidate) {
+    ElMessage.warning(blockedCandidate.saveBlockedReason || '仅验证通过且推荐保存的候选元素可以入库')
+    return
+  }
+
   aiSaving.value = true
   try {
     let page = aiCollectForm.pageId ? pages.value.find(item => item.id === aiCollectForm.pageId) || null : null
@@ -723,7 +1375,7 @@ async function saveAiCandidates() {
         moduleName: moduleItem.moduleName,
         pageName: aiCollectForm.pageName.trim(),
         pagePath: aiCollectForm.pageUrl.trim() || null,
-        description: 'AI 采集创建',
+        description: '智能采集创建',
         sortOrder: pages.value.filter(item => item.moduleId === moduleItem.id).length + 1,
         status: 'ENABLED',
       })
@@ -735,6 +1387,12 @@ async function saveAiCandidates() {
       groupMap.set(group.groupName, group)
     }
 
+    const existingElements = await loadAiDuplicateBaseline(page.workspaceCode, page.id)
+    const saveSummary = estimateAiSaveSummary(existingElements, page.id)
+    await confirmAiSaveSummary(saveSummary)
+    let savedCount = 0
+    let skippedCount = 0
+    let firstSavedGroup: WebUiElementGroupItem | null = null
     for (const candidate of aiSelectedCandidates.value) {
       const groupName = candidate.groupName.trim()
       let group = groupMap.get(groupName)
@@ -743,14 +1401,20 @@ async function saveAiCandidates() {
           workspaceCode: page.workspaceCode,
           pageId: page.id,
           groupName,
-          description: 'AI 采集创建',
+          description: '智能采集创建',
           sortOrder: groupMap.size + 1,
           status: 'ENABLED',
         })
         groupMap.set(groupName, group)
+        groups.value.push(group)
       }
 
-      await webUiAutomationApi.createElement(page.workspaceCode, {
+      if (isDuplicateAiCandidate(existingElements, page.id, group.groupName, candidate)) {
+        skippedCount += 1
+        continue
+      }
+
+      const createdElement = await webUiAutomationApi.createElement(page.workspaceCode, {
         workspaceCode: page.workspaceCode,
         pageId: page.id,
         groupId: group.id,
@@ -759,35 +1423,30 @@ async function saveAiCandidates() {
         elementName: candidate.elementName.trim(),
         locatorType: candidate.locatorType,
         locatorValue: candidate.locatorValue.trim(),
-        description: `AI 采集候选，稳定性 ${candidate.confidence}%。${candidate.reason}`,
+        description: buildAiCandidateDescription(candidate),
         status: 'ENABLED',
       })
+      existingElements.push(createdElement)
+      firstSavedGroup = firstSavedGroup || group
+      savedCount += 1
     }
 
-    ElMessage.success(`已保存 ${aiSelectedCandidates.value.length} 个元素`)
+    if (!savedCount && skippedCount) {
+      ElMessage.warning(`已跳过 ${skippedCount} 个重复候选元素，未新增元素`)
+    } else if (skippedCount) {
+      ElMessage.warning(`已保存 ${savedCount} 个元素，跳过 ${skippedCount} 个重复候选元素`)
+    } else {
+      ElMessage.success(`已保存 ${savedCount} 个元素`)
+    }
     aiCollectDrawerVisible.value = false
-    await reloadAll()
+    await focusElementScope(page, firstSavedGroup)
   } catch (error) {
-    ElMessage.error(getRequestErrorMessage(error))
+    if (error !== 'cancel') {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
   } finally {
     aiSaving.value = false
   }
-}
-
-function openEditDialog(item: WebUiElementItem) {
-  editingId.value = item.id
-  editingElementSnapshot.value = item
-  elementDialogWorkspaceCode.value = item.workspaceCode
-  form.pageId = item.pageId
-  form.groupId = item.groupId
-  form.pageName = item.pageName
-  form.groupName = item.groupName || ''
-  form.elementName = item.elementName
-  form.locatorType = item.locatorType
-  form.locatorValue = item.locatorValue
-  form.description = item.description || ''
-  form.status = item.status
-  dialogVisible.value = true
 }
 
 function handleElementPageChange(pageId: number | null) {
@@ -854,17 +1513,8 @@ async function saveElement() {
       || editingElementSnapshot.value.locatorValue !== payload.locatorValue
     )
     if (locatorChanged) {
-      try {
-        await ElMessageBox.confirm(
-          `该元素已被 ${editingElementSnapshot.value.usageCount} 个用例/模板步骤引用，修改定位器可能影响执行。是否继续？`,
-          '元素变更影响提示',
-          {
-            type: 'warning',
-            confirmButtonText: '继续保存',
-            cancelButtonText: '取消',
-          },
-        )
-      } catch {
+      const confirmed = await confirmElementImpact([editingElementSnapshot.value], '修改元素定位器')
+      if (!confirmed) {
         return
       }
     }
@@ -898,6 +1548,12 @@ async function batchUpdateSelectedElementStatus(nextStatus: 'ENABLED' | 'DISABLE
   if (!selectedElements.value.length) {
     ElMessage.warning('请先选择元素')
     return
+  }
+  if (nextStatus === 'DISABLED') {
+    const confirmed = await confirmElementImpact(selectedElements.value, '停用元素')
+    if (!confirmed) {
+      return
+    }
   }
 
   batchOperating.value = true
@@ -982,15 +1638,113 @@ async function batchValidateElements() {
 
   batchOperating.value = true
   try {
-    const result = await webUiAutomationApi.batchValidateElements(currentQueryWorkspaceCode.value, {
-      elementIds: selectedElements.value.map(item => item.id),
+    const options = {
       baseUrl: environment.baseUrl,
       browserType: environment.browserType || 'CHROMIUM',
       headless: environment.headless ?? true,
       timeoutMs: environment.defaultTimeoutMs || 10000,
+    }
+    const result = await webUiAutomationApi.batchValidateElements(currentQueryWorkspaceCode.value, {
+      elementIds: selectedElements.value.map(item => item.id),
+      ...options,
     })
+    lastBatchValidateOptions.value = options
+    batchValidateSummary.totalCount = result.totalCount
+    batchValidateSummary.passedCount = result.passedCount
+    batchValidateSummary.failedCount = result.failedCount
+    batchValidateResults.value = result.results
+    batchValidateFilter.value = result.failedCount ? 'FAILED' : 'ALL'
+    batchValidateDrawerVisible.value = true
     ElMessage[result.failedCount ? 'warning' : 'success'](
       `批量验证完成，通过 ${result.passedCount} 个，失败 ${result.failedCount} 个`,
+    )
+    await reloadAll()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    batchOperating.value = false
+  }
+}
+
+function focusBatchValidateElement(item: WebUiElementValidateResultItem) {
+  keyword.value = item.elementName
+  pageNo.value = 1
+  batchValidateDrawerVisible.value = false
+  void loadElements()
+}
+
+function getBatchValidateImageSrc(item: WebUiElementValidateResultItem) {
+  return item.screenshotBase64 ? `data:image/png;base64,${item.screenshotBase64}` : ''
+}
+
+function previewBatchValidateScreenshot(item: WebUiElementValidateResultItem) {
+  const imageSrc = getBatchValidateImageSrc(item)
+  if (!imageSrc) {
+    ElMessage.warning('该验证结果没有截图')
+    return
+  }
+  window.open(imageSrc, '_blank', 'noopener,noreferrer')
+}
+
+function previewValidateScreenshot() {
+  if (!validateImageSrc.value) {
+    ElMessage.warning('本次验证没有截图')
+    return
+  }
+  window.open(validateImageSrc.value, '_blank', 'noopener,noreferrer')
+}
+
+function formatValidateFailureHint(message?: string | null) {
+  const text = (message || '').toLowerCase()
+  if (!message) {
+    return '未返回具体失败原因，可先确认页面地址是否正确、元素是否在当前页面渲染。'
+  }
+  if (text.includes('timeout') || text.includes('timed out') || text.includes('超时')) {
+    return '可能是页面加载或元素出现超时，建议检查网络、登录态、等待时间和页面跳转。'
+  }
+  if (text.includes('invalid') || text.includes('syntax') || text.includes('selector')) {
+    return '可能是定位器语法不正确，建议先检查 CSS/XPath/文本定位写法。'
+  }
+  if (text.includes('navigation') || text.includes('net::') || text.includes('failed to load')) {
+    return '可能是验证地址无法打开，建议确认环境 baseUrl、路径和登录态。'
+  }
+  return '建议优先确认页面地址、登录态、元素是否在当前页面，以及定位器是否足够稳定。'
+}
+
+function getValidateFailureHint(result?: ValidateWebUiLocatorResponse | WebUiElementValidateResultItem | null) {
+  if (!result || result.matched) {
+    return ''
+  }
+  return formatValidateFailureHint(result.errorMessage)
+}
+
+function setBatchValidateFilter(filter: 'ALL' | 'FAILED') {
+  batchValidateFilter.value = filter
+}
+
+async function retryFailedBatchValidateElements() {
+  if (!failedBatchValidateResults.value.length) {
+    ElMessage.warning('暂无失败元素可重试')
+    return
+  }
+  if (!lastBatchValidateOptions.value) {
+    ElMessage.warning('缺少上次批量验证参数，请重新选择元素后批量验证')
+    return
+  }
+
+  batchOperating.value = true
+  try {
+    const result = await webUiAutomationApi.batchValidateElements(currentQueryWorkspaceCode.value, {
+      elementIds: failedBatchValidateResults.value.map(item => item.elementId),
+      ...lastBatchValidateOptions.value,
+    })
+    batchValidateSummary.totalCount = result.totalCount
+    batchValidateSummary.passedCount = result.passedCount
+    batchValidateSummary.failedCount = result.failedCount
+    batchValidateResults.value = result.results
+    batchValidateFilter.value = result.failedCount ? 'FAILED' : 'ALL'
+    ElMessage[result.failedCount ? 'warning' : 'success'](
+      `失败项重试完成，通过 ${result.passedCount} 个，失败 ${result.failedCount} 个`,
     )
     await reloadAll()
   } catch (error) {
@@ -1003,6 +1757,11 @@ async function batchValidateElements() {
 async function batchDeleteElements() {
   if (!selectedElements.value.length) {
     ElMessage.warning('请先选择元素')
+    return
+  }
+
+  const impactConfirmed = await confirmElementImpact(selectedElements.value, '删除元素')
+  if (!impactConfirmed) {
     return
   }
 
@@ -1048,8 +1807,19 @@ async function runQualityCheck() {
       pageSize: 500,
     })
     qualityIssues.value = result.issues
+    const elementPage = await webUiAutomationApi.getElements(currentQueryWorkspaceCode.value, {
+      keyword: keyword.value,
+      moduleId: selectedModuleId.value,
+      pageId: selectedPageId.value,
+      groupId: selectedGroupId.value,
+      status: status.value,
+      pageNo: 1,
+      pageSize: 500,
+    })
+    localQualityIssues.value = buildLocalQualityIssues(elementPage.items)
+    qualityIssueFilter.value = 'ALL'
     qualityDrawerVisible.value = true
-    if (!qualityIssues.value.length) {
+    if (!hasAnyQualityIssue.value) {
       ElMessage.success('当前筛选范围内暂未发现元素质量问题')
     }
   } catch (error) {
@@ -1059,24 +1829,206 @@ async function runQualityCheck() {
   }
 }
 
-function formatQualityLevel(level: WebUiElementQualityIssue['level']) {
-  if (level === 'HIGH') {
-    return '高风险'
-  }
-  if (level === 'MEDIUM') {
-    return '中风险'
-  }
-  return '低风险'
+function groupByQualityKey(items: WebUiElementItem[], getKey: (item: WebUiElementItem) => string) {
+  const map = new Map<string, WebUiElementItem[]>()
+  items.forEach((item) => {
+    const key = getKey(item)
+    if (!key) return
+    const list = map.get(key) || []
+    list.push(item)
+    map.set(key, list)
+  })
+  return Array.from(map.values()).filter(list => list.length > 1)
 }
 
-function getQualityTagType(level: WebUiElementQualityIssue['level']) {
-  if (level === 'HIGH') {
-    return 'danger'
+function isPageInCurrentQualityScope(page: WebUiElementPageItem) {
+  if (selectedModuleId.value && page.moduleId !== selectedModuleId.value) return false
+  if (selectedPageId.value && page.id !== selectedPageId.value) return false
+  if (selectedWorkspaceCode.value && page.workspaceCode !== selectedWorkspaceCode.value) return false
+  if (props.workspaceCode && props.workspaceCode !== 'ALL' && page.workspaceCode !== props.workspaceCode) return false
+  return true
+}
+
+function isGroupInCurrentQualityScope(group: WebUiElementGroupItem) {
+  if (selectedGroupId.value && group.id !== selectedGroupId.value) return false
+  if (selectedPageId.value && group.pageId !== selectedPageId.value) return false
+  if (selectedWorkspaceCode.value && group.workspaceCode !== selectedWorkspaceCode.value) return false
+  if (props.workspaceCode && props.workspaceCode !== 'ALL' && group.workspaceCode !== props.workspaceCode) return false
+  if (selectedModuleId.value) {
+    const page = pages.value.find(item => item.id === group.pageId)
+    return page?.moduleId === selectedModuleId.value
   }
-  if (level === 'MEDIUM') {
-    return 'warning'
+  return true
+}
+
+function buildLocalQualityIssues(scopeElements: WebUiElementItem[]): LocalQualityIssue[] {
+  const issues: LocalQualityIssue[] = []
+  const pushDuplicateIssue = (
+    idPrefix: string,
+    kind: LocalQualityIssueKind,
+    title: string,
+    descriptionPrefix: string,
+    list: WebUiElementItem[],
+  ) => {
+    const first = list[0]
+    if (!first) return
+    issues.push({
+      id: `${idPrefix}-${list.map(item => item.id).join('-')}`,
+      level: 'HIGH',
+      kind,
+      title,
+      description: `${descriptionPrefix}：${list.map(item => item.elementName).join('、')}`,
+      elementId: first.id,
+      elementName: first.elementName,
+      workspaceCode: first.workspaceCode,
+      pageId: first.pageId,
+      groupId: first.groupId,
+      pageName: first.pageName,
+      groupName: first.groupName,
+      locatorType: first.locatorType,
+      locatorValue: first.locatorValue,
+      usageCount: first.usageCount,
+    })
   }
-  return 'info'
+
+  groupByQualityKey(scopeElements, item => `${item.pageId || item.pageName}|${item.groupId || item.groupName || ''}|${item.elementName.trim()}`)
+    .forEach(list => pushDuplicateIssue('duplicate-name', 'DUPLICATE_NAME', '元素名称重复', '同页面同分组下存在重复元素名', list))
+
+  groupByQualityKey(scopeElements, item => `${item.pageId || item.pageName}|${item.groupId || item.groupName || ''}|${item.locatorType}|${item.locatorValue.trim()}`)
+    .forEach(list => pushDuplicateIssue('duplicate-locator', 'DUPLICATE_LOCATOR', '定位器重复', '同页面同分组下存在重复定位器', list))
+
+  scopeElements
+    .filter(item => item.status === 'DISABLED' && item.usageCount > 0)
+    .forEach((item) => {
+      issues.push({
+        id: `disabled-used-${item.id}`,
+        level: 'HIGH',
+        kind: 'DISABLED_USED',
+        title: '被引用元素已禁用',
+        description: `该元素仍被 ${item.usageCount} 个用例或模板步骤引用，禁用后可能影响执行。`,
+        elementId: item.id,
+        elementName: item.elementName,
+        workspaceCode: item.workspaceCode,
+        pageId: item.pageId,
+        groupId: item.groupId,
+        pageName: item.pageName,
+        groupName: item.groupName,
+        locatorType: item.locatorType,
+        locatorValue: item.locatorValue,
+        usageCount: item.usageCount,
+      })
+    })
+
+  pages.value
+    .filter(isPageInCurrentQualityScope)
+    .filter(item => Number(item.elementCount || 0) === 0 && Number(item.groupCount || 0) === 0)
+    .forEach((item) => {
+      issues.push({
+        id: `empty-page-${item.id}`,
+        level: 'LOW',
+        kind: 'EMPTY_PAGE',
+        title: '空页面对象',
+        description: '该页面对象下暂无分组和元素，可补充元素或清理无效页面。',
+        workspaceCode: item.workspaceCode,
+        pageId: item.id,
+        pageName: item.pageName,
+        groupName: null,
+      })
+    })
+
+  groups.value
+    .filter(isGroupInCurrentQualityScope)
+    .filter(item => Number(item.elementCount || 0) === 0)
+    .forEach((item) => {
+      const page = pages.value.find(pageItem => pageItem.id === item.pageId)
+      issues.push({
+        id: `empty-group-${item.id}`,
+        level: 'LOW',
+        kind: 'EMPTY_GROUP',
+        title: '空分组',
+        description: '该分组下暂无元素，可补充元素或清理无效分组。',
+        workspaceCode: item.workspaceCode,
+        pageId: item.pageId,
+        groupId: item.id,
+        pageName: page?.pageName || '-',
+        groupName: item.groupName,
+      })
+    })
+
+  return issues
+}
+function setQualityIssueFilter(nextFilter: QualityIssueFilter) {
+  qualityIssueFilter.value = nextFilter
+}
+
+function focusLocalQualityIssue(issue: LocalQualityIssue) {
+  keyword.value = issue.elementName || issue.pageName || issue.groupName || ''
+  pageNo.value = 1
+  qualityDrawerVisible.value = false
+  void loadElements()
+}
+
+async function editLocalQualityElement(issue: LocalQualityIssue) {
+  if (!issue.elementId) {
+    ElMessage.warning('该问题没有可编辑的元素')
+    return
+  }
+
+  const target = elements.value.find(item => item.id === issue.elementId)
+  if (target) {
+    qualityDrawerVisible.value = false
+    openEditDialog(target)
+    return
+  }
+
+  try {
+    const detail = await webUiAutomationApi.getElementDetail(issue.workspaceCode || currentQueryWorkspaceCode.value, issue.elementId)
+    qualityDrawerVisible.value = false
+    openEditDialog(detail)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  }
+}
+
+async function cleanEmptyLocalQualityIssue(issue: LocalQualityIssue) {
+  if (issue.kind !== 'EMPTY_PAGE' && issue.kind !== 'EMPTY_GROUP') {
+    return
+  }
+
+  const targetName = issue.kind === 'EMPTY_PAGE' ? issue.pageName : issue.groupName
+  const targetType = issue.kind === 'EMPTY_PAGE' ? '页面对象' : '分组'
+  const targetId = issue.kind === 'EMPTY_PAGE' ? issue.pageId : issue.groupId
+  if (!targetId) {
+    ElMessage.warning(`缺少${targetType} ID，无法清理`)
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(`确认清理空${targetType}“${targetName || '-'}”吗？`, `清理空${targetType}`, {
+      type: 'warning',
+      confirmButtonText: '清理',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+
+  qualityChecking.value = true
+  try {
+    const workspaceCode = issue.workspaceCode || currentQueryWorkspaceCode.value
+    if (issue.kind === 'EMPTY_PAGE') {
+      await webUiAutomationApi.deleteElementPage(workspaceCode, targetId)
+    } else {
+      await webUiAutomationApi.deleteElementGroup(workspaceCode, targetId)
+    }
+    ElMessage.success(`空${targetType}已清理`)
+    await reloadAll()
+    await runQualityCheck()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    qualityChecking.value = false
+  }
 }
 
 function focusQualityElement(issue: WebUiElementQualityIssue) {
@@ -1084,6 +2036,23 @@ function focusQualityElement(issue: WebUiElementQualityIssue) {
   pageNo.value = 1
   qualityDrawerVisible.value = false
   void loadElements()
+}
+
+async function editQualityElement(issue: WebUiElementQualityIssue) {
+  const target = elements.value.find(item => item.id === issue.elementId)
+  if (target) {
+    qualityDrawerVisible.value = false
+    openEditDialog(target)
+    return
+  }
+
+  try {
+    const detail = await webUiAutomationApi.getElementDetail(currentQueryWorkspaceCode.value, issue.elementId)
+    qualityDrawerVisible.value = false
+    openEditDialog(detail)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  }
 }
 
 function openQualityIssueReferences(issue: WebUiElementQualityIssue) {
@@ -1111,6 +2080,11 @@ function openQualityIssueReferences(issue: WebUiElementQualityIssue) {
 }
 
 async function deleteElement(item: WebUiElementItem) {
+  const impactConfirmed = await confirmElementImpact([item], '删除元素')
+  if (!impactConfirmed) {
+    return
+  }
+
   try {
     await ElMessageBox.confirm(`确认删除元素“${item.elementName}”吗？`, '删除元素', {
       type: 'warning',
@@ -1147,22 +2121,127 @@ async function openReferenceDrawer(item: WebUiElementItem) {
   }
 }
 
-function formatReferenceSourceType(type: string) {
-  if (type === 'TEMPLATE') {
-    return '模板'
+function isImpactReferenceLocatorSynced(item: ElementImpactReference) {
+  return item.locatorType === item.elementLocatorType && item.locatorValue === item.elementLocatorValue
+}
+
+async function loadElementImpactSummary(targets: WebUiElementItem[]): Promise<ElementImpactSummary> {
+  const result = await Promise.all(targets.map(async (element) => {
+    const references = await webUiAutomationApi.getElementReferences(element.workspaceCode || props.workspaceCode, element.id)
+    return {
+      element,
+      references,
+    }
+  }))
+
+  const references = result.flatMap(item => item.references)
+  return {
+    elementCount: targets.length,
+    referenceCount: references.length,
+    caseCount: references.filter(item => item.sourceType !== 'TEMPLATE').length,
+    templateCount: references.filter(item => item.sourceType === 'TEMPLATE').length,
+    elementNames: result
+      .filter(item => item.references.length > 0)
+      .map(item => item.element.elementName),
   }
-  return '用例'
 }
 
-function formatReferenceStepType(type: string) {
-  return formatStepType(type as WebUiStepType)
-}
-
-function isReferenceLocatorSynced(item: WebUiElementReferenceItem) {
-  if (!referenceTarget.value) {
+async function confirmElementImpact(targets: WebUiElementItem[], actionName: string) {
+  if (!targets.length) {
     return false
   }
-  return item.locatorType === referenceTarget.value.locatorType && item.locatorValue === referenceTarget.value.locatorValue
+
+  const summary = await loadElementImpactSummary(targets)
+  if (!summary.referenceCount) {
+    return true
+  }
+
+  const names = summary.elementNames.slice(0, 5).join('、')
+  const suffix = summary.elementNames.length > 5 ? ` 等 ${summary.elementNames.length} 个元素` : ''
+  try {
+    await ElMessageBox.confirm(
+      `本次${actionName}会影响 ${summary.referenceCount} 个引用步骤，其中用例 ${summary.caseCount} 个、模板 ${summary.templateCount} 个。涉及元素：${names}${suffix}。是否继续？`,
+      '元素引用影响提示',
+      {
+        type: 'warning',
+        confirmButtonText: '继续',
+        cancelButtonText: '取消',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function openImpactDrawer(targets = selectedElements.value) {
+  if (!targets.length) {
+    ElMessage.warning('请先选择元素')
+    return
+  }
+
+  impactTargetElements.value = targets
+  impactReferences.value = []
+  impactDrawerVisible.value = true
+  loadingImpactReferences.value = true
+  try {
+    const result = await Promise.all(targets.map(async (element) => {
+      const references = await webUiAutomationApi.getElementReferences(element.workspaceCode || props.workspaceCode, element.id)
+      return references.map(reference => ({
+        ...reference,
+        elementId: element.id,
+        elementName: element.elementName,
+        elementLocatorType: element.locatorType,
+        elementLocatorValue: element.locatorValue,
+      }))
+    }))
+    impactReferences.value = result.flat()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    loadingImpactReferences.value = false
+  }
+}
+
+async function syncUnsyncedImpactReferences() {
+  if (!unsyncedImpactElementIds.value.length) {
+    ElMessage.warning('暂无不同步引用需要处理')
+    return
+  }
+
+  syncingImpactReferences.value = true
+  try {
+    let totalCount = 0
+    for (const elementId of unsyncedImpactElementIds.value) {
+      const element = impactTargetElements.value.find(item => item.id === elementId)
+      if (!element) continue
+      const result = await webUiAutomationApi.syncElementReferenceLocators(
+        element.workspaceCode || props.workspaceCode,
+        element.id,
+      )
+      totalCount += result.totalCount
+    }
+    ElMessage.success(`已同步 ${totalCount} 个引用步骤`)
+    await openImpactDrawer(impactTargetElements.value)
+    await loadElements()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    syncingImpactReferences.value = false
+  }
+}
+
+function buildReferenceSourceUrl(item: WebUiElementReferenceItem) {
+  const path = item.sourceType === 'TEMPLATE' ? '/automation/web/templates' : '/automation/web/cases'
+  const query = new URLSearchParams({
+    [item.sourceType === 'TEMPLATE' ? 'templateId' : 'caseId']: String(item.sourceId),
+    stepId: String(item.stepId),
+  })
+  return `${window.location.origin}${path}?${query.toString()}`
+}
+
+function openReferenceSource(item: WebUiElementReferenceItem) {
+  window.open(buildReferenceSourceUrl(item), '_blank', 'noopener,noreferrer')
 }
 
 async function syncReferenceLocators() {
@@ -1502,21 +2581,27 @@ watch(
     <main class="web-ui-element-content">
       <header class="web-ui-element-library__header">
         <div class="web-ui-filter-toolbar">
-          <el-input
-            v-model="keyword"
-            class="web-ui-filter-toolbar__search"
-            clearable
-            placeholder="搜索元素名称 / 定位值 / 备注"
-            :prefix-icon="Search"
-            @keyup.enter="searchElements"
-          />
-          <el-select v-model="status" class="web-ui-filter-toolbar__select" clearable placeholder="状态">
-            <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-          <AppButton :icon="Search" @click="searchElements">查询</AppButton>
-          <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
-          <AppButton :icon="CollectionTag" :loading="qualityChecking" @click="runQualityCheck">质量检查</AppButton>
-          <AppButton class="web-ui-filter-toolbar__ai" :icon="Cpu" @click="openAiCollectDrawer">AI 采集</AppButton>
+          <div class="web-ui-filter-toolbar__query">
+            <el-input
+              v-model="keyword"
+              class="web-ui-filter-toolbar__search"
+              clearable
+              placeholder="搜索元素名称 / 定位值 / 备注"
+              :prefix-icon="Search"
+              @keyup.enter="searchElements"
+            />
+            <el-select v-model="status" class="web-ui-filter-toolbar__select" clearable placeholder="状态">
+              <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+            <AppButton :icon="Search" @click="searchElements">查询</AppButton>
+            <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
+          </div>
+          <div class="web-ui-filter-toolbar__actions">
+            <AppButton @click="openImportDialog">导入</AppButton>
+            <AppButton @click="exportCurrentElements">导出</AppButton>
+            <AppButton :icon="CollectionTag" :loading="qualityChecking" @click="runQualityCheck">质量检查</AppButton>
+            <AppButton class="web-ui-filter-toolbar__ai" :icon="Cpu" @click="openAiCollectDrawer">AI 采集</AppButton>
+          </div>
         </div>
       </header>
 
@@ -1537,6 +2622,7 @@ watch(
           <AppButton size="small" :loading="batchOperating" @click="batchDisableElements">批量停用</AppButton>
           <AppButton size="small" :loading="batchOperating" @click="openBatchMoveDialog">移动分组</AppButton>
           <AppButton size="small" :loading="batchOperating" @click="batchValidateElements">批量验证</AppButton>
+          <AppButton size="small" :loading="loadingImpactReferences" @click="openImpactDrawer()">影响分析</AppButton>
           <AppButton size="small" type="danger" :loading="batchOperating" @click="batchDeleteElements">批量删除</AppButton>
         </div>
 
@@ -1593,8 +2679,9 @@ watch(
               <span v-else>0</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="190" fixed="right">
+          <el-table-column label="操作" width="240" fixed="right">
             <template #default="{ row }">
+              <el-button :icon="View" link type="primary" @click="openDetailDrawer(row)">详情</el-button>
               <el-button :icon="VideoPlay" link type="primary" :loading="validatingId === row.id" @click="openValidateDialog(row)">验证</el-button>
               <el-button :icon="Edit" link type="primary" @click="openEditDialog(row)">编辑</el-button>
               <el-button :icon="Delete" link type="danger" :loading="deletingId === row.id" @click="deleteElement(row)">删除</el-button>
@@ -1636,348 +2723,127 @@ watch(
       </template>
     </el-dialog>
 
-    <el-drawer
-      v-model="qualityDrawerVisible"
-      title="元素质量检查"
-      size="860px"
-      class="web-ui-element-quality-drawer"
+    <el-dialog
+      v-model="importDialogVisible"
+      title="批量导入元素"
+      width="760px"
+      class="web-ui-element-import-dialog"
     >
-      <el-scrollbar class="web-ui-element-quality-scrollbar">
-        <div class="web-ui-element-quality">
-          <div class="web-ui-element-quality__summary">
-            <el-tag type="danger" effect="light">高风险 {{ highQualityIssues.length }}</el-tag>
-            <el-tag type="warning" effect="light">中风险 {{ mediumQualityIssues.length }}</el-tag>
-            <el-tag type="info" effect="light">低风险 {{ lowQualityIssues.length }}</el-tag>
-          </div>
-
-          <el-alert
-            v-if="!qualityIssues.length"
-            type="success"
-            show-icon
-            :closable="false"
-            title="当前筛选范围内暂未发现元素质量问题"
-          />
-
-          <el-table
-            v-else
-            :data="qualityIssues"
-            row-key="id"
-            border
-            empty-text="暂无质量问题"
-          >
-            <el-table-column label="风险" width="92">
-              <template #default="{ row }">
-                <el-tag :type="getQualityTagType(row.level)" effect="light">
-                  {{ formatQualityLevel(row.level) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="title" label="问题" min-width="120" />
-            <el-table-column label="元素" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.elementName }}</template>
-            </el-table-column>
-            <el-table-column label="页面 / 分组" min-width="150" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.pageName }} / {{ row.groupName || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="定位器" min-width="220" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ formatLocatorType(row.locatorType) }}：{{ row.locatorValue || '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="引用" width="76">
-              <template #default="{ row }">{{ row.usageCount }}</template>
-            </el-table-column>
-            <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
-            <el-table-column label="操作" width="150" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="focusQualityElement(row)">定位</el-button>
-                <el-button
-                  v-if="row.usageCount > 0"
-                  link
-                  type="primary"
-                  @click="openQualityIssueReferences(row)"
-                >
-                  引用
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </el-scrollbar>
-      <template #footer>
-        <div class="web-ui-element-quality__footer">
-          <AppButton @click="qualityDrawerVisible = false">关闭</AppButton>
-          <AppButton type="primary" :loading="qualityChecking" @click="runQualityCheck">重新检查</AppButton>
-        </div>
-      </template>
-    </el-drawer>
-
-    <el-drawer
-      v-model="referenceDrawerVisible"
-      title="元素引用"
-      size="760px"
-      class="web-ui-element-reference-drawer"
-    >
-      <div class="web-ui-element-reference">
+      <div class="web-ui-element-import">
         <el-alert
-          v-if="referenceTarget"
           type="info"
           show-icon
           :closable="false"
-          :title="`${referenceTarget.elementName}：${formatLocatorType(referenceTarget.locatorType)} = ${referenceTarget.locatorValue}`"
+          title="请粘贴 JSON 数组。支持 moduleName、pageName、pagePath、groupName、elementName、locatorType、locatorValue、description、status。"
         />
-
-        <el-table
-          v-loading="loadingReferences"
-          :data="elementReferences"
-          row-key="stepId"
-          border
-          empty-text="暂无引用"
-        >
-          <el-table-column label="来源" width="86">
-            <template #default="{ row }">
-              <el-tag :type="row.sourceType === 'TEMPLATE' ? 'warning' : 'success'" effect="light">
-                {{ formatReferenceSourceType(row.sourceType) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="sourceName" label="用例/模板" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="moduleName" label="模块" min-width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.moduleName || '-' }}</template>
-          </el-table-column>
-          <el-table-column label="步骤" min-width="160" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.sortOrder }}. {{ row.stepName || formatReferenceStepType(row.stepType) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="类型" width="110">
-            <template #default="{ row }">{{ formatReferenceStepType(row.stepType) }}</template>
-          </el-table-column>
-          <el-table-column label="同步状态" width="104">
-            <template #default="{ row }">
-              <el-tag :type="isReferenceLocatorSynced(row) ? 'success' : 'warning'" effect="light">
-                {{ isReferenceLocatorSynced(row) ? '一致' : '不一致' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="82">
-            <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" effect="light">
-                {{ row.enabled ? '启用' : '禁用' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="元素定位器" min-width="180" show-overflow-tooltip>
-            <template #default>
-              {{ referenceTarget ? `${formatLocatorType(referenceTarget.locatorType)}：${referenceTarget.locatorValue}` : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="locatorValue" label="步骤定位值" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.locatorType ? `${formatLocatorType(row.locatorType)}：${row.locatorValue || '-'}` : row.locatorValue || '-' }}
-            </template>
-          </el-table-column>
-        </el-table>
+        <el-input
+          v-model="importJsonText"
+          type="textarea"
+          :rows="16"
+          resize="vertical"
+          spellcheck="false"
+          placeholder='[{"moduleName":"订单模块","pageName":"订单列表页","groupName":"查询区","elementName":"订单号输入框","locatorType":"CSS","locatorValue":"input[name=\"orderNo\"]"}]'
+        />
       </div>
       <template #footer>
-        <div class="web-ui-element-reference__footer">
-          <AppButton @click="referenceDrawerVisible = false">关闭</AppButton>
-          <AppButton
-            type="primary"
-            :loading="syncingReferences"
-            :disabled="!elementReferences.length"
-            @click="syncReferenceLocators"
-          >
-            同步到引用步骤
-          </AppButton>
-        </div>
+        <AppButton @click="importDialogVisible = false">取消</AppButton>
+        <AppButton type="primary" :loading="importingElements" @click="importElementsFromJson">开始导入</AppButton>
       </template>
-    </el-drawer>
+    </el-dialog>
 
-    <el-drawer
+    <WebUiElementValidateDrawer
+      v-model="batchValidateDrawerVisible"
+      :summary="batchValidateSummary"
+      :filter="batchValidateFilter"
+      :results="visibleBatchValidateResults"
+      :failed-count="failedBatchValidateResults.length"
+      :operating="batchOperating"
+      @filter-change="setBatchValidateFilter"
+      @preview-screenshot="previewBatchValidateScreenshot"
+      @focus="focusBatchValidateElement"
+      @retry="retryFailedBatchValidateElements"
+    />
+
+    <WebUiElementQualityDrawer
+      v-model="qualityDrawerVisible"
+      :filter="qualityIssueFilter"
+      :high-count="totalHighQualityIssueCount"
+      :medium-count="totalMediumQualityIssueCount"
+      :low-count="totalLowQualityIssueCount"
+      :has-any-issue="hasAnyQualityIssue"
+      :local-issues="visibleLocalQualityIssues"
+      :backend-issues="visibleBackendQualityIssues"
+      :checking="qualityChecking"
+      @filter-change="setQualityIssueFilter"
+      @focus-local="focusLocalQualityIssue"
+      @edit-local="editLocalQualityElement"
+      @clean-local="cleanEmptyLocalQualityIssue"
+      @focus-backend="focusQualityElement"
+      @edit-backend="editQualityElement"
+      @open-references="openQualityIssueReferences"
+      @rerun="runQualityCheck"
+    />
+
+    <WebUiElementImpactDrawer
+      v-model="impactDrawerVisible"
+      :element-count="impactTargetElements.length"
+      :stats="impactReferenceStats"
+      :references="impactReferences"
+      :loading="loadingImpactReferences"
+      :syncing="syncingImpactReferences"
+      :unsynced-count="unsyncedImpactElementIds.length"
+      @open="openReferenceSource"
+      @sync="syncUnsyncedImpactReferences"
+    />
+
+    <WebUiElementDetailDrawer
+      v-model="detailDrawerVisible"
+      :target="detailTarget"
+      :module-name="detailModuleName"
+      :validate-tag-type="detailValidateTagType"
+      :validate-label="detailValidateLabel"
+      @open-reference="openReferenceDrawer"
+      @edit="openEditDialog"
+    />
+
+    <WebUiElementReferenceDrawer
+      v-model="referenceDrawerVisible"
+      :target="referenceTarget"
+      :references="elementReferences"
+      :loading="loadingReferences"
+      :syncing="syncingReferences"
+      @open="openReferenceSource"
+      @sync="syncReferenceLocators"
+    />
+
+    <WebUiElementAiCollectDrawer
       v-model="aiCollectDrawerVisible"
-      title="AI 采集元素"
-      size="860px"
-      class="web-ui-ai-collect-drawer"
-    >
-      <el-scrollbar class="web-ui-ai-collect-scrollbar">
-        <div class="web-ui-ai-collect">
-          <el-alert
-            type="info"
-            show-icon
-            :closable="false"
-            title="第一版先提供采集入口和候选确认流程，在线真实采集和大模型识别后续接入。"
-          />
-
-          <el-radio-group v-model="aiCollectMode" class="web-ui-ai-collect__mode">
-            <el-radio-button label="ONLINE">在线采集</el-radio-button>
-            <el-radio-button label="OFFLINE">离线导入</el-radio-button>
-          </el-radio-group>
-
-          <el-form class="web-ui-ai-collect__form" label-width="104px">
-            <template v-if="aiCollectMode === 'ONLINE'">
-              <el-form-item label="运行环境">
-                <el-select v-model="aiCollectForm.environmentId" clearable filterable placeholder="选择登录态/环境">
-                  <el-option v-for="item in enabledEnvironments" :key="item.id" :label="item.name" :value="item.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="页面 URL" required>
-                <el-input v-model="aiCollectForm.pageUrl" clearable placeholder="https://example.com/orders" />
-              </el-form-item>
-            </template>
-
-            <template v-else>
-              <el-form-item label="HTML / DOM" required>
-                <el-input
-                  v-model="aiCollectForm.htmlText"
-                  type="textarea"
-                  :rows="6"
-                  maxlength="30000"
-                  show-word-limit
-                  placeholder="粘贴页面 HTML、DOM 片段，或从浏览器复制出来的关键区域结构"
-                />
-              </el-form-item>
-              <el-form-item label="截图说明">
-                <el-input
-                  v-model="aiCollectForm.screenshotNote"
-                  type="textarea"
-                  :rows="3"
-                  maxlength="1000"
-                  show-word-limit
-                  placeholder="可补充截图里哪些区域要采集，例如：登录表单、查询按钮、结果表格"
-                />
-              </el-form-item>
-            </template>
-
-            <el-form-item label="所属模块" required>
-              <el-select
-                v-model="aiCollectForm.moduleId"
-                clearable
-                filterable
-                placeholder="选择模块"
-                @change="handleAiModuleChange"
-              >
-                <el-option v-for="item in modules" :key="item.id" :label="item.moduleName" :value="item.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="页面对象" required>
-              <div class="web-ui-ai-collect__page-target">
-                <el-select
-                  v-model="aiCollectForm.pageId"
-                  clearable
-                  filterable
-                  placeholder="选择已有页面对象"
-                  @change="handleAiPageChange"
-                >
-                  <el-option v-for="item in aiCollectPageOptions" :key="item.id" :label="item.pageName" :value="item.id" />
-                </el-select>
-                <el-input v-model="aiCollectForm.pageName" clearable placeholder="或填写新页面对象名称" />
-              </div>
-            </el-form-item>
-            <el-form-item label="分组策略">
-              <el-radio-group v-model="aiCollectForm.groupStrategy">
-                <el-radio-button label="AI">AI 建议分组</el-radio-button>
-                <el-radio-button label="CUSTOM">自选分组</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item v-if="aiCollectForm.groupStrategy === 'CUSTOM'" label="自选分组" required>
-              <div class="web-ui-ai-collect__group-target">
-                <el-select
-                  v-model="aiCollectForm.groupId"
-                  clearable
-                  filterable
-                  placeholder="选择已有分组"
-                  :disabled="!aiCollectForm.pageId"
-                  @change="handleAiGroupChange"
-                >
-                  <el-option v-for="item in aiCollectGroupOptions" :key="item.id" :label="item.groupName" :value="item.id" />
-                </el-select>
-                <el-input v-model="aiCollectForm.groupName" clearable placeholder="或填写新分组名称" />
-              </div>
-            </el-form-item>
-            <el-form-item label="采集范围">
-              <el-radio-group v-model="aiCollectForm.scope">
-                <el-radio-button label="ALL">全部</el-radio-button>
-                <el-radio-button label="FORM">表单</el-radio-button>
-                <el-radio-button label="BUTTON">按钮</el-radio-button>
-                <el-radio-button label="TABLE">表格</el-radio-button>
-                <el-radio-button label="DIALOG">弹窗</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-          </el-form>
-
-          <div class="web-ui-ai-collect__actions">
-            <AppButton type="primary" :icon="Cpu" :loading="aiCollecting" @click="generateAiCandidates">
-              生成候选元素
-            </AppButton>
-            <span>已选 {{ aiSelectedCandidates.length }} / {{ aiCandidates.length }}</span>
-          </div>
-
-          <el-table
-            v-if="aiCandidates.length"
-            :data="aiCandidates"
-            row-key="id"
-            border
-            class="web-ui-ai-collect__table"
-          >
-            <el-table-column label="选择" width="72" align="center">
-              <template #default="{ row }">
-                <el-checkbox v-model="row.selected" />
-              </template>
-            </el-table-column>
-            <el-table-column label="建议分组" min-width="130">
-              <template #default="{ row }">
-                <el-input v-model="row.groupName" maxlength="80" />
-              </template>
-            </el-table-column>
-            <el-table-column label="元素名称" min-width="150">
-              <template #default="{ row }">
-                <el-input v-model="row.elementName" maxlength="80" />
-              </template>
-            </el-table-column>
-            <el-table-column label="定位方式" width="130">
-              <template #default="{ row }">
-                <el-select v-model="row.locatorType">
-                  <el-option v-for="item in WEB_UI_LOCATOR_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="推荐定位器" min-width="220">
-              <template #default="{ row }">
-                <el-input v-model="row.locatorValue" maxlength="1000" />
-              </template>
-            </el-table-column>
-            <el-table-column label="稳定性" width="112">
-              <template #default="{ row }">
-                <el-progress :percentage="row.confidence" :stroke-width="8" :show-text="false" />
-                <small class="web-ui-ai-collect__score">{{ row.confidence }}%</small>
-              </template>
-            </el-table-column>
-            <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
-          </el-table>
-
-          <AppEmptyState
-            v-else
-            title="暂无候选元素"
-            description="填写采集信息后点击“生成候选元素”，先确认候选结果，再批量保存到元素库。"
-          />
-        </div>
-      </el-scrollbar>
-
-      <template #footer>
-        <div class="web-ui-ai-collect__footer">
-          <AppButton @click="aiCollectDrawerVisible = false">关闭</AppButton>
-          <AppButton
-            type="primary"
-            :loading="aiSaving"
-            :disabled="!aiSelectedCandidates.length"
-            @click="saveAiCandidates"
-          >
-            批量保存
-          </AppButton>
-        </div>
-      </template>
-    </el-drawer>
+      v-model:ai-collect-mode="aiCollectMode"
+      :ai-collect-form="aiCollectForm"
+      :ai-provider-loading="aiProviderLoading"
+      :available-ai-providers="availableAiProviders"
+      :enabled-environments="enabledEnvironments"
+      :modules="modules"
+      :page-options="aiCollectPageOptions"
+      :group-options="aiCollectGroupOptions"
+      :candidates="aiCandidates"
+      :visible-candidates="visibleAiCandidates"
+      :candidate-summary="aiCandidateSummary"
+      :selected-count="aiSelectedCandidates.length"
+      :candidate-filter="aiCandidateFilter"
+      :collecting="aiCollecting"
+      :saving="aiSaving"
+      @module-change="handleAiModuleChange"
+      @page-change="handleAiPageChange"
+      @group-change="handleAiGroupChange"
+      @filter-change="setAiCandidateFilter"
+      @generate="generateAiCandidates"
+      @select-recommended="selectRecommendedPassedAiCandidates"
+      @unselect-risky="unselectRiskyAiCandidates"
+      @batch-update-group="batchUpdateAiCandidateGroup"
+      @preview-screenshot="previewAiCandidateScreenshot"
+      @save="saveAiCandidates"
+    />
 
     <el-dialog v-model="moduleDialogVisible" title="新增模块" width="560px">
       <el-form label-width="96px">
@@ -2127,7 +2993,17 @@ watch(
           show-icon
           :closable="false"
         />
-        <img v-if="validateImageSrc" class="web-ui-element-validate__image" :src="validateImageSrc" alt="元素验证截图">
+        <el-alert
+          v-if="getValidateFailureHint(validateResult)"
+          type="info"
+          show-icon
+          :closable="false"
+          :title="getValidateFailureHint(validateResult)"
+        />
+        <div v-if="validateImageSrc" class="web-ui-element-validate__screenshot">
+          <img class="web-ui-element-validate__image" :src="validateImageSrc" alt="元素验证截图">
+          <AppButton size="small" @click="previewValidateScreenshot">查看大图</AppButton>
+        </div>
       </div>
       <template #footer>
         <AppButton @click="validateDialogVisible = false">关闭</AppButton>
@@ -2237,7 +3113,26 @@ watch(
   flex: 1;
   width: 100%;
   min-width: 0;
-  flex-wrap: nowrap;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.web-ui-filter-toolbar__query,
+.web-ui-filter-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.web-ui-filter-toolbar__query {
+  flex: 1 1 520px;
+}
+
+.web-ui-filter-toolbar__actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
 }
 
 .web-ui-filter-toolbar__search {
@@ -2251,7 +3146,7 @@ watch(
 }
 
 .web-ui-filter-toolbar__ai {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .web-ui-filter-toolbar :deep(.app-button) {
@@ -2259,64 +3154,20 @@ watch(
 }
 
 @media (max-width: 900px) {
-  .web-ui-filter-toolbar {
-    flex-wrap: wrap;
-  }
-
   .web-ui-filter-toolbar__search {
     flex: 1 1 240px;
     width: auto;
   }
-}
 
-.web-ui-ai-collect {
-  display: grid;
-  gap: var(--app-space-4);
-  min-width: 0;
-  padding-right: var(--app-space-3);
-}
-
-.web-ui-element-library :deep(.web-ui-ai-collect-drawer .el-drawer__body) {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  padding-top: 0;
-}
-
-.web-ui-ai-collect-scrollbar {
-  flex: 1;
-  min-height: 0;
-}
-
-.web-ui-ai-collect__mode {
-  justify-self: flex-start;
-}
-
-.web-ui-ai-collect__form {
-  display: grid;
-  gap: var(--app-space-1);
-  min-width: 0;
-}
-
-.web-ui-ai-collect__page-target,
-.web-ui-ai-collect__group-target {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: var(--app-space-3);
-  width: 100%;
-}
-
-.web-ui-ai-collect__actions,
-.web-ui-ai-collect__footer,
-.web-ui-element-batch-toolbar,
-.web-ui-element-quality__summary,
-.web-ui-element-quality__footer {
-  display: flex;
-  align-items: center;
-  gap: var(--app-space-3);
+  .web-ui-filter-toolbar__actions {
+    justify-content: flex-start;
+  }
 }
 
 .web-ui-element-batch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
   justify-content: flex-start;
   flex-wrap: wrap;
   padding: var(--app-space-3);
@@ -2327,65 +3178,18 @@ watch(
   font-size: var(--app-font-size-sm);
 }
 
-.web-ui-ai-collect__actions {
-  justify-content: space-between;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-sm);
-}
-
-.web-ui-ai-collect__footer,
-.web-ui-element-quality__footer {
-  justify-content: flex-end;
-}
-
-.web-ui-ai-collect__table {
-  width: 100%;
-}
-
-.web-ui-ai-collect__score {
-  display: block;
-  margin-top: var(--app-space-1);
-  color: var(--app-text-muted);
-  text-align: center;
-}
-
-.web-ui-ai-collect :deep(.el-select),
-.web-ui-ai-collect :deep(.el-input-number) {
-  width: 100%;
-}
-
-.web-ui-element-reference {
+.web-ui-element-import {
   display: grid;
   gap: var(--app-space-3);
 }
 
-.web-ui-element-quality {
+.web-ui-element-validate__screenshot {
   display: grid;
-  gap: var(--app-space-3);
-  min-width: 0;
-  padding-right: var(--app-space-3);
-}
-
-.web-ui-element-library :deep(.web-ui-element-quality-drawer .el-drawer__body) {
-  display: flex;
-  min-height: 0;
-  flex-direction: column;
-  padding-top: 0;
-}
-
-.web-ui-element-quality-scrollbar {
-  flex: 1;
-  min-height: 0;
-}
-
-.web-ui-element-quality__summary {
-  flex-wrap: wrap;
-}
-
-.web-ui-element-reference__footer {
-  display: flex;
-  justify-content: flex-end;
   gap: var(--app-space-2);
+}
+
+.web-ui-element-validate__screenshot :deep(.app-button) {
+  justify-self: flex-start;
 }
 
 .web-ui-element-library__scope {
@@ -2426,10 +3230,4 @@ watch(
   }
 }
 
-@media (max-width: 700px) {
-  .web-ui-ai-collect__page-target,
-  .web-ui-ai-collect__group-target {
-    grid-template-columns: 1fr;
-  }
-}
 </style>

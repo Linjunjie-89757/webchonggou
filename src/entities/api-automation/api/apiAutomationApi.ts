@@ -4,6 +4,12 @@ import { httpDelete, httpGet, httpPost, httpPut, type ApiResponse } from '@/shar
 import type {
   ApiAiCaseGenerationEvent,
   ApiAiCaseGenerationPayload,
+  ApiAutomationReportAnalysis,
+  ApiAutomationReportDetail,
+  ApiAutomationReportFailureBucket,
+  ApiAutomationReportItem,
+  ApiAutomationReportListQuery,
+  ApiAutomationReportStatistics,
   ApiCaseListQuery,
   ApiDefinitionCaseDetail,
   ApiDefinitionDetail,
@@ -196,6 +202,7 @@ function normalizeScenario(item: ApiScenarioItem): ApiScenarioItem {
     stepCount: Number(item.stepCount || 0),
     defaultEnvironmentId: item.defaultEnvironmentId ?? null,
     variableSetId: item.variableSetId ?? null,
+    runOn: item.runOn || 'LOCAL',
     continueOnFailure: Boolean(item.continueOnFailure),
     globalTimeoutMs: Number(item.globalTimeoutMs || 300000),
     stepFailureRetryCount: Number(item.stepFailureRetryCount || 0),
@@ -255,6 +262,99 @@ function normalizeRunHistoryDetail(item: ApiRunHistoryDetail): ApiRunHistoryDeta
   return {
     ...normalizeRunHistoryItem(item),
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
+function normalizeReportItem(item: ApiAutomationReportItem): ApiAutomationReportItem {
+  return {
+    ...item,
+    reportKey: item.reportKey || '',
+    objectType: item.objectType || 'API_CASE',
+    historyId: item.historyId ?? null,
+    reportId: item.reportId ?? null,
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    objectId: item.objectId ?? null,
+    objectName: item.objectName || item.reportName || '-',
+    reportName: item.reportName || item.objectName || '-',
+    result: item.result || null,
+    failureSummary: item.failureSummary || null,
+    totalCount: item.totalCount ?? null,
+    successCount: item.successCount ?? null,
+    failedCount: item.failedCount ?? null,
+    skippedCount: item.skippedCount ?? null,
+    statusCode: item.statusCode ?? null,
+    durationMs: item.durationMs ?? null,
+    responseSize: item.responseSize ?? null,
+    environmentId: item.environmentId ?? null,
+    environmentName: item.environmentName || null,
+    variableSetId: item.variableSetId ?? null,
+    variableSetName: item.variableSetName || null,
+    runMode: item.runMode || null,
+    runOn: item.runOn || null,
+    branchName: item.branchName || null,
+    triggerSource: item.triggerSource || null,
+    operatorName: item.operatorName || null,
+    createdAt: item.createdAt || null,
+    archived: Boolean(item.archived),
+  }
+}
+
+function normalizeReportDetail(item: ApiAutomationReportDetail): ApiAutomationReportDetail {
+  return {
+    ...normalizeReportItem(item),
+    continueOnFailure: item.continueOnFailure ?? null,
+    globalTimeoutMs: item.globalTimeoutMs ?? null,
+    stepFailureRetryCount: item.stepFailureRetryCount ?? null,
+    defaultStepWaitMs: item.defaultStepWaitMs ?? null,
+    itemSnapshots: Array.isArray(item.itemSnapshots) ? item.itemSnapshots : [],
+    stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
+function normalizeReportFailureBucket(item: ApiAutomationReportFailureBucket): ApiAutomationReportFailureBucket {
+  return {
+    key: item.key || item.label || '-',
+    label: item.label || item.key || '-',
+    count: Number(item.count ?? 0),
+    durationMs: item.durationMs ?? null,
+  }
+}
+
+function normalizeReportAnalysis(item: ApiAutomationReportAnalysis): ApiAutomationReportAnalysis {
+  return {
+    totalCount: Number(item.totalCount ?? 0),
+    passedCount: Number(item.passedCount ?? 0),
+    failedCount: Number(item.failedCount ?? 0),
+    skippedCount: Number(item.skippedCount ?? 0),
+    failureRate: Number(item.failureRate ?? 0),
+    averageDurationMs: item.averageDurationMs ?? null,
+    failureReasons: Array.isArray(item.failureReasons) ? item.failureReasons.map(normalizeReportFailureBucket) : [],
+    topFailedObjects: Array.isArray(item.topFailedObjects) ? item.topFailedObjects.map(normalizeReportFailureBucket) : [],
+    recentFailures: Array.isArray(item.recentFailures) ? item.recentFailures.map(normalizeReportItem) : [],
+  }
+}
+
+function normalizeReportStatistics(item: ApiAutomationReportStatistics): ApiAutomationReportStatistics {
+  return {
+    trendPoints: Array.isArray(item.trendPoints)
+      ? item.trendPoints.map(point => ({
+          date: point.date || '-',
+          totalCount: Number(point.totalCount ?? 0),
+          passedCount: Number(point.passedCount ?? 0),
+          failedCount: Number(point.failedCount ?? 0),
+          skippedCount: Number(point.skippedCount ?? 0),
+          failureRate: Number(point.failureRate ?? 0),
+          averageDurationMs: point.averageDurationMs ?? null,
+        }))
+      : [],
+    resultDistribution: Array.isArray(item.resultDistribution)
+      ? item.resultDistribution.map(normalizeReportFailureBucket)
+      : [],
+    objectTypeDistribution: Array.isArray(item.objectTypeDistribution)
+      ? item.objectTypeDistribution.map(normalizeReportFailureBucket)
+      : [],
+    slowestRuns: Array.isArray(item.slowestRuns) ? item.slowestRuns.map(normalizeReportItem) : [],
   }
 }
 
@@ -672,6 +772,118 @@ export const apiAutomationApi = {
     )
 
     return normalizeRunHistoryDetail(unwrapApiResponse(payload))
+  },
+
+  async getReports(workspaceCode = 'ALL', query?: ApiAutomationReportListQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiAutomationReportItem>>>(
+      '/automation/api/reports',
+      {
+        headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery(query),
+      },
+    )
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeReportItem)
+  },
+
+  async getReportAnalysis(workspaceCode = 'ALL', query?: ApiAutomationReportListQuery) {
+    const payload = await httpGet<ApiResponse<ApiAutomationReportAnalysis>>(
+      '/automation/api/reports/analysis',
+      {
+        headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery({
+          keyword: query?.keyword,
+          objectType: query?.objectType,
+          result: query?.result,
+          createdFrom: query?.createdFrom,
+          createdTo: query?.createdTo,
+          archived: query?.archived,
+        }),
+      },
+    )
+
+    return normalizeReportAnalysis(unwrapApiResponse(payload))
+  },
+
+  async getReportStatistics(workspaceCode = 'ALL', query?: ApiAutomationReportListQuery) {
+    const payload = await httpGet<ApiResponse<ApiAutomationReportStatistics>>(
+      '/automation/api/reports/statistics',
+      {
+        headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery({
+          keyword: query?.keyword,
+          objectType: query?.objectType,
+          result: query?.result,
+          createdFrom: query?.createdFrom,
+          createdTo: query?.createdTo,
+          archived: query?.archived,
+        }),
+      },
+    )
+
+    return normalizeReportStatistics(unwrapApiResponse(payload))
+  },
+
+  async getReportDetail(workspaceCode = 'ALL', reportKey: string) {
+    const payload = await httpGet<ApiResponse<ApiAutomationReportDetail>>(
+      `/automation/api/reports/${encodeURIComponent(reportKey)}`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeReportDetail(unwrapApiResponse(payload))
+  },
+
+  async exportReports(workspaceCode = 'ALL', query?: ApiAutomationReportListQuery) {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(cleanQuery({
+      keyword: query?.keyword,
+      objectType: query?.objectType,
+      result: query?.result,
+      createdFrom: query?.createdFrom,
+      createdTo: query?.createdTo,
+      archived: query?.archived,
+    }) || {})) {
+      params.set(key, String(value))
+    }
+    const response = await fetch(`${env.apiBaseUrl}/automation/api/reports-export${params.size ? `?${params.toString()}` : ''}`, {
+      credentials: 'include',
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    if (!response.ok) {
+      throw new Error(await response.text() || `Request failed with status ${response.status}`)
+    }
+
+    return response.blob()
+  },
+
+  async rerunReport(workspaceCode = 'ALL', reportKey: string, data?: ApiRunPayload) {
+    const payload = await httpPost<ApiResponse<ApiRunResult>, ApiRunPayload>(
+      `/automation/api/reports/${encodeURIComponent(reportKey)}/rerun`,
+      data || { triggerSource: 'REPORT_RERUN' },
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeRunResult(unwrapApiResponse(payload))
+  },
+
+  async archiveReport(workspaceCode = 'ALL', reportKey: string) {
+    const response = await fetch(`${env.apiBaseUrl}/automation/api/reports/${encodeURIComponent(reportKey)}/archive`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    if (!response.ok) {
+      throw new Error(await response.text() || `Request failed with status ${response.status}`)
+    }
+
+    const payload = await response.json() as ApiResponse<ApiAutomationReportDetail>
+    return normalizeReportDetail(unwrapApiResponse(payload))
   },
 
   async streamAiCaseGeneration(

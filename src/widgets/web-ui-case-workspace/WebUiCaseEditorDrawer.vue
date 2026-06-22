@@ -81,10 +81,12 @@ const props = withDefaults(
     modelValue: boolean
     workspaceCode: string
     caseId?: number | null
+    focusStepId?: number | null
     draftCase?: WebUiCaseDetail | null
   }>(),
   {
     caseId: null,
+    focusStepId: null,
     draftCase: null,
   },
 )
@@ -467,6 +469,14 @@ function getStepDebugResult(index: number) {
   return lastDebugResult.value?.stepResults?.find(item => Number(item.sortOrder) === index + 1) || null
 }
 
+function isFocusedStep(step: EditableStep) {
+  return Boolean(props.focusStepId && step.id === props.focusStepId)
+}
+
+function getStepRowClassName({ row }: { row: EditableStep }) {
+  return isFocusedStep(row) ? 'web-ui-step-table__row--focused' : ''
+}
+
 async function loadVariableSets() {
   if (!props.modelValue) {
     return
@@ -622,6 +632,32 @@ function handleStepElementChange(step: EditableStep, elementId: number | null) {
   if (!step.name.trim()) {
     step.name = element.elementName
   }
+}
+
+function getStepReferencedElement(step: EditableStep) {
+  if (!step.elementId) {
+    return null
+  }
+  return elements.value.find(item => item.id === step.elementId) || null
+}
+
+function isStepLocatorSynced(step: EditableStep) {
+  const element = getStepReferencedElement(step)
+  if (!element) {
+    return true
+  }
+  return step.locatorType === element.locatorType && step.locatorValue.trim() === element.locatorValue
+}
+
+function restoreStepLocatorFromElement(step: EditableStep) {
+  const element = getStepReferencedElement(step)
+  if (!element) {
+    ElMessage.warning('当前步骤没有可恢复的元素库引用')
+    return
+  }
+  step.locatorType = element.locatorType
+  step.locatorValue = element.locatorValue
+  ElMessage.success('已恢复为元素库定位器')
 }
 
 const locatorValidationImageSrc = computed(() => {
@@ -1080,11 +1116,22 @@ watch(
             </div>
           </header>
 
+          <el-alert
+            v-if="focusStepId"
+            type="info"
+            show-icon
+            :closable="false"
+            :title="form.steps.some(step => step.id === focusStepId)
+              ? '已从元素引用定位到对应步骤，高亮行即为引用该元素的步骤。'
+              : '未找到链接里的步骤，可能该步骤已被删除或重新生成。'"
+          />
+
           <el-table
             class="web-ui-step-table"
             :data="form.steps"
             border
             row-key="sortOrder"
+            :row-class-name="getStepRowClassName"
             empty-text="暂无步骤"
           >
             <el-table-column label="#" width="56" align="center">
@@ -1218,6 +1265,23 @@ watch(
                     @click="validateLocator($index)"
                   >
                     验证
+                  </el-button>
+                </div>
+                <div v-if="row.elementId" class="web-ui-locator-sync">
+                  <el-tag
+                    :type="isStepLocatorSynced(row) ? 'success' : 'warning'"
+                    effect="light"
+                    size="small"
+                  >
+                    {{ isStepLocatorSynced(row) ? '与元素库一致' : '已手动改写' }}
+                  </el-tag>
+                  <el-button
+                    v-if="!isStepLocatorSynced(row)"
+                    link
+                    type="primary"
+                    @click="restoreStepLocatorFromElement(row)"
+                  >
+                    恢复
                   </el-button>
                 </div>
               </template>
@@ -1458,6 +1522,10 @@ watch(
   text-align: left;
 }
 
+.web-ui-step-table :deep(.web-ui-step-table__row--focused > td) {
+  background: #ecf5ff;
+}
+
 .web-ui-element-picker {
   display: grid;
   gap: var(--app-space-2);
@@ -1468,6 +1536,13 @@ watch(
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--app-space-2);
   align-items: center;
+}
+
+.web-ui-locator-sync {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  margin-top: var(--app-space-2);
 }
 
 .web-ui-step-result__link {

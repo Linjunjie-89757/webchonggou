@@ -8,6 +8,8 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { WebUiCaseWorkspace } from '@/widgets/web-ui-case-workspace'
 import WebUiElementLibraryPanel from '@/widgets/web-ui-case-workspace/WebUiElementLibraryPanel.vue'
+import WebUiVariableSetDetailPage from '@/widgets/web-ui-case-workspace/WebUiVariableSetDetailPage.vue'
+import WebUiVariableSetPanel from '@/widgets/web-ui-case-workspace/WebUiVariableSetPanel.vue'
 import { webUiAutomationApi, type WebUiEnvironmentItem } from '@/entities/web-ui-automation'
 
 const workspaceCode = ref('ALL')
@@ -18,21 +20,27 @@ const route = useRoute()
 const router = useRouter()
 const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 
-type WebUiSection = 'cases' | 'elements' | 'templates' | 'runs' | 'batches' | 'environments'
+type WebUiSection = 'cases' | 'elements' | 'templates' | 'runs' | 'batches' | 'environments' | 'variables' | 'variableDetail'
 
 const routeSectionMap: Record<string, WebUiSection> = {
-  '/automation/web': 'cases',
-  '/automation/web/cases': 'cases',
-  '/automation/web/elements': 'elements',
-  '/automation/web/templates': 'templates',
-  '/automation/web/runs': 'runs',
-  '/automation/web/batches': 'batches',
-  '/automation/web/environments': 'environments',
+  'automation-web-cases': 'cases',
+  'automation-web-elements': 'elements',
+  'automation-web-templates': 'templates',
+  'automation-web-runs': 'runs',
+  'automation-web-batches': 'batches',
+  'automation-web-environments': 'environments',
+  'automation-web-variables': 'variables',
+  'automation-web-variable-detail': 'variableDetail',
 }
 
-const activeSection = computed<WebUiSection>(() => routeSectionMap[route.path] || 'cases')
+const activeSection = computed<WebUiSection>(() => {
+  const routeName = typeof route.name === 'string' ? route.name : ''
+  return routeSectionMap[routeName] || 'cases'
+})
 const workspaceMode = computed<'cases' | 'templates' | 'runs' | 'batches' | 'environments'>(() =>
-  activeSection.value === 'elements' ? 'cases' : activeSection.value,
+  activeSection.value === 'elements' || activeSection.value === 'variables' || activeSection.value === 'variableDetail'
+    ? 'cases'
+    : activeSection.value,
 )
 
 const pageCopy = computed(() => {
@@ -64,6 +72,18 @@ const pageCopy = computed(() => {
     return {
       title: 'Web UI 环境配置',
       description: '管理 Web UI 运行环境、默认变量集和环境继承规则。',
+    }
+  }
+  if (activeSection.value === 'variables') {
+    return {
+      title: 'Web UI 变量集设置',
+      description: '维护 Web UI 用例运行、调试、元素验证和智能采集可复用的测试数据。',
+    }
+  }
+  if (activeSection.value === 'variableDetail') {
+    return {
+      title: 'Web UI 变量集详情',
+      description: '查看和维护变量集基础信息、变量列表和 JSON 导入导出。',
     }
   }
   return {
@@ -151,7 +171,7 @@ watch(
     }
 
     const tab = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
-    if (tab !== 'runs' && tab !== 'batches' && tab !== 'environments') {
+    if (tab !== 'runs' && tab !== 'batches' && tab !== 'environments' && tab !== 'variables') {
       return
     }
 
@@ -175,7 +195,7 @@ watch(
   >
     <div class="web-automation-page">
       <WebUiCaseWorkspace
-        v-if="activeSection !== 'elements'"
+        v-if="activeSection !== 'elements' && activeSection !== 'variables' && activeSection !== 'variableDetail'"
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :workspaces="workspaces"
@@ -186,6 +206,16 @@ watch(
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :environments="environments"
+      />
+      <WebUiVariableSetPanel
+        v-else-if="activeSection === 'variables'"
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
+      />
+      <WebUiVariableSetDetailPage
+        v-else-if="activeSection === 'variableDetail'"
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
       />
       <AppEmptyState
         v-else

@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowDown,
   ArrowUp,
   CaretRight,
@@ -248,6 +250,12 @@ const scenarioEditorTabs = ref<ScenarioEditorTab[]>([
   },
 ])
 const activeScenarioEditorKey = ref('scenario-list')
+const scenarioTabNavRef = ref<HTMLElement | null>(null)
+const scenarioTabOverflow = ref({
+  overflow: false,
+  arrivedLeft: true,
+  arrivedRight: true,
+})
 let scenarioSoftPromptResolve: ((value: string | null) => void) | null = null
 let scenarioSoftConfirmResolve: ((value: boolean) => void) | null = null
 
@@ -1080,6 +1088,7 @@ function fingerprintScenarioDetail(detail: ApiScenarioDetail) {
     tags: [...(detail.tags || [])],
     defaultEnvironmentId: detail.defaultEnvironmentId ?? null,
     variableSetId: detail.variableSetId ?? null,
+    runOn: detail.runOn || 'LOCAL',
     continueOnFailure: !!detail.continueOnFailure,
     globalTimeoutMs: detail.globalTimeoutMs ?? SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: detail.stepFailureRetryCount ?? 0,
@@ -1323,6 +1332,7 @@ function buildEmptyScenarioDetail(): ApiScenarioDetail {
     stepCount: 0,
     defaultEnvironmentId: props.environments?.[0]?.id ?? null,
     variableSetId: null,
+    runOn: 'LOCAL',
     continueOnFailure: false,
     globalTimeoutMs: SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: 0,
@@ -1345,7 +1355,7 @@ function openNewScenarioTab() {
     key,
     id: null,
     title: detail.name,
-    dirty: true,
+    dirty: false,
     savedFingerprint: fingerprintScenarioDetail(detail),
     detail,
     lastRunStepResults: [],
@@ -1354,16 +1364,19 @@ function openNewScenarioTab() {
   })
   activeScenarioEditorKey.value = key
   activeScenarioDetailTab.value = 'steps'
+  void nextTick(scrollActiveScenarioTabIntoView)
 }
 
 function activateScenarioEditorTab(key: string) {
   activeScenarioEditorKey.value = key
+  void nextTick(scrollActiveScenarioTabIntoView)
 }
 
 async function selectScenario(id: number) {
   const existing = scenarioEditorTabs.value.find(item => item.id === id)
   if (existing) {
     activeScenarioEditorKey.value = existing.key
+    void nextTick(scrollActiveScenarioTabIntoView)
     return true
   }
   const item = scenarios.value.find(row => row.id === id)
@@ -1383,6 +1396,7 @@ async function selectScenario(id: number) {
       lastRunFailureSummary: null,
     })
     activeScenarioEditorKey.value = key
+    void nextTick(scrollActiveScenarioTabIntoView)
     return true
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1410,9 +1424,43 @@ async function closeScenarioEditorTab(key: string) {
   if (activeScenarioEditorKey.value === key) {
     activeScenarioEditorKey.value = scenarioEditorTabs.value[Math.max(0, index - 1)]?.key || 'scenario-list'
   }
+  void nextTick(updateScenarioTabOverflow)
+}
+
+function updateScenarioTabOverflow() {
+  const nav = scenarioTabNavRef.value
+  if (!nav) return
+  const maxScrollLeft = Math.max(0, nav.scrollWidth - nav.clientWidth)
+  scenarioTabOverflow.value = {
+    overflow: nav.scrollWidth > nav.clientWidth + 1,
+    arrivedLeft: nav.scrollLeft <= 1,
+    arrivedRight: nav.scrollLeft >= maxScrollLeft - 1,
+  }
+}
+
+function scrollScenarioTabStrip(direction: 'left' | 'right') {
+  const nav = scenarioTabNavRef.value
+  if (!nav) return
+  nav.scrollBy({
+    left: direction === 'left' ? -220 : 220,
+    behavior: 'smooth',
+  })
+  window.setTimeout(updateScenarioTabOverflow, 180)
+}
+
+function scrollActiveScenarioTabIntoView() {
+  const nav = scenarioTabNavRef.value
+  if (!nav) return
+  const active = nav.querySelector<HTMLElement>('.ms-like-editor-tab.active')
+  active?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  updateScenarioTabOverflow()
 }
 
 async function handleScenarioEditorMoreAction(command: string) {
+  if (command === 'closeCurrent') {
+    await closeScenarioEditorTab(activeScenarioEditorKey.value)
+    return
+  }
   if (command === 'closeOthers') {
     const dirtyTabs = scenarioEditorTabs.value.filter(item => item.key !== 'scenario-list' && item.key !== activeScenarioEditorKey.value && isScenarioEditorTabDirty(item))
     if (dirtyTabs.length) {
@@ -1425,17 +1473,27 @@ async function handleScenarioEditorMoreAction(command: string) {
     scenarioEditorTabs.value = scenarioEditorTabs.value.filter(item => item.key === 'scenario-list' || item.key === activeScenarioEditorKey.value)
     return
   }
-  if (command === 'closeAll') {
-    const dirtyTabs = scenarioEditorTabs.value.filter(item => item.key !== 'scenario-list' && isScenarioEditorTabDirty(item))
+  if (command === 'closeDrafts') {
+    const draftTabs = scenarioEditorTabs.value.filter(item => item.key !== 'scenario-list' && item.id == null)
+    if (!draftTabs.length) {
+      ElMessage.info('当前没有草稿标签')
+      return
+    }
+    const dirtyTabs = draftTabs.filter(item => isScenarioEditorTabDirty(item))
     if (dirtyTabs.length) {
-      const confirmed = await confirmScenarioAction('场景页签存在未保存修改，确认关闭全部吗？', '关闭全部标签', {
+      const confirmed = await confirmScenarioAction('草稿标签中有未保存修改，关闭后会丢失，确认关闭吗？', '关闭全部草稿', {
         confirmText: '关闭',
         danger: true,
       })
       if (!confirmed) return
     }
-    scenarioEditorTabs.value = scenarioEditorTabs.value.filter(item => item.key === 'scenario-list')
-    activeScenarioEditorKey.value = 'scenario-list'
+    const activeWillClose = draftTabs.some(item => item.key === activeScenarioEditorKey.value)
+    const draftKeys = new Set(draftTabs.map(item => item.key))
+    scenarioEditorTabs.value = scenarioEditorTabs.value.filter(item => !draftKeys.has(item.key))
+    if (activeWillClose) {
+      activeScenarioEditorKey.value = scenarioEditorTabs.value[0]?.key || 'scenario-list'
+    }
+    void nextTick(updateScenarioTabOverflow)
   }
 }
 
@@ -2254,6 +2312,7 @@ function buildScenarioPayload(): SaveApiScenarioPayload {
     tags: Array.isArray(detail.tags) ? detail.tags : [],
     defaultEnvironmentId: detail.defaultEnvironmentId,
     variableSetId: detail.variableSetId,
+    runOn: detail.runOn || 'LOCAL',
     continueOnFailure: detail.continueOnFailure,
     globalTimeoutMs: detail.globalTimeoutMs ?? SCENARIO_DEFAULT_GLOBAL_TIMEOUT_MS,
     stepFailureRetryCount: detail.stepFailureRetryCount ?? 0,
@@ -2276,7 +2335,7 @@ function validateScenarioBeforeSave() {
     return false
   }
   if (!detail.moduleId) {
-    ElMessage.warning('请选择场景模块')
+    ElMessage.warning('请选择所属模块')
     return false
   }
   if (hasInvalidScenarioStep(detail.steps)) {
@@ -2363,9 +2422,6 @@ async function loadScenarioWorkspace() {
     scenarios.value = scenarioPage.items
     dbConnections.value = dbConnectionPage.items
     emit('loaded', { scenarios: scenarios.value, modules: modules.value })
-    if (scenarioEditorTabs.value.length === 1) {
-      openNewScenarioTab()
-    }
   } catch (error) {
     const message = getRequestErrorMessage(error)
     moduleErrorMessage.value = message
@@ -2378,10 +2434,13 @@ async function loadScenarioWorkspace() {
 onMounted(() => {
   void loadScenarioWorkspace()
   document.addEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
+  window.addEventListener('resize', updateScenarioTabOverflow)
+  void nextTick(updateScenarioTabOverflow)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
+  window.removeEventListener('resize', updateScenarioTabOverflow)
 })
 
 watch(
@@ -2394,8 +2453,17 @@ watch(
     scenarioEditorTabs.value = [scenarioEditorTabs.value[0]]
     activeScenarioEditorKey.value = 'scenario-list'
     void loadScenarioWorkspace()
+    void nextTick(updateScenarioTabOverflow)
   },
 )
+
+watch(scenarioEditorTabs, () => {
+  void nextTick(updateScenarioTabOverflow)
+}, { deep: true })
+
+watch(activeScenarioEditorKey, () => {
+  void nextTick(updateScenarioTabOverflow)
+})
 </script>
 
 <template>
@@ -2503,7 +2571,17 @@ watch(
     <main class="scenario-main-pane">
       <div class="ms-like-tab-strip scenario-editor-tab-strip">
         <div class="ms-like-tab-strip-main">
-          <div class="ms-like-tab-nav">
+          <button
+            v-if="scenarioTabOverflow.overflow"
+            type="button"
+            class="ms-like-tab-scroll-button"
+            :disabled="scenarioTabOverflow.arrivedLeft"
+            aria-label="向左滚动标签"
+            @click="scrollScenarioTabStrip('left')"
+          >
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+          <div ref="scenarioTabNavRef" class="ms-like-tab-nav" @scroll="updateScenarioTabOverflow">
             <button
               v-for="tab in scenarioEditorTabs"
               :key="tab.key"
@@ -2522,9 +2600,21 @@ watch(
               </span>
             </button>
           </div>
-          <button type="button" class="ms-like-tab-add" @click="openNewScenarioTab">+</button>
+          <button
+            v-if="scenarioTabOverflow.overflow"
+            type="button"
+            class="ms-like-tab-scroll-button"
+            :disabled="scenarioTabOverflow.arrivedRight"
+            aria-label="向右滚动标签"
+            @click="scrollScenarioTabStrip('right')"
+          >
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <button type="button" class="ms-like-tab-add" aria-label="新建场景" @click="openNewScenarioTab">
+            <el-icon><Plus /></el-icon>
+          </button>
           <el-dropdown
-            v-if="scenarioEditorTabs.length > 1"
+            v-if="scenarioEditorTabs.length"
             trigger="click"
             placement="bottom-start"
             @command="(command: string | number | object) => void handleScenarioEditorMoreAction(String(command))"
@@ -2534,8 +2624,9 @@ watch(
             </button>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item command="closeCurrent" :disabled="activeScenarioEditorKey === 'scenario-list'">关闭当前标签</el-dropdown-item>
                 <el-dropdown-item command="closeOthers">关闭其他标签</el-dropdown-item>
-                <el-dropdown-item command="closeAll">关闭全部标签</el-dropdown-item>
+                <el-dropdown-item command="closeDrafts">关闭全部草稿</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -2982,19 +3073,10 @@ watch(
             <aside class="scenario-property-panel">
               <div class="scenario-property-card">
                 <div class="scenario-property-header">
-                  <el-select
-                    v-model="activeScenarioDetail.defaultEnvironmentId"
-                    class="scenario-property-environment-select"
-                    clearable
-                    placeholder="选择环境"
-                    @change="markScenarioDirty"
-                  >
-                    <el-option v-for="item in props.environments || []" :key="item.id" :label="item.name" :value="item.id" />
-                  </el-select>
                   <div class="scenario-property-run-actions">
                     <el-button type="primary" class="scenario-property-run-button" :disabled="!activeScenarioDetail.id || scenarioSaving" :loading="scenarioRunning" @click="runScenario">
                       <el-icon><CaretRight /></el-icon>
-                      执行
+                      运行
                     </el-button>
                     <el-button class="scenario-property-save-button" :loading="scenarioSaving" @click="saveScenario">
                       <el-icon><Check /></el-icon>
@@ -3009,8 +3091,8 @@ watch(
                       <el-input v-model="activeScenarioDetail.name" placeholder="请输入场景名称" @input="markScenarioDirty" />
                     </label>
                     <label class="scenario-property-field">
-                      <span>所属模块</span>
-                      <el-select v-model="activeScenarioDetail.moduleId" clearable placeholder="请选择所属模块" @change="markScenarioDirty">
+                      <span><b>*</b> 所属模块</span>
+                      <el-select v-model="activeScenarioDetail.moduleId" placeholder="请选择所属模块" @change="markScenarioDirty">
                         <el-option v-for="item in scenarioModuleOptions" :key="item.value" :label="item.label" :value="item.value" />
                       </el-select>
                     </label>
@@ -3024,18 +3106,10 @@ watch(
                       </el-select>
                     </label>
                     <label class="scenario-property-field">
-                      <span>场景状态</span>
-                      <el-select v-model="activeScenarioDetail.status" placeholder="请选择场景状态" @change="markScenarioDirty">
-                        <el-option label="进行中" value="IN_PROGRESS" />
-                        <el-option label="草稿" value="DRAFT" />
-                        <el-option label="启用" value="ENABLED" />
-                        <el-option label="禁用" value="DISABLED" />
-                      </el-select>
-                    </label>
-                    <label class="scenario-property-field">
-                      <span>默认环境</span>
-                      <el-select v-model="activeScenarioDetail.defaultEnvironmentId" clearable placeholder="请选择默认环境" @change="markScenarioDirty">
-                        <el-option v-for="item in props.environments || []" :key="item.id" :label="item.name" :value="item.id" />
+                      <span>运行于</span>
+                      <el-select v-model="activeScenarioDetail.runOn" placeholder="请选择运行位置" @change="markScenarioDirty">
+                        <el-option label="本地执行机" value="LOCAL" />
+                        <el-option label="远程执行机" value="REMOTE" />
                       </el-select>
                     </label>
                     <label class="scenario-property-field">
@@ -3993,6 +4067,7 @@ watch(
   min-height: 40px;
   border-bottom: 1px solid #e5e7eb;
   background: #ffffff;
+  overflow: hidden;
 }
 
 .ms-like-tab-strip-main,
@@ -4002,20 +4077,37 @@ watch(
   min-width: 0;
 }
 
+.ms-like-tab-strip-main {
+  flex: 1 1 auto;
+  height: 100%;
+}
+
 .ms-like-tab-nav {
-  flex: 1;
-  overflow: hidden;
+  height: 100%;
+  flex: 0 1 auto;
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.ms-like-tab-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .ms-like-editor-tab {
   position: relative;
   display: inline-flex;
   align-items: center;
+  box-sizing: border-box;
+  flex: 0 0 auto;
   gap: 8px;
   height: 40px;
   max-width: 180px;
   border: 0;
   border-right: 1px solid #e5e7eb;
+  border-bottom: 3px solid transparent;
   background: #ffffff;
   color: #111827;
   cursor: pointer;
@@ -4029,12 +4121,20 @@ watch(
   right: 0;
   bottom: 0;
   left: 0;
-  height: 2px;
+  height: 0;
   background: #3b82f6;
 }
 
+.ms-like-editor-tab.active {
+  border-bottom-color: #3b82f6;
+}
+
 .ms-like-editor-tab-label {
+  display: inline-flex;
+  align-items: center;
   min-width: 0;
+  height: 20px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4052,24 +4152,63 @@ watch(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  border-radius: 999px;
   color: #9ca3af;
+  opacity: 0;
+  transition: opacity 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+}
+
+.ms-like-editor-tab.active .ms-like-editor-tab-close {
+  background: transparent;
+  color: #667085;
+  opacity: 0.42;
+}
+
+.ms-like-editor-tab:hover .ms-like-editor-tab-close {
+  background: rgba(15, 23, 42, 0.08);
+  color: #344054;
+  opacity: 1;
 }
 
 .ms-like-editor-tab-close :deep(.el-icon) {
-  width: 12px;
-  height: 12px;
+  font-size: 14px;
+  font-weight: 700;
 }
 
+.ms-like-tab-scroll-button,
 .ms-like-tab-add,
 .scenario-editor-more-button {
-  width: 32px;
-  height: 39px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 40px;
+  flex: 0 0 auto;
   border: 0;
   background: #ffffff;
   color: #9ca3af;
   cursor: pointer;
+}
+
+.ms-like-tab-scroll-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.ms-like-tab-scroll-button:disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
+}
+
+.ms-like-tab-scroll-button:hover:not(:disabled),
+.ms-like-tab-add:hover,
+.scenario-editor-more-button:hover {
+  background: #f3f4f6;
+  color: #4b5563;
 }
 
 .scenario-editor-tabs {
@@ -5165,10 +5304,6 @@ watch(
   border-bottom: 1px solid #f3f4f6;
 }
 
-.scenario-property-environment-select {
-  width: 100%;
-}
-
 .scenario-property-run-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5249,7 +5384,6 @@ watch(
   font-weight: 600;
 }
 
-.scenario-property-environment-select :deep(.el-select__wrapper),
 .scenario-property-field :deep(.el-input__wrapper),
 .scenario-property-field :deep(.el-select__wrapper),
 .scenario-property-field :deep(.el-textarea__inner) {

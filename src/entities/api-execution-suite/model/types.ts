@@ -121,6 +121,9 @@ export interface ApiExecutionSuiteRunHistoryItem {
   workspaceName: string | null
   suiteId: number
   suiteName: string
+  moduleId: number | null
+  moduleName: string | null
+  priority: string | null
   reportId: number | null
   result: string
   failureSummary: string | null
@@ -131,12 +134,33 @@ export interface ApiExecutionSuiteRunHistoryItem {
   durationMs: number
   environmentId: number | null
   variableSetId: number | null
+  runMode: string | null
+  runOn: string | null
+  continueOnFailure: boolean
+  globalTimeoutMs: number
+  stepFailureRetryCount: number
+  defaultStepWaitMs: number
+  branchName: string | null
+  triggerSource: string | null
   operatorId: number | null
   operatorName: string | null
   createdAt: string | null
 }
 
+export interface ApiExecutionSuiteRunItemSnapshot {
+  itemId: number | null
+  itemType: ApiExecutionSuiteItemType | string | null
+  itemName: string | null
+  sortOrder: number | null
+  enabled: boolean
+  result: string | null
+  stepCount: number
+  durationMs: number
+  failureSummary: string | null
+}
+
 export interface ApiExecutionSuiteRunHistoryDetail extends ApiExecutionSuiteRunHistoryItem {
+  itemSnapshots: ApiExecutionSuiteRunItemSnapshot[]
   stepResults: ApiRunResult['stepResults']
 }
 

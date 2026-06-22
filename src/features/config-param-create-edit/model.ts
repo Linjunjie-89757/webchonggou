@@ -38,6 +38,13 @@ export function createDefaultConfigParamForm(workspaceCode = 'ALL'): ConfigParam
   }
 }
 
+export function createDefaultWebUiVariableSetForm(workspaceCode = 'ALL'): ConfigParamForm {
+  return {
+    ...createDefaultConfigParamForm(workspaceCode),
+    paramType: 'WEB_UI_VARIABLE_SET',
+  }
+}
+
 export function createConfigParamFormFromItem(item: ParamSetItem): ConfigParamForm {
   const content = parseParamContent(item.contentJson)
   const variables = parseWebUiVariables(item.contentJson)
