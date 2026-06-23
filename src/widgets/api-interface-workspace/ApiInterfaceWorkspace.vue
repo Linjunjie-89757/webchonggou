@@ -3463,7 +3463,9 @@ async function submitImportDialog() {
     }
     importDialogVisible.value = false
     const failedText = result.failedCount ? `，失败 ${result.failedCount} 个` : ''
-    ElMessage.success(`已导入 ${result.createdCount} 个接口${failedText}`)
+    const updatedCount = Math.max(result.items.length - result.createdCount, 0)
+    const updatedText = updatedCount ? `，更新 ${updatedCount} 个` : ''
+    ElMessage.success(`已新增 ${result.createdCount} 个接口${updatedText}${failedText}`)
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -3770,6 +3772,17 @@ function restoreAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
   if (result.status === 'discarded') {
     result.status = 'pending'
   }
+}
+
+function toggleAiGeneratedCaseSelection(id: string, checked: string | number | boolean) {
+  const selected = Boolean(checked)
+  if (selected) {
+    if (!aiCaseSelectedResultIds.value.includes(id)) {
+      aiCaseSelectedResultIds.value = [...aiCaseSelectedResultIds.value, id]
+    }
+    return
+  }
+  aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(item => item !== id)
 }
 
 function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {
@@ -6513,9 +6526,9 @@ onBeforeUnmount(() => {
               <div class="api-ai-result-card__head">
                 <el-checkbox
                   v-if="item.status === 'pending'"
-                  v-model="aiCaseSelectedResultIds"
-                  :value="item.id"
+                  :model-value="aiCaseSelectedResultIds.includes(item.id)"
                   class="api-ai-result-card__check"
+                  @update:model-value="toggleAiGeneratedCaseSelection(item.id, $event)"
                 />
                 <div>
                   <strong>{{ item.draft.name || 'AI 生成接口用例' }}</strong>

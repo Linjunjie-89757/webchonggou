@@ -1,0 +1,87 @@
+<script setup lang="ts">
+import { Plus, Search } from '@element-plus/icons-vue'
+
+import AppButton from '@/shared/ui/app-button/AppButton.vue'
+
+type DirectoryNodeType = 'ALL' | 'WORKSPACE' | 'MODULE' | 'PAGE' | 'GROUP'
+
+export interface WebUiElementDirectoryNode {
+  id: string
+  type: DirectoryNodeType
+  rawId: number | null
+  workspaceCode: string | null
+  label: string
+  elementCount: number
+  children: WebUiElementDirectoryNode[]
+}
+
+defineProps<{
+  directoryKeyword: string
+  directoryTotal: number
+  loading: boolean
+  treeData: WebUiElementDirectoryNode[]
+  expandedTreeKeys: string[]
+  selectedTreeId: string
+  getNodeIcon: (type: DirectoryNodeType) => unknown
+}>()
+
+const emit = defineEmits<{
+  'update:directoryKeyword': [value: string]
+  create: []
+  'node-click': [node: WebUiElementDirectoryNode]
+  'node-add': [node: WebUiElementDirectoryNode]
+}>()
+</script>
+
+<template>
+  <aside class="web-ui-element-tree">
+    <AppButton class="web-ui-element-tree__create" type="primary" :icon="Plus" @click="emit('create')">
+      新增元素
+    </AppButton>
+
+    <el-input
+      :model-value="directoryKeyword"
+      class="web-ui-element-tree__search"
+      clearable
+      placeholder="搜索模块、页面或分组名称"
+      :prefix-icon="Search"
+      @update:model-value="emit('update:directoryKeyword', String($event))"
+    />
+
+    <header class="web-ui-element-tree__title">
+      <strong>页面对象</strong>
+      <small>{{ directoryTotal }}</small>
+    </header>
+
+    <el-tree
+      v-loading="loading"
+      :data="treeData"
+      node-key="id"
+      :default-expanded-keys="expandedTreeKeys"
+      :current-node-key="selectedTreeId"
+      highlight-current
+      :expand-on-click-node="false"
+      class="web-ui-element-tree__directory"
+      @node-click="emit('node-click', $event)"
+    >
+      <template #default="{ data }">
+        <span class="web-ui-element-tree__node">
+          <span class="web-ui-element-tree__node-main">
+            <el-icon v-if="getNodeIcon(data.type)" class="web-ui-element-tree__folder">
+              <component :is="getNodeIcon(data.type)" />
+            </el-icon>
+            <span>{{ data.label }}</span>
+            <small>{{ data.elementCount }}</small>
+          </span>
+          <el-button
+            v-if="data.type === 'WORKSPACE' || data.type === 'MODULE' || data.type === 'PAGE'"
+            link
+            class="web-ui-element-tree__node-add"
+            :icon="Plus"
+            @click.stop="emit('node-add', data)"
+          />
+        </span>
+      </template>
+    </el-tree>
+  </aside>
+</template>

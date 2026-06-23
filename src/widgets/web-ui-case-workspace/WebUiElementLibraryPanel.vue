@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay, View } from '@element-plus/icons-vue'
+import { CollectionTag, Document, Folder, Grid } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
 import {
-  formatLocatorType,
-  formatWebUiDateTime,
   webUiAutomationApi,
-  WEB_UI_CASE_STATUS_OPTIONS,
   WEB_UI_LOCATOR_OPTIONS,
   type SaveWebUiElementGroupPayload,
   type SaveWebUiElementModulePayload,
@@ -53,27 +50,23 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import WebUiElementAiCollectDrawer from './WebUiElementAiCollectDrawer.vue'
 import WebUiElementCollectLaunchDialog from './WebUiElementCollectLaunchDialog.vue'
-import WebUiElementCollectRecentTasks, {
-  type WebUiElementCollectRecentTask,
-} from './WebUiElementCollectRecentTasks.vue'
+import type { WebUiElementCollectRecentTask } from './WebUiElementCollectRecentTasks.vue'
 import WebUiElementDetailDrawer from './WebUiElementDetailDrawer.vue'
+import WebUiElementDirectoryPanel, { type WebUiElementDirectoryNode } from './WebUiElementDirectoryPanel.vue'
+import WebUiElementEditDialog from './WebUiElementEditDialog.vue'
 import WebUiElementImpactDrawer from './WebUiElementImpactDrawer.vue'
 import WebUiElementQualityDrawer from './WebUiElementQualityDrawer.vue'
 import WebUiElementReferenceDrawer from './WebUiElementReferenceDrawer.vue'
+import WebUiElementStructureDialogs from './WebUiElementStructureDialogs.vue'
+import WebUiElementTable from './WebUiElementTable.vue'
+import WebUiElementToolbar from './WebUiElementToolbar.vue'
+import WebUiElementUtilityDialogs from './WebUiElementUtilityDialogs.vue'
 import WebUiElementValidateDrawer from './WebUiElementValidateDrawer.vue'
 import type { WebUiElementCollectLaunchForm } from './elementCollectTypes'
 
 type DirectoryNodeType = 'ALL' | 'WORKSPACE' | 'MODULE' | 'PAGE' | 'GROUP'
 
-interface ElementDirectoryNode {
-  id: string
-  type: DirectoryNodeType
-  rawId: number | null
-  workspaceCode: string | null
-  label: string
-  elementCount: number
-  children: ElementDirectoryNode[]
-}
+type ElementDirectoryNode = WebUiElementDirectoryNode
 
 type TreeSelection = {
   id: string
@@ -3219,87 +3212,34 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="web-ui-element-library">
-    <aside class="web-ui-element-tree">
-      <AppButton class="web-ui-element-tree__create" type="primary" :icon="Plus" @click="openCreateDialog">
-        新增元素
-      </AppButton>
-
-      <el-input
-        v-model="directoryKeyword"
-        class="web-ui-element-tree__search"
-        clearable
-        placeholder="搜索模块、页面或分组名称"
-        :prefix-icon="Search"
-      />
-
-      <header class="web-ui-element-tree__title">
-        <strong>页面对象</strong>
-        <small>{{ directoryTotal }}</small>
-      </header>
-
-      <el-tree
-        v-loading="loadingTree"
-        :data="treeData"
-        node-key="id"
-        :default-expanded-keys="expandedTreeKeys"
-        :current-node-key="selectedTree.id"
-        highlight-current
-        :expand-on-click-node="false"
-        class="web-ui-element-tree__directory"
-        @node-click="handleTreeNodeClick"
-      >
-        <template #default="{ data }">
-          <span class="web-ui-element-tree__node">
-            <span class="web-ui-element-tree__node-main">
-              <el-icon v-if="getNodeIcon(data.type)" class="web-ui-element-tree__folder">
-                <component :is="getNodeIcon(data.type)" />
-              </el-icon>
-              <span>{{ data.label }}</span>
-              <small>{{ data.elementCount }}</small>
-            </span>
-            <el-button
-              v-if="data.type === 'WORKSPACE' || data.type === 'MODULE' || data.type === 'PAGE'"
-              link
-              class="web-ui-element-tree__node-add"
-              :icon="Plus"
-              @click.stop="handleNodeAdd(data)"
-            />
-          </span>
-        </template>
-      </el-tree>
-    </aside>
+    <WebUiElementDirectoryPanel
+      v-model:directory-keyword="directoryKeyword"
+      :directory-total="directoryTotal"
+      :loading="loadingTree"
+      :tree-data="treeData"
+      :expanded-tree-keys="expandedTreeKeys"
+      :selected-tree-id="selectedTree.id"
+      :get-node-icon="getNodeIcon"
+      @create="openCreateDialog"
+      @node-click="handleTreeNodeClick"
+      @node-add="handleNodeAdd"
+    />
 
     <main class="web-ui-element-content">
-      <header class="web-ui-element-library__header">
-        <div class="web-ui-filter-toolbar">
-          <div class="web-ui-filter-toolbar__query">
-            <el-input
-              v-model="keyword"
-              class="web-ui-filter-toolbar__search"
-              clearable
-              placeholder="搜索元素名称 / 定位值 / 备注"
-              :prefix-icon="Search"
-              @keyup.enter="searchElements"
-            />
-            <el-select v-model="status" class="web-ui-filter-toolbar__select" clearable placeholder="状态">
-              <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-            <AppButton :icon="Search" @click="searchElements">查询</AppButton>
-            <AppButton :icon="RefreshRight" @click="resetFilters">重置</AppButton>
-          </div>
-          <div class="web-ui-filter-toolbar__actions">
-            <AppButton @click="openImportDialog">导入</AppButton>
-            <AppButton @click="exportCurrentElements">导出</AppButton>
-            <AppButton :icon="CollectionTag" :loading="qualityChecking" @click="runQualityCheck">质量检查</AppButton>
-            <WebUiElementCollectRecentTasks
-              :tasks="recentCollectTasks"
-              @open="openRecentCollectTask"
-              @clear="clearRecentCollectTasks"
-            />
-            <AppButton class="web-ui-filter-toolbar__ai" :icon="Cpu" @click="openAiCollectDrawer">AI 采集</AppButton>
-          </div>
-        </div>
-      </header>
+      <WebUiElementToolbar
+        v-model:keyword="keyword"
+        v-model:status="status"
+        :quality-checking="qualityChecking"
+        :recent-collect-tasks="recentCollectTasks"
+        @search="searchElements"
+        @reset="resetFilters"
+        @import="openImportDialog"
+        @export="exportCurrentElements"
+        @quality-check="runQualityCheck"
+        @open-recent-task="openRecentCollectTask"
+        @clear-recent-tasks="clearRecentCollectTasks"
+        @ai-collect="openAiCollectDrawer"
+      />
 
       <div class="web-ui-element-library__scope">
         当前范围：{{ selectedTree.label }}
@@ -3322,68 +3262,18 @@ onBeforeUnmount(() => {
           <AppButton size="small" type="danger" :loading="batchOperating" @click="batchDeleteElements">批量删除</AppButton>
         </div>
 
-        <el-table
-          v-loading="loading"
-          :data="elements"
-          row-key="id"
-          border
-          empty-text="暂无 Web UI 元素"
+        <WebUiElementTable
+          :loading="loading"
+          :elements="elements"
+          :validating-id="validatingId"
+          :deleting-id="deletingId"
           @selection-change="handleElementSelectionChange"
-        >
-          <el-table-column type="selection" width="48" />
-          <el-table-column prop="pageName" label="页面对象" min-width="130" show-overflow-tooltip />
-          <el-table-column prop="groupName" label="分组" min-width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.groupName || '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="elementName" label="元素名称" min-width="160" show-overflow-tooltip />
-          <el-table-column label="定位方式" width="112">
-            <template #default="{ row }">{{ formatLocatorType(row.locatorType) }}</template>
-          </el-table-column>
-          <el-table-column prop="locatorValue" label="定位值" min-width="220" show-overflow-tooltip />
-          <el-table-column label="状态" width="88">
-            <template #default="{ row }">
-              <el-tag :type="row.status === 'ENABLED' ? 'success' : 'info'" effect="light">
-                {{ row.status === 'ENABLED' ? '启用' : '停用' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="验证结果" min-width="150">
-            <template #default="{ row }">
-              <el-tag
-                v-if="row.lastValidateResult"
-                :type="row.lastValidateResult === 'PASSED' ? 'success' : 'danger'"
-                effect="light"
-              >
-                {{ row.lastValidateResult === 'PASSED' ? `通过 ${row.lastMatchCount ?? 0}` : '失败' }}
-              </el-tag>
-              <span v-else>-</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="最近验证" width="160">
-            <template #default="{ row }">{{ formatWebUiDateTime(row.lastValidateAt) }}</template>
-          </el-table-column>
-          <el-table-column label="引用" width="76">
-            <template #default="{ row }">
-              <el-button
-                v-if="row.usageCount > 0"
-                link
-                type="primary"
-                @click="openReferenceDrawer(row)"
-              >
-                {{ row.usageCount }}
-              </el-button>
-              <span v-else>0</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right">
-            <template #default="{ row }">
-              <el-button :icon="View" link type="primary" @click="openDetailDrawer(row)">详情</el-button>
-              <el-button :icon="VideoPlay" link type="primary" :loading="validatingId === row.id" @click="openValidateDialog(row)">验证</el-button>
-              <el-button :icon="Edit" link type="primary" @click="openEditDialog(row)">编辑</el-button>
-              <el-button :icon="Delete" link type="danger" :loading="deletingId === row.id" @click="deleteElement(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+          @detail="openDetailDrawer"
+          @validate="openValidateDialog"
+          @edit="openEditDialog"
+          @delete="deleteElement"
+          @references="openReferenceDrawer"
+        />
 
         <div class="web-ui-pagination">
           <el-pagination
@@ -3400,52 +3290,60 @@ onBeforeUnmount(() => {
       </template>
     </main>
 
-    <el-dialog v-model="batchMoveDialogVisible" title="批量移动分组" width="560px">
-      <el-form label-width="96px">
-        <el-form-item label="目标页面对象" required>
-          <el-select v-model="batchMoveForm.pageId" filterable placeholder="选择页面对象" @change="handleBatchMovePageChange">
-            <el-option v-for="item in pages" :key="item.id" :label="item.pageName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="目标分组">
-          <el-select v-model="batchMoveForm.groupId" clearable filterable placeholder="可不选择分组">
-            <el-option v-for="item in batchMoveGroupOptions" :key="item.id" :label="item.groupName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <AppButton @click="batchMoveDialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="batchOperating" @click="submitBatchMove">确认移动</AppButton>
-      </template>
-    </el-dialog>
+    <WebUiElementUtilityDialogs
+      v-model:batch-move-visible="batchMoveDialogVisible"
+      v-model:import-visible="importDialogVisible"
+      v-model:validate-visible="validateDialogVisible"
+      v-model:import-json-text="importJsonText"
+      v-model:validate-environment-id="validateEnvironmentId"
+      v-model:validate-base-url="validateBaseUrl"
+      :batch-move-form="batchMoveForm"
+      :batch-move-group-options="batchMoveGroupOptions"
+      :pages="pages"
+      :batch-operating="batchOperating"
+      :importing-elements="importingElements"
+      :validate-target="validateTarget"
+      :enabled-environments="enabledEnvironments"
+      :validate-result="validateResult"
+      :validate-failure-hint="getValidateFailureHint(validateResult)"
+      :validate-image-src="validateImageSrc"
+      :validating="validatingId !== null"
+      @batch-page-change="handleBatchMovePageChange"
+      @validate-environment-change="handleValidateEnvironmentChange"
+      @submit-batch-move="submitBatchMove"
+      @submit-import="importElementsFromJson"
+      @preview-validate-screenshot="previewValidateScreenshot"
+      @submit-validate="submitValidateElement"
+    />
 
-    <el-dialog
-      v-model="importDialogVisible"
-      title="批量导入元素"
-      width="760px"
-      class="web-ui-element-import-dialog"
-    >
-      <div class="web-ui-element-import">
-        <el-alert
-          type="info"
-          show-icon
-          :closable="false"
-          title="请粘贴 JSON 数组。支持 moduleName、pageName、pagePath、groupName、elementName、locatorType、locatorValue、description、status。"
-        />
-        <el-input
-          v-model="importJsonText"
-          type="textarea"
-          :rows="16"
-          resize="vertical"
-          spellcheck="false"
-          placeholder='[{"moduleName":"订单模块","pageName":"订单列表页","groupName":"查询区","elementName":"订单号输入框","locatorType":"CSS","locatorValue":"input[name=\"orderNo\"]"}]'
-        />
-      </div>
-      <template #footer>
-        <AppButton @click="importDialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="importingElements" @click="importElementsFromJson">开始导入</AppButton>
-      </template>
-    </el-dialog>
+    <WebUiElementStructureDialogs
+      v-model:module-visible="moduleDialogVisible"
+      v-model:page-visible="pageDialogVisible"
+      v-model:group-visible="groupDialogVisible"
+      :module-form="moduleForm"
+      :page-form="pageForm"
+      :group-form="groupForm"
+      :page-module-options="pageModuleOptions"
+      :group-page-options="groupPageOptions"
+      :saving-module="savingModule"
+      :saving-page="savingPage"
+      :saving-group="savingGroup"
+      @save-module="saveModule"
+      @save-page="savePage"
+      @save-group="saveGroup"
+    />
+
+    <WebUiElementEditDialog
+      v-model="dialogVisible"
+      :editing="Boolean(editingId)"
+      :form="form"
+      :element-page-options="elementPageOptions"
+      :available-groups="availableGroups"
+      :saving="saving"
+      @page-change="handleElementPageChange(form.pageId ?? null)"
+      @group-change="handleElementGroupChange(form.groupId ?? null)"
+      @save="saveElement"
+    />
 
     <WebUiElementValidateDrawer
       v-model="batchValidateDrawerVisible"
@@ -3582,172 +3480,6 @@ onBeforeUnmount(() => {
       @preview-screenshot="previewAiCandidateScreenshot"
       @save="saveAiCandidates"
     />
-
-    <el-dialog v-model="moduleDialogVisible" title="新增模块" width="560px">
-      <el-form label-width="96px">
-        <el-form-item label="模块名称" required>
-          <el-input v-model="moduleForm.moduleName" maxlength="80" placeholder="例如：订单模块" show-word-limit />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="moduleForm.sortOrder" :min="0" :max="9999" controls-position="right" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="moduleForm.status">
-            <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="moduleForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <AppButton @click="moduleDialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="savingModule" @click="saveModule">保存</AppButton>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="pageDialogVisible" title="新增页面对象" width="560px">
-      <el-form label-width="96px">
-        <el-form-item label="所属模块" required>
-          <el-select v-model="pageForm.moduleId" filterable>
-            <el-option v-for="item in pageModuleOptions" :key="item.id" :label="item.moduleName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="页面对象名称" required>
-          <el-input v-model="pageForm.pageName" maxlength="80" placeholder="例如：登录页、订单列表页" show-word-limit />
-        </el-form-item>
-        <el-form-item label="路径规则">
-          <el-input v-model="pageForm.pagePath" maxlength="500" clearable placeholder="/login 或 /orders/*" />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="pageForm.sortOrder" :min="0" :max="9999" controls-position="right" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="pageForm.status">
-            <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="pageForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <AppButton @click="pageDialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="savingPage" @click="savePage">保存</AppButton>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="groupDialogVisible" title="新增分组" width="560px">
-      <el-form label-width="96px">
-        <el-form-item label="所属页面对象" required>
-          <el-select v-model="groupForm.pageId" filterable placeholder="选择页面对象">
-            <el-option v-for="item in groupPageOptions" :key="item.id" :label="item.pageName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="分组名称" required>
-          <el-input v-model="groupForm.groupName" maxlength="80" show-word-limit />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="groupForm.sortOrder" :min="0" :max="9999" controls-position="right" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="groupForm.status">
-            <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="groupForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <AppButton @click="groupDialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="savingGroup" @click="saveGroup">保存</AppButton>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑元素' : '新增元素'" width="620px">
-      <el-form label-width="96px">
-        <el-form-item label="页面对象" required>
-          <el-select v-model="form.pageId" clearable filterable placeholder="选择页面对象" @change="handleElementPageChange">
-            <el-option v-for="item in elementPageOptions" :key="item.id" :label="item.pageName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="页面分组">
-          <el-select v-model="form.groupId" clearable filterable placeholder="选择分组" @change="handleElementGroupChange">
-            <el-option v-for="item in availableGroups" :key="item.id" :label="item.groupName" :value="item.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="元素名称" required>
-          <el-input v-model="form.elementName" maxlength="80" placeholder="例如：用户名输入框" show-word-limit />
-        </el-form-item>
-        <el-form-item label="定位方式" required>
-          <el-select v-model="form.locatorType">
-            <el-option v-for="item in WEB_UI_LOCATOR_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="定位值" required>
-          <el-input v-model="form.locatorValue" maxlength="1000" clearable placeholder="#username 或 //input[@name='username']" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="form.status">
-            <el-option v-for="item in WEB_UI_CASE_STATUS_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="form.description" type="textarea" :rows="3" maxlength="500" show-word-limit />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <AppButton @click="dialogVisible = false">取消</AppButton>
-        <AppButton type="primary" :loading="saving" @click="saveElement">保存</AppButton>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="validateDialogVisible" title="验证元素定位器" width="720px">
-      <div class="web-ui-element-validate">
-        <el-alert
-          v-if="validateTarget"
-          type="info"
-          show-icon
-          :closable="false"
-          :title="`${validateTarget.elementName}：${formatLocatorType(validateTarget.locatorType)} = ${validateTarget.locatorValue}`"
-        />
-        <el-form label-width="96px">
-          <el-form-item label="运行环境">
-            <el-select v-model="validateEnvironmentId" clearable placeholder="选择环境" @change="handleValidateEnvironmentChange">
-              <el-option v-for="item in enabledEnvironments" :key="item.id" :label="item.name" :value="item.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="验证地址" required>
-            <el-input v-model="validateBaseUrl" placeholder="https://example.com/login" />
-          </el-form-item>
-        </el-form>
-
-        <el-alert
-          v-if="validateResult"
-          :type="validateResult.matched ? 'success' : 'warning'"
-          :title="validateResult.matched ? `匹配到 ${validateResult.matchCount} 个元素` : '未匹配到元素'"
-          :description="validateResult.errorMessage || ''"
-          show-icon
-          :closable="false"
-        />
-        <el-alert
-          v-if="getValidateFailureHint(validateResult)"
-          type="info"
-          show-icon
-          :closable="false"
-          :title="getValidateFailureHint(validateResult)"
-        />
-        <div v-if="validateImageSrc" class="web-ui-element-validate__screenshot">
-          <img class="web-ui-element-validate__image" :src="validateImageSrc" alt="元素验证截图">
-          <AppButton size="small" @click="previewValidateScreenshot">查看大图</AppButton>
-        </div>
-      </div>
-      <template #footer>
-        <AppButton @click="validateDialogVisible = false">关闭</AppButton>
-        <AppButton type="primary" :loading="validatingId !== null" @click="submitValidateElement">开始验证</AppButton>
-      </template>
-    </el-dialog>
   </section>
 </template>
 

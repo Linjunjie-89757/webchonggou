@@ -334,6 +334,18 @@ function collapseAllSuiteTreeChildren() {
   expandedSuiteTreeKeys.value = []
 }
 
+function isSuiteTreeNodeExpanded(key: string) {
+  return expandedSuiteTreeKeys.value.includes(key)
+}
+
+function handleSuiteTreeExpand(node: ExecutionSuiteTreeNode) {
+  expandedSuiteTreeKeys.value = Array.from(new Set([...expandedSuiteTreeKeys.value, node.key]))
+}
+
+function handleSuiteTreeCollapse(node: ExecutionSuiteTreeNode) {
+  expandedSuiteTreeKeys.value = expandedSuiteTreeKeys.value.filter(key => key !== node.key)
+}
+
 async function loadExecutionSuiteDirectory() {
   if (props.workspaceReady === false) return
   suiteTreeLoading.value = true
@@ -1330,16 +1342,19 @@ function showPending(message: string) {
           :current-node-key="activeSuiteId !== EXECUTION_SUITE_LIST_KEY ? activeSuiteId : undefined"
           class="ms-like-directory-tree execution-suite-list"
           @current-change="handleSuiteTreeSelect"
+          @node-expand="handleSuiteTreeExpand"
+          @node-collapse="handleSuiteTreeCollapse"
         >
           <template #default="{ data }">
             <div :class="['execution-suite-node', { 'is-leaf': data.type === 'suite' }]">
               <div class="execution-suite-node-main">
                 <span
                   v-if="data.type === 'workspace' || data.type === 'module'"
-                  class="execution-suite-folder-wrap is-open"
+                  :class="['execution-suite-folder-wrap', { 'is-open': isSuiteTreeNodeExpanded(data.key) }]"
                   aria-hidden="true"
                 >
-                  <FolderOpen class="execution-suite-folder" />
+                  <FolderOpen v-if="isSuiteTreeNodeExpanded(data.key)" class="execution-suite-folder" />
+                  <Folder v-else class="execution-suite-folder" />
                 </span>
                 <span v-else class="execution-suite-folder-wrap" aria-hidden="true">
                   <Folder class="execution-suite-folder" />
