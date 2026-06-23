@@ -133,7 +133,7 @@ export function getCollectCandidateReviewMessage(candidate: CandidateReviewShape
     const count = candidate.matchCount === null || candidate.matchCount === undefined ? 1 : candidate.matchCount
     return `真机验证通过，定位器匹配 ${count} 个元素`
   }
-  return candidate.validationMessage || '请确认候选元素名称、分组和定位器后保存'
+  return candidate.validationMessage || '确认候选元素名称、分组和定位器后保存'
 }
 
 export function buildCollectCandidateValidationSummary(
@@ -215,21 +215,12 @@ export function buildCollectCandidateSaveSummary(
         aiSupplementUnverifiedCount += 1
       }
     }
-    if (candidate.validationStatus === 'FAILED') {
-      failedCount += 1
-    }
-    if (candidate.validationStatus === 'MULTIPLE') {
-      multipleCount += 1
-    }
-    if (unverified) {
-      unverifiedCount += 1
-    }
-    if (Number(candidate.confidence || 0) < 70) {
-      lowConfidenceCount += 1
-    }
-    if (blocked) {
-      blockedCount += 1
-    }
+    if (candidate.validationStatus === 'FAILED') failedCount += 1
+    if (candidate.validationStatus === 'MULTIPLE') multipleCount += 1
+    if (unverified) unverifiedCount += 1
+    if (Number(candidate.confidence || 0) < 70) lowConfidenceCount += 1
+    if (blocked) blockedCount += 1
+
     const duplicated = seenNameKeys.has(nameKey) || seenLocatorKeys.has(locatorKey)
     if (duplicated) {
       duplicateCount += 1
@@ -300,13 +291,9 @@ export function buildCollectCandidateValidationLocators(candidates: CandidateLoc
   const seen = new Set<string>()
   return candidates.reduce<CandidateLocatorShape[]>((result, candidate) => {
     const locatorValue = candidate.locatorValue?.trim()
-    if (!locatorValue) {
-      return result
-    }
+    if (!locatorValue) return result
     const key = `${candidate.locatorType}::${locatorValue}`
-    if (seen.has(key)) {
-      return result
-    }
+    if (seen.has(key)) return result
     seen.add(key)
     result.push({
       locatorType: candidate.locatorType,
@@ -407,18 +394,10 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
   const stageOrder: WebUiCollectTaskStageKey[] = ['UPLOAD_SNAPSHOT', 'RULE_CLEAN', 'AI_ANALYZE', 'LOCAL_VALIDATE', 'FINALIZE']
   const currentIndex = stageOrder.indexOf(currentStage as WebUiCollectTaskStageKey)
   const resolveStageStatus = (key: WebUiCollectTaskStageKey): WebUiCollectTaskStageStatus => {
-    if (failed || canceled) {
-      return key === currentStage ? 'failed' : 'pending'
-    }
-    if (degraded && key === 'LOCAL_VALIDATE') {
-      return 'degraded'
-    }
-    if (status === 'COMPLETED') {
-      return 'done'
-    }
-    if (degraded && key === 'FINALIZE') {
-      return 'done'
-    }
+    if (failed || canceled) return key === currentStage ? 'failed' : 'pending'
+    if (degraded && key === 'LOCAL_VALIDATE') return 'degraded'
+    if (status === 'COMPLETED') return 'done'
+    if (degraded && key === 'FINALIZE') return 'done'
     const index = stageOrder.indexOf(key)
     if (currentIndex >= 0 && index >= 0) {
       if (index < currentIndex) return 'done'
@@ -474,9 +453,7 @@ function buildRuleCleanStageDescription(
   rawCount: number,
   finalCount: number,
 ) {
-  if (!task) {
-    return '等待后端规则过滤、去重和评分'
-  }
+  if (!task) return '等待后端规则过滤、去重和评分'
   if (status === 'UPLOADED') {
     return rawCount ? `快照已上传，等待清洗 ${rawCount} 个原始候选` : '快照已上传，等待后端开始规则清洗'
   }
@@ -495,19 +472,11 @@ function buildRuleCleanStageDescription(
 }
 
 function collectAiStageDescription(task: WebUiElementCollectTaskResponse | null) {
-  if (!task) {
-    return '等待 AI 命名、分组和说明增强'
-  }
+  if (!task) return '等待 AI 命名、分组和说明增强'
   const prefix = task.aiModelName ? `${task.aiModelName}：` : ''
-  if (task.message && task.aiModelName) {
-    return `${prefix}${task.message}`
-  }
-  if (task.message && /AI|ai/.test(task.message)) {
-    return task.message
-  }
-  if (task.aiModelName) {
-    return `${prefix}已接入 AI 命名、分组和说明增强`
-  }
+  if (task.message && task.aiModelName) return `${prefix}${task.message}`
+  if (task.message && /AI|ai/.test(task.message)) return task.message
+  if (task.aiModelName) return `${prefix}已接入 AI 命名、分组和说明增强`
   return '未选择 AI 模型，已保留规则候选'
 }
 

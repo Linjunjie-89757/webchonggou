@@ -694,12 +694,13 @@ async function saveSelectedCandidates() {
       savedCount += 1
     }
 
+    const traceText = task.value?.taskId ? `，已关联采集任务 #${task.value.taskId}` : ''
     if (!savedCount && skippedCount) {
       ElMessage.warning(`已跳过 ${skippedCount} 个重复候选，未新增元素`)
     } else if (skippedCount) {
-      ElMessage.warning(`已保存 ${savedCount} 个元素，跳过 ${skippedCount} 个重复候选`)
+      ElMessage.warning(`已保存 ${savedCount} 个元素，跳过 ${skippedCount} 个重复候选${traceText}`)
     } else {
-      ElMessage.success(`已保存 ${savedCount} 个元素`)
+      ElMessage.success(`已保存 ${savedCount} 个元素${traceText}`)
     }
 
     await router.push({
@@ -727,6 +728,7 @@ function openSavedElement(element: WebUiElementItem) {
     path: '/automation/web/elements',
     query: {
       workspace: element.workspaceCode,
+      elementId: String(element.id),
       pageId: element.pageId ? String(element.pageId) : undefined,
       keyword: element.elementName,
     },

@@ -36,10 +36,10 @@ export const WEB_UI_STEP_TYPE_OPTIONS: Array<{
   description: string
 }> = [
   { label: '打开页面', value: 'OPEN', tone: 'primary', description: '填写相对路径或完整 URL' },
-  { label: '点击', value: 'CLICK', tone: 'primary', description: '需要定位一个可点击元素' },
-  { label: '输入', value: 'FILL', tone: 'success', description: '需要定位输入框并填写文本' },
-  { label: '清空', value: 'CLEAR', tone: 'default', description: '需要定位输入框或可编辑元素' },
-  { label: '悬浮', value: 'HOVER', tone: 'primary', description: '鼠标悬浮到菜单或元素上' },
+  { label: '点击', value: 'CLICK', tone: 'primary', description: '定位一个可点击元素并执行点击' },
+  { label: '输入', value: 'FILL', tone: 'success', description: '定位输入框并填写文本' },
+  { label: '清空', value: 'CLEAR', tone: 'default', description: '清空输入框或可编辑元素' },
+  { label: '悬停', value: 'HOVER', tone: 'primary', description: '鼠标悬停到菜单或元素上' },
   { label: '双击', value: 'DOUBLE_CLICK', tone: 'primary', description: '对定位元素执行双击' },
   { label: '右键', value: 'RIGHT_CLICK', tone: 'primary', description: '对定位元素执行右键点击' },
   { label: '按键', value: 'PRESS_KEY', tone: 'primary', description: '按键或组合键，例如 Enter、Control+A' },
@@ -50,7 +50,7 @@ export const WEB_UI_STEP_TYPE_OPTIONS: Array<{
   { label: '文本断言', value: 'ASSERT_TEXT', tone: 'success', description: '断言定位元素包含目标文本' },
   { label: 'URL 断言', value: 'ASSERT_URL', tone: 'success', description: '断言当前 URL 包含目标文本' },
   { label: '标题断言', value: 'ASSERT_TITLE', tone: 'success', description: '断言页面标题包含目标文本' },
-  { label: '属性断言', value: 'ASSERT_ATTRIBUTE', tone: 'success', description: '断言元素属性包含期望值，格式 属性=值' },
+  { label: '属性断言', value: 'ASSERT_ATTRIBUTE', tone: 'success', description: '断言元素属性包含期望值，格式：属性=值' },
   { label: '数量断言', value: 'ASSERT_COUNT', tone: 'success', description: '断言定位元素数量，例如 =1、>0、<3' },
   { label: '截图', value: 'SCREENSHOT', tone: 'default', description: '保存当前页面截图证据' },
 ]
@@ -61,11 +61,11 @@ export const WEB_UI_LOCATOR_OPTIONS: Array<{
   description: string
 }> = [
   { label: 'Test ID', value: 'TEST_ID', description: '按 data-testid、data-test、data-qa 或 id 定位' },
-  { label: 'CSS 选择器', value: 'CSS', description: '例如 #submit 或 .login-form input' },
-  { label: '文本 Text', value: 'TEXT', description: '按页面可见文本定位' },
-  { label: '角色 Role', value: 'ROLE', description: '按按钮、链接等可访问角色定位' },
-  { label: '标签 Label', value: 'LABEL', description: '按表单标签定位' },
-  { label: '占位符 Placeholder', value: 'PLACEHOLDER', description: '按 input placeholder 定位' },
+  { label: 'CSS', value: 'CSS', description: '例如 #submit 或 .login-form input' },
+  { label: 'Text', value: 'TEXT', description: '按页面可见文本定位' },
+  { label: 'Role', value: 'ROLE', description: '按按钮、链接等可访问角色定位' },
+  { label: 'Label', value: 'LABEL', description: '按表单标签定位' },
+  { label: 'Placeholder', value: 'PLACEHOLDER', description: '按 input placeholder 定位' },
   { label: 'XPath', value: 'XPATH', description: '用于复杂 DOM，优先少用' },
 ]
 

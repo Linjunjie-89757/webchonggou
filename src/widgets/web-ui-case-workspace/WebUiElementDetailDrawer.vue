@@ -97,10 +97,10 @@ function getCollectValidationTagType(status?: string | null) {
             {{ isAiCollectedElement(target) ? '智能采集' : '手工维护' }}
           </el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="采集任务">
+        <el-descriptions-item label="来源采集任务">
           <template v-if="target.collectTaskId">
             <el-button link type="primary" @click="emit('open-collect-task', target)">
-              #{{ target.collectTaskId }}
+              查看采集任务 #{{ target.collectTaskId }}
             </el-button>
           </template>
           <span v-else>-</span>
@@ -113,7 +113,7 @@ function getCollectValidationTagType(status?: string | null) {
           <el-tag :type="getCollectValidationTagType(target.collectValidationStatus)" effect="light">
             {{ formatCollectValidationStatus(target.collectValidationStatus) }}
           </el-tag>
-          <span v-if="target.collectMatchCount !== null && target.collectMatchCount !== undefined">
+          <span v-if="target.collectMatchCount !== null && target.collectMatchCount !== undefined" class="web-ui-element-detail__inline-note">
             匹配 {{ target.collectMatchCount }} 个
           </span>
         </el-descriptions-item>
@@ -162,7 +162,7 @@ function getCollectValidationTagType(status?: string | null) {
           :icon="Camera"
           @click="emit('open-collect-task', target)"
         >
-          采集任务
+          查看来源采集任务
         </AppButton>
         <AppButton
           v-if="target"
@@ -199,7 +199,8 @@ function getCollectValidationTagType(status?: string | null) {
   background: var(--app-bg-panel);
 }
 
-.web-ui-element-detail__summary span {
+.web-ui-element-detail__summary span,
+.web-ui-element-detail__inline-note {
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
 }
@@ -211,6 +212,10 @@ function getCollectValidationTagType(status?: string | null) {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.web-ui-element-detail__inline-note {
+  margin-left: var(--app-space-2);
 }
 
 .web-ui-element-detail__footer {

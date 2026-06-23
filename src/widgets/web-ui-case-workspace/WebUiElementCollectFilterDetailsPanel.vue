@@ -19,12 +19,8 @@ const restoredIds = ref(new Set<string>())
 
 const recoverableCount = computed(() => props.details.filter(item => item.recoverable).length)
 const filteredDetails = computed(() => {
-  if (activeReason.value === 'ALL') {
-    return props.details
-  }
-  if (activeReason.value === 'RECOVERABLE') {
-    return props.details.filter(item => item.recoverable)
-  }
+  if (activeReason.value === 'ALL') return props.details
+  if (activeReason.value === 'RECOVERABLE') return props.details.filter(item => item.recoverable)
   return props.details.filter(item => item.reason === activeReason.value)
 })
 const reasonOptions = computed(() => {
@@ -81,10 +77,12 @@ function formatLocator(detail: WebUiElementCollectFilterDetail) {
         <strong>过滤明细</strong>
         <p>保留规则、AI 和验证阶段被过滤的候选，必要时可恢复到待验证列表。</p>
       </div>
-      <el-tag type="info" effect="light">共 {{ details.length }}</el-tag>
-      <el-tag :type="recoverableCount ? 'warning' : 'info'" effect="light">
-        可恢复 {{ recoverableCount }}
-      </el-tag>
+      <div class="web-ui-collect-filter-details__summary">
+        <el-tag type="info" effect="light">共 {{ details.length }}</el-tag>
+        <el-tag :type="recoverableCount ? 'warning' : 'info'" effect="light">
+          可恢复 {{ recoverableCount }}
+        </el-tag>
+      </div>
     </div>
 
     <el-skeleton v-if="loading" :rows="3" animated />
@@ -163,12 +161,13 @@ function formatLocator(detail: WebUiElementCollectFilterDetail) {
   display: grid;
   gap: var(--app-space-3);
   padding: var(--app-space-3);
-  border: 1px solid var(--app-border-color);
+  border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-soft);
+  background: var(--app-bg-subtle);
 }
 
 .web-ui-collect-filter-details__header,
+.web-ui-collect-filter-details__summary,
 .web-ui-collect-filter-details__filters,
 .web-ui-collect-filter-details__item,
 .web-ui-collect-filter-details__item-title,
@@ -211,7 +210,7 @@ function formatLocator(detail: WebUiElementCollectFilterDetail) {
   justify-content: space-between;
   padding: var(--app-space-2);
   border-radius: var(--app-radius-sm);
-  background: var(--app-bg-card);
+  background: var(--app-bg-panel);
 }
 
 .web-ui-collect-filter-details__item-main {

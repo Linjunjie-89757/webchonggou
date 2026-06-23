@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -165,6 +165,7 @@ const props = defineProps<{
   environments?: WebUiEnvironmentItem[]
 }>()
 
+const route = useRoute()
 const router = useRouter()
 
 const directoryKeyword = ref('')
@@ -234,6 +235,7 @@ const validateDialogVisible = ref(false)
 const detailDrawerVisible = ref(false)
 const validateTarget = ref<WebUiElementItem | null>(null)
 const detailTarget = ref<WebUiElementItem | null>(null)
+const consumedElementDeepLinkKey = ref('')
 const validateEnvironmentId = ref<number | null>(null)
 const validateBaseUrl = ref('')
 const validateResult = ref<ValidateWebUiLocatorResponse | null>(null)
@@ -697,6 +699,7 @@ async function loadElements() {
     })
     elements.value = page.items
     total.value = page.total
+    consumeElementDeepLink()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -798,6 +801,32 @@ function openEditDialog(item: WebUiElementItem) {
 function openDetailDrawer(item: WebUiElementItem) {
   detailTarget.value = item
   detailDrawerVisible.value = true
+}
+
+function getRouteElementId() {
+  const value = Array.isArray(route.query.elementId) ? route.query.elementId[0] : route.query.elementId
+  return Number(value || 0) || null
+}
+
+function consumeElementDeepLink() {
+  const elementId = getRouteElementId()
+  if (!elementId) {
+    consumedElementDeepLinkKey.value = ''
+    return
+  }
+
+  const key = `${props.workspaceCode}:${elementId}:${pageNo.value}:${keyword.value}`
+  if (consumedElementDeepLinkKey.value === key) {
+    return
+  }
+
+  const target = elements.value.find(item => item.id === elementId)
+  if (!target) {
+    return
+  }
+
+  consumedElementDeepLinkKey.value = key
+  openDetailDrawer(target)
 }
 
 function openElementCollectTask(item: WebUiElementItem) {
@@ -3373,7 +3402,7 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="batchMoveDialogVisible" title="批量移动分组" width="560px">
       <el-form label-width="96px">
-        <el-form-item label="目标页面" required>
+        <el-form-item label="目标页面对象" required>
           <el-select v-model="batchMoveForm.pageId" filterable placeholder="选择页面对象" @change="handleBatchMovePageChange">
             <el-option v-for="item in pages" :key="item.id" :label="item.pageName" :value="item.id" />
           </el-select>
@@ -3584,8 +3613,8 @@ onBeforeUnmount(() => {
             <el-option v-for="item in pageModuleOptions" :key="item.id" :label="item.moduleName" :value="item.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="页面名称" required>
-          <el-input v-model="pageForm.pageName" maxlength="80" show-word-limit />
+        <el-form-item label="页面对象名称" required>
+          <el-input v-model="pageForm.pageName" maxlength="80" placeholder="例如：登录页、订单列表页" show-word-limit />
         </el-form-item>
         <el-form-item label="路径规则">
           <el-input v-model="pageForm.pagePath" maxlength="500" clearable placeholder="/login 或 /orders/*" />
@@ -3610,8 +3639,8 @@ onBeforeUnmount(() => {
 
     <el-dialog v-model="groupDialogVisible" title="新增分组" width="560px">
       <el-form label-width="96px">
-        <el-form-item label="所属页面" required>
-          <el-select v-model="groupForm.pageId">
+        <el-form-item label="所属页面对象" required>
+          <el-select v-model="groupForm.pageId" filterable placeholder="选择页面对象">
             <el-option v-for="item in groupPageOptions" :key="item.id" :label="item.pageName" :value="item.id" />
           </el-select>
         </el-form-item>

@@ -106,7 +106,6 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
   if (status === 'failed') return 'error'
   return 'wait'
 }
-
 </script>
 
 <template>
@@ -173,7 +172,7 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
     <el-alert
       v-if="task.aiModelName || (task.message && /AI|ai/.test(task.message))"
       class="web-ui-collect-task__ai-alert"
-      :type="task.message && /失败|不可用|unavailable|failed/i.test(task.message) ? 'warning' : 'success'"
+      :type="task.message && /失败|不可用|不存在|unavailable|failed/i.test(task.message) ? 'warning' : 'success'"
       :title="task.aiModelName ? `AI 处理：${task.aiModelName}` : 'AI 处理'"
       :description="task.message || 'AI 已参与候选元素命名、分组和说明增强'"
       show-icon
@@ -234,9 +233,9 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
   display: grid;
   gap: var(--app-space-3);
   padding: var(--app-space-3);
-  border: 1px solid var(--app-border-color);
+  border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
-  background: var(--app-bg-soft);
+  background: var(--app-bg-subtle);
 }
 
 .web-ui-collect-task__header,
@@ -294,9 +293,9 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
   display: grid;
   gap: var(--app-space-1);
   padding: var(--app-space-2);
-  border: 1px solid var(--app-border-color);
+  border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm);
-  background: var(--app-bg-card);
+  background: var(--app-bg-panel);
 }
 
 .web-ui-collect-task__stat span {
@@ -338,7 +337,7 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
 .web-ui-collect-task__filter-log-item {
   padding: var(--app-space-1) var(--app-space-2);
   border-radius: var(--app-radius-sm);
-  background: var(--app-bg-card);
+  background: var(--app-bg-panel);
   color: var(--app-text-secondary);
 }
 </style>

@@ -3688,14 +3688,16 @@ async function submitAiCaseGeneration() {
   const definitionId = editor.definitionId
   if (!definitionId) return
   const detail = editor.detail
+  const targetWorkspaceCode = editor.detail.workspaceCode || props.workspaceCode
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, 'AI 生成接口用例')) return
   aiCaseGenerationStatus.value = 'running'
   aiCaseGenerationMessage.value = ''
   aiCaseGenerationLogs.value = []
   aiCaseGeneratedResults.value = []
 
   try {
-    await apiAutomationApi.streamAiCaseGeneration(props.workspaceCode, {
-      workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+    await apiAutomationApi.streamAiCaseGeneration(targetWorkspaceCode, {
+      workspaceCode: targetWorkspaceCode,
       definitionId,
       definitionName: detail.name,
       name: detail.name,
