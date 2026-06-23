@@ -213,6 +213,15 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'automation/web/elements/collect-tasks/:taskId',
+        name: 'automation-web-element-collect-task',
+        component: WebAutomationPage,
+        meta: {
+          title: 'Web UI AI 采集工作台',
+          description: '查看 AI 采集任务进度、候选元素、过滤明细、真机验证和入库操作。',
+        },
+      },
+      {
         path: 'automation/web/templates',
         name: 'automation-web-templates',
         component: WebAutomationPage,

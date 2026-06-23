@@ -79,6 +79,11 @@ const taskWarning = computed(() => {
 
 function formatCollectTaskStatus(status?: string | null) {
   if (status === 'COMPLETED') return '已完成'
+  if (status === 'UPLOADED') return '快照已上传'
+  if (status === 'RULE_CLEANING') return '规则清洗中'
+  if (status === 'AI_ANALYZING') return 'AI 分析中'
+  if (status === 'WAITING_LOCAL_VALIDATION') return '等待真机验证'
+  if (status === 'VALIDATING') return '真机验证中'
   if (status === 'PROCESSING') return '处理中'
   if (status === 'PENDING') return '待处理'
   if (status === 'FAILED') return '失败'
@@ -91,6 +96,7 @@ function getCollectTaskStatusTagType(status?: string | null) {
   if (status === 'COMPLETED') return 'success'
   if (status === 'FAILED') return 'danger'
   if (status === 'DEGRADED') return 'warning'
+  if (status === 'WAITING_LOCAL_VALIDATION' || status === 'VALIDATING') return 'primary'
   return 'info'
 }
 

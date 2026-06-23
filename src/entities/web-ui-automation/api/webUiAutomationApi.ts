@@ -45,6 +45,7 @@ import type {
   WebUiElementBatchResult,
   WebUiElementBatchValidateResult,
   WebUiElementCollectResponse,
+  WebUiElementCollectFilterDetailsResponse,
   WebUiElementCollectTaskResponse,
   WebUiElementItem,
   WebUiElementListQuery,
@@ -259,6 +260,13 @@ function normalizeElement(item: WebUiElementItem): WebUiElementItem {
     lastValidateAt: item.lastValidateAt || null,
     lastValidateMessage: item.lastValidateMessage || null,
     lastMatchCount: item.lastMatchCount === null || item.lastMatchCount === undefined ? null : Number(item.lastMatchCount),
+    collectTaskId: item.collectTaskId === null || item.collectTaskId === undefined ? null : Number(item.collectTaskId),
+    collectSource: item.collectSource || null,
+    collectConfidence: item.collectConfidence === null || item.collectConfidence === undefined ? null : Number(item.collectConfidence),
+    collectValidationStatus: item.collectValidationStatus || null,
+    collectMatchCount: item.collectMatchCount === null || item.collectMatchCount === undefined ? null : Number(item.collectMatchCount),
+    collectValidationMessage: item.collectValidationMessage || null,
+    collectScreenshotBase64: item.collectScreenshotBase64 || null,
     createdAt: item.createdAt || null,
     updatedAt: item.updatedAt || null,
     usageCount: Number(item.usageCount || 0),
@@ -856,6 +864,27 @@ export const webUiAutomationApi = {
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async getLocalRunnerCollectTaskFilterDetails(workspaceCode = 'ALL', taskId: number) {
+    const payload = await httpGet<ApiResponse<WebUiElementCollectFilterDetailsResponse>>(
+      `/automation/web/elements/collect-tasks/${taskId}/filter-details`,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    const data = unwrapApiResponse(payload)
+    return {
+      taskId: Number(data.taskId),
+      details: Array.isArray(data.details)
+        ? data.details.map(item => ({
+            id: item.id || `${item.reason}-${item.candidate?.locatorType || 'UNKNOWN'}-${item.candidate?.locatorValue || ''}`,
+            stage: item.stage || 'STATIC_RULE',
+            reason: item.reason || 'UNKNOWN',
+            message: item.message || null,
+            recoverable: Boolean(item.recoverable),
+            candidate: normalizeElementCollectCandidate(item.candidate),
+          }))
+        : [],
+    }
   },
 
   async submitLocalRunnerCollectValidationResults(

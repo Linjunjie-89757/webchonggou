@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { CollectionTag, Cpu, Delete, Document, Edit, Folder, Grid, Plus, RefreshRight, Search, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -18,6 +19,7 @@ import {
   type WebUiElementGroupItem,
   type WebUiElementItem,
   type WebUiElementCollectFilterSummary,
+  type WebUiElementCollectFilterDetail,
   type WebUiElementCollectTaskResponse,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
@@ -50,11 +52,16 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import WebUiElementAiCollectDrawer from './WebUiElementAiCollectDrawer.vue'
+import WebUiElementCollectLaunchDialog from './WebUiElementCollectLaunchDialog.vue'
+import WebUiElementCollectRecentTasks, {
+  type WebUiElementCollectRecentTask,
+} from './WebUiElementCollectRecentTasks.vue'
 import WebUiElementDetailDrawer from './WebUiElementDetailDrawer.vue'
 import WebUiElementImpactDrawer from './WebUiElementImpactDrawer.vue'
 import WebUiElementQualityDrawer from './WebUiElementQualityDrawer.vue'
 import WebUiElementReferenceDrawer from './WebUiElementReferenceDrawer.vue'
 import WebUiElementValidateDrawer from './WebUiElementValidateDrawer.vue'
+import type { WebUiElementCollectLaunchForm } from './elementCollectTypes'
 
 type DirectoryNodeType = 'ALL' | 'WORKSPACE' | 'MODULE' | 'PAGE' | 'GROUP'
 
@@ -118,6 +125,8 @@ type ElementImpactReference = WebUiElementReferenceItem & {
   elementLocatorType: WebUiLocatorType
   elementLocatorValue: string
 }
+
+const RECENT_COLLECT_TASKS_STORAGE_KEY = 'web-ui-element-recent-collect-tasks'
 type ElementImpactSummary = {
   elementCount: number
   referenceCount: number
@@ -156,6 +165,8 @@ const props = defineProps<{
   environments?: WebUiEnvironmentItem[]
 }>()
 
+const router = useRouter()
+
 const directoryKeyword = ref('')
 const keyword = ref('')
 const status = ref<'ENABLED' | 'DISABLED' | ''>('')
@@ -193,6 +204,7 @@ const syncingReferences = ref(false)
 const loadingImpactReferences = ref(false)
 const syncingImpactReferences = ref(false)
 const aiCollectDrawerVisible = ref(false)
+const aiCollectLaunchVisible = ref(false)
 const aiCollectMode = ref<AiCollectMode>('ONLINE')
 const aiCollecting = ref(false)
 const localRunnerChecking = ref(false)
@@ -232,7 +244,10 @@ const impactReferences = ref<ElementImpactReference[]>([])
 const editingElementSnapshot = ref<WebUiElementItem | null>(null)
 const aiCandidates = ref<AiElementCandidate[]>([])
 const aiCollectFilterSummary = ref<WebUiElementCollectFilterSummary | null>(null)
+const aiCollectFilterDetails = ref<WebUiElementCollectFilterDetail[]>([])
+const aiCollectFilterDetailsLoading = ref(false)
 const currentCollectTask = ref<WebUiElementCollectTaskResponse | null>(null)
+const recentCollectTasks = ref<WebUiElementCollectRecentTask[]>([])
 const selectedElements = ref<WebUiElementItem[]>([])
 const qualityIssues = ref<WebUiElementQualityIssue[]>([])
 const localQualityIssues = ref<LocalQualityIssue[]>([])
@@ -288,7 +303,10 @@ const groupForm = reactive<SaveWebUiElementGroupPayload>({
   status: 'ENABLED',
 })
 
-const aiCollectForm = reactive({
+const aiCollectForm = reactive<WebUiElementCollectLaunchForm & {
+  htmlText: string
+  screenshotNote: string
+}>({
   providerConnectionId: null as number | null,
   environmentId: null as number | null,
   pageUrl: '',
@@ -782,7 +800,36 @@ function openDetailDrawer(item: WebUiElementItem) {
   detailDrawerVisible.value = true
 }
 
+function openElementCollectTask(item: WebUiElementItem) {
+  if (!item.collectTaskId) {
+    ElMessage.warning('该元素没有关联采集任务')
+    return
+  }
+  detailDrawerVisible.value = false
+  void router.push({
+    path: `/automation/web/elements/collect-tasks/${item.collectTaskId}`,
+    query: {
+      workspaceCode: item.workspaceCode,
+      pageId: item.pageId ? String(item.pageId) : undefined,
+      pageName: item.pageName || undefined,
+      groupStrategy: 'AI',
+    },
+  })
+}
+
+function previewElementCollectScreenshot(item: WebUiElementItem) {
+  if (!item.collectScreenshotBase64) {
+    ElMessage.warning('该元素没有采集截图证据')
+    return
+  }
+  window.open(`data:image/png;base64,${item.collectScreenshotBase64}`, '_blank', 'noopener,noreferrer')
+}
+
 function openAiCollectDrawer() {
+  openAiCollectLaunchDialog()
+}
+
+function prepareAiCollectForm() {
   const moduleItem = getSelectedModule()
   const page = selectedTree.value.type === 'PAGE'
     ? pages.value.find(item => item.id === selectedTree.value.rawId) || null
@@ -803,8 +850,19 @@ function openAiCollectDrawer() {
   aiCollectForm.htmlText = ''
   aiCollectForm.screenshotNote = ''
   resetAiCollectResults()
-  aiCollectDrawerVisible.value = true
   void loadAiProviders()
+}
+
+function openAiCollectLaunchDialog() {
+  prepareAiCollectForm()
+  aiCollectLaunchVisible.value = true
+  void refreshLocalRunnerHealth({ silent: true })
+}
+
+function openOfflineAiCollectDrawer() {
+  aiCollectMode.value = 'OFFLINE'
+  aiCollectLaunchVisible.value = false
+  aiCollectDrawerVisible.value = true
 }
 
 function handleAiPageChange(pageId: number | null) {
@@ -1063,14 +1121,61 @@ function getAiCustomGroupName() {
   return (aiCollectForm.groupName || group?.groupName || '').trim()
 }
 
+function loadRecentCollectTasks() {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = window.localStorage.getItem(RECENT_COLLECT_TASKS_STORAGE_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    recentCollectTasks.value = Array.isArray(parsed)
+      ? parsed.filter(item => item && Number(item.taskId)).slice(0, 8)
+      : []
+  } catch {
+    recentCollectTasks.value = []
+  }
+}
+
+function persistRecentCollectTasks() {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(RECENT_COLLECT_TASKS_STORAGE_KEY, JSON.stringify(recentCollectTasks.value.slice(0, 8)))
+}
+
+function addRecentCollectTask(task: WebUiElementCollectRecentTask) {
+  recentCollectTasks.value = [
+    task,
+    ...recentCollectTasks.value.filter(item => !(item.taskId === task.taskId && item.workspaceCode === task.workspaceCode)),
+  ].slice(0, 8)
+  persistRecentCollectTasks()
+}
+
+function openRecentCollectTask(task: WebUiElementCollectRecentTask) {
+  void router.push({
+    path: `/automation/web/elements/collect-tasks/${task.taskId}`,
+    query: {
+      workspaceCode: task.workspaceCode,
+      moduleId: task.moduleId ? String(task.moduleId) : undefined,
+      pageId: task.pageId ? String(task.pageId) : undefined,
+      pageName: task.pageName || undefined,
+      pageUrl: task.pageUrl || undefined,
+      groupStrategy: task.groupStrategy,
+      groupName: task.groupName || undefined,
+    },
+  })
+}
+
+function clearRecentCollectTasks() {
+  recentCollectTasks.value = []
+  persistRecentCollectTasks()
+}
+
 type CollectCandidateShape = ReturnType<typeof mapRunnerCandidateToCollectCandidate>
 
 function mapCollectCandidatesToAiCandidates(
   candidates: CollectCandidateShape[],
   customGroupName: string,
+  idPrefix = '',
 ) {
   return candidates.map((item, index) => ({
-    id: `${item.locatorType}-${index}-${item.locatorValue}`,
+    id: `${idPrefix}${item.locatorType}-${index}-${item.locatorValue}`,
     selected: item.recommendedToSave
       && (item.validationStatus === 'PASSED' || item.validationStatus === 'UNVERIFIED')
       && !item.saveBlockedReason,
@@ -1127,6 +1232,30 @@ function applyCollectTaskDetail(taskDetail: WebUiElementCollectTaskResponse, cus
   return candidates
 }
 
+async function loadCollectFilterDetails(taskDetail: WebUiElementCollectTaskResponse | null, silent = true) {
+  if (!taskDetail) {
+    aiCollectFilterDetails.value = []
+    return
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    aiCollectFilterDetails.value = []
+    return
+  }
+  aiCollectFilterDetailsLoading.value = true
+  try {
+    const detailResponse = await webUiAutomationApi.getLocalRunnerCollectTaskFilterDetails(moduleItem.workspaceCode, taskDetail.taskId)
+    aiCollectFilterDetails.value = detailResponse.details
+  } catch (error) {
+    aiCollectFilterDetails.value = []
+    if (!silent) {
+      ElMessage.warning(`过滤明细加载失败：${getRequestErrorMessage(error)}`)
+    }
+  } finally {
+    aiCollectFilterDetailsLoading.value = false
+  }
+}
+
 function stopCollectTaskPolling() {
   collectTaskPolling.value = false
   if (collectTaskPollingTimer) {
@@ -1139,6 +1268,7 @@ function resetAiCollectResults() {
   stopCollectTaskPolling()
   aiCandidates.value = []
   aiCollectFilterSummary.value = null
+  aiCollectFilterDetails.value = []
   currentCollectTask.value = null
   aiCandidateFilter.value = 'ALL'
 }
@@ -1165,6 +1295,7 @@ async function fetchCurrentCollectTaskDetail(options: { silent?: boolean; messag
     const customGroupName = getAiCustomGroupName()
     const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, currentCollectTask.value.taskId)
     applyCollectTaskDetail(taskDetail, customGroupName)
+    await loadCollectFilterDetails(taskDetail)
     if (options.message) {
       ElMessage.success('采集任务详情已刷新')
     }
@@ -1285,6 +1416,40 @@ async function revalidateVisibleAiCandidates() {
   } catch (error) {
     ElMessage.error(`重新验证失败：${getRequestErrorMessage(error)}`)
   }
+}
+
+function restoreFilteredCollectDetail(detail: WebUiElementCollectFilterDetail) {
+  if (!detail.recoverable) {
+    ElMessage.warning('该过滤项不可恢复，请先补全定位器')
+    return
+  }
+  const locatorValue = detail.candidate.locatorValue?.trim()
+  if (!locatorValue) {
+    ElMessage.warning('该过滤项没有有效定位器，不能加入待验证列表')
+    return
+  }
+  const exists = aiCandidates.value.some(item =>
+    item.locatorType === detail.candidate.locatorType
+    && item.locatorValue.trim() === locatorValue,
+  )
+  if (exists) {
+    ElMessage.info('当前候选列表已存在相同定位器')
+    return
+  }
+  const restored = mapCollectCandidatesToAiCandidates([
+    {
+      ...detail.candidate,
+      recommendedToSave: false,
+      notRecommendedReason: detail.message || '从过滤明细恢复，需重新验证后再保存',
+      validationStatus: 'UNVERIFIED',
+      matchCount: null,
+      validationMessage: '从过滤明细恢复，等待本地 Runner 重新验证',
+      saveBlockedReason: '从过滤明细恢复，需重新验证通过后才能保存',
+    },
+  ], getAiCustomGroupName(), `restored-${detail.id}-`)
+  aiCandidates.value = [...restored, ...aiCandidates.value]
+  aiCandidateFilter.value = 'UNVERIFIED'
+  ElMessage.success('已恢复到候选列表，请执行重新验证')
 }
 
 function selectRecommendedPassedAiCandidates() {
@@ -1516,21 +1681,37 @@ async function generateAiCandidates() {
   }
 }
 
-async function checkLocalRunner() {
+function isLocalRunnerSessionLostMessage(message: string) {
+  return /No active browser page|Target page|context|browser has been closed|has been closed|active page/i.test(message)
+}
+
+async function refreshLocalRunnerHealth(options: { silent?: boolean } = {}) {
   localRunnerChecking.value = true
   try {
     localRunnerHealth.value = await checkLocalRunnerHealth()
     if (!localRunnerHealth.value.playwrightAvailable || !localRunnerHealth.value.chromiumInstalled) {
-      ElMessage.warning('本地执行器已连接，但 Playwright 或 Chromium 不可用')
+      if (!options.silent) {
+        ElMessage.warning('本地执行器已连接，但 Playwright 或 Chromium 不可用')
+      }
       return
     }
-    ElMessage.success('本地执行器已连接')
+    if (!options.silent) {
+      ElMessage.success(localRunnerHealth.value.currentUrl
+        ? '本地执行器已连接，当前页面可采集'
+        : '本地执行器已连接，请先打开目标页或在 Runner 浏览器中进入目标页面')
+    }
   } catch (error) {
     localRunnerHealth.value = null
-    ElMessage.error(`本地执行器未连接：${getRequestErrorMessage(error)}`)
+    if (!options.silent) {
+      ElMessage.error(`本地执行器未连接：${getRequestErrorMessage(error)}`)
+    }
   } finally {
     localRunnerChecking.value = false
   }
+}
+
+async function checkLocalRunner() {
+  await refreshLocalRunnerHealth()
 }
 
 async function openLocalRunnerCollectPage() {
@@ -1562,6 +1743,101 @@ async function openLocalRunnerCollectPage() {
     ElMessage.error(`打开本地页面失败：${getRequestErrorMessage(error)}`)
   } finally {
     localRunnerOpening.value = false
+  }
+}
+
+async function startCollectTaskWorkbench() {
+  if (!selectedAiProvider.value?.modelName) {
+    ElMessage.warning('请选择 AI 采集模型')
+    return
+  }
+  if (!aiCollectForm.moduleId) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  if (!aiCollectForm.pageName.trim() && !aiCollectForm.pageId) {
+    ElMessage.warning('请选择或填写页面对象名称')
+    return
+  }
+
+  const customGroupName = getAiCustomGroupName()
+  if (aiCollectForm.groupStrategy === 'CUSTOM' && !customGroupName) {
+    ElMessage.warning('请选择或填写自选分组')
+    return
+  }
+
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择有效的所属模块')
+    return
+  }
+
+  resetAiCollectResults()
+  localRunnerCapturing.value = true
+  try {
+    const result = await captureLocalRunnerPage(300)
+    await saveLocalRunnerAuth({
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+    const groupName = customGroupName || aiCollectForm.groupName.trim() || '页面元素'
+    const collectCandidates = result.candidates.map(candidate => mapRunnerCandidateToCollectCandidate({
+      candidate,
+      groupName,
+      screenshotBase64: result.screenshotBase64 || null,
+    }))
+    const task = await webUiAutomationApi.createLocalRunnerCollectTask(moduleItem.workspaceCode, {
+      runnerId: 'local-runner',
+      sessionId: result.session?.sessionId || null,
+      actualUrl: result.page?.url || localRunnerHealth.value?.currentUrl || null,
+      pageTitle: result.page?.title || null,
+      moduleId: aiCollectForm.moduleId,
+      pageId: aiCollectForm.pageId,
+      pageName: aiCollectForm.pageName.trim() || null,
+      scope: aiCollectForm.scope,
+      providerConnectionId: selectedAiProvider.value.id,
+      modelName: selectedAiProvider.value.modelName,
+      rawCount: result.rawCount,
+      screenshotBase64: result.screenshotBase64 || null,
+      candidates: collectCandidates,
+    })
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    addRecentCollectTask({
+      taskId: task.taskId,
+      workspaceCode: moduleItem.workspaceCode,
+      moduleId: aiCollectForm.moduleId,
+      pageId: aiCollectForm.pageId,
+      pageName: aiCollectForm.pageName.trim() || task.pageTitle || null,
+      pageUrl: aiCollectForm.pageUrl.trim() || result.page?.url || null,
+      groupStrategy: aiCollectForm.groupStrategy,
+      groupName: customGroupName || aiCollectForm.groupName.trim() || null,
+      title: aiCollectForm.pageName.trim() || result.page?.title || `采集任务 #${task.taskId}`,
+      createdAt: new Date().toISOString(),
+    })
+    aiCollectLaunchVisible.value = false
+    ElMessage.success(`采集任务 #${task.taskId} 已创建`)
+    await router.push({
+      path: `/automation/web/elements/collect-tasks/${task.taskId}`,
+      query: {
+        workspaceCode: moduleItem.workspaceCode,
+        moduleId: String(aiCollectForm.moduleId),
+        pageId: aiCollectForm.pageId ? String(aiCollectForm.pageId) : undefined,
+        pageName: aiCollectForm.pageName.trim() || undefined,
+        pageUrl: aiCollectForm.pageUrl.trim() || result.page?.url || undefined,
+        groupStrategy: aiCollectForm.groupStrategy,
+        groupName: customGroupName || aiCollectForm.groupName.trim() || undefined,
+      },
+    })
+  } catch (error) {
+    const message = getRequestErrorMessage(error)
+    if (isLocalRunnerSessionLostMessage(message)) {
+      await refreshLocalRunnerHealth({ silent: true })
+      ElMessage.warning('Runner 当前页面会话已失效，请重新打开目标页或在本地浏览器进入目标页面后再开始采集')
+    } else {
+      ElMessage.error(`本地采集失败：${message}`)
+    }
+  } finally {
+    localRunnerCapturing.value = false
   }
 }
 
@@ -1624,6 +1900,7 @@ async function captureLocalRunnerCandidates() {
       ? await validateCurrentCollectTaskWithLocalRunner(moduleItem.workspaceCode, taskDetail, customGroupName)
       : taskDetail
     const candidates = applyCollectTaskDetail(validatedTaskDetail, customGroupName)
+    await loadCollectFilterDetails(validatedTaskDetail)
     aiCandidateFilter.value = 'ALL'
     if (!isCollectTaskTerminalStatus(validatedTaskDetail.status)) {
       scheduleCollectTaskPolling()
@@ -1687,6 +1964,7 @@ async function cancelCurrentCollectTask() {
     )
     stopCollectTaskPolling()
     applyCollectTaskDetail(task, getAiCustomGroupName())
+    await loadCollectFilterDetails(task)
     ElMessage.success('采集任务已取消')
   } catch (error) {
     if (error !== 'cancel') {
@@ -2901,6 +3179,10 @@ watch(
   },
 )
 
+onMounted(() => {
+  loadRecentCollectTasks()
+})
+
 onBeforeUnmount(() => {
   stopCollectTaskPolling()
 })
@@ -2980,6 +3262,11 @@ onBeforeUnmount(() => {
             <AppButton @click="openImportDialog">导入</AppButton>
             <AppButton @click="exportCurrentElements">导出</AppButton>
             <AppButton :icon="CollectionTag" :loading="qualityChecking" @click="runQualityCheck">质量检查</AppButton>
+            <WebUiElementCollectRecentTasks
+              :tasks="recentCollectTasks"
+              @open="openRecentCollectTask"
+              @clear="clearRecentCollectTasks"
+            />
             <AppButton class="web-ui-filter-toolbar__ai" :icon="Cpu" @click="openAiCollectDrawer">AI 采集</AppButton>
           </div>
         </div>
@@ -3183,6 +3470,8 @@ onBeforeUnmount(() => {
       :validate-tag-type="detailValidateTagType"
       :validate-label="detailValidateLabel"
       @open-reference="openReferenceDrawer"
+      @open-collect-task="openElementCollectTask"
+      @preview-collect-screenshot="previewElementCollectScreenshot"
       @edit="openEditDialog"
     />
 
@@ -3194,6 +3483,28 @@ onBeforeUnmount(() => {
       :syncing="syncingReferences"
       @open="openReferenceSource"
       @sync="syncReferenceLocators"
+    />
+
+    <WebUiElementCollectLaunchDialog
+      v-model="aiCollectLaunchVisible"
+      :form="aiCollectForm"
+      :ai-provider-loading="aiProviderLoading"
+      :available-ai-providers="availableAiProviders"
+      :enabled-environments="enabledEnvironments"
+      :modules="modules"
+      :page-options="aiCollectPageOptions"
+      :group-options="aiCollectGroupOptions"
+      :local-runner-checking="localRunnerChecking"
+      :local-runner-opening="localRunnerOpening"
+      :local-runner-capturing="localRunnerCapturing"
+      :local-runner-health="localRunnerHealth"
+      @module-change="handleAiModuleChange"
+      @page-change="handleAiPageChange"
+      @group-change="handleAiGroupChange"
+      @check-local-runner="checkLocalRunner"
+      @open-local-runner-page="openLocalRunnerCollectPage"
+      @start="startCollectTaskWorkbench"
+      @offline="openOfflineAiCollectDrawer"
     />
 
     <WebUiElementAiCollectDrawer
@@ -3210,6 +3521,8 @@ onBeforeUnmount(() => {
       :visible-candidates="visibleAiCandidates"
       :candidate-summary="aiCandidateSummary"
       :collect-filter-summary="aiCollectFilterSummary"
+      :collect-filter-details="aiCollectFilterDetails"
+      :collect-filter-details-loading="aiCollectFilterDetailsLoading"
       :collect-task="currentCollectTask"
       :collect-task-refreshing="collectTaskRefreshing"
       :collect-task-polling="collectTaskPolling"
@@ -3233,6 +3546,7 @@ onBeforeUnmount(() => {
       @refresh-collect-task="refreshCurrentCollectTask"
       @cancel-collect-task="cancelCurrentCollectTask"
       @revalidate-visible-candidates="revalidateVisibleAiCandidates"
+      @restore-filter-detail="restoreFilteredCollectDetail"
       @select-recommended="selectRecommendedPassedAiCandidates"
       @unselect-risky="unselectRiskyAiCandidates"
       @batch-update-group="batchUpdateAiCandidateGroup"

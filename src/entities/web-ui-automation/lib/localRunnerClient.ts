@@ -6,6 +6,7 @@ import type {
 
 export const LOCAL_RUNNER_BASE_URL = 'http://127.0.0.1:39118'
 export const LOCAL_RUNNER_VALIDATION_TIMEOUT_MS = 30000
+const LOCAL_RUNNER_VALIDATION_BATCH_SIZE = 10
 
 export interface LocalRunnerHealthView {
   online: boolean
@@ -71,6 +72,12 @@ export interface LocalRunnerValidateLocatorInput {
   locatorValue: string
 }
 
+export interface LocalRunnerValidationProgress {
+  done: number
+  total: number
+  batchFailed: number
+}
+
 export function normalizeRunnerHealth(payload: any): LocalRunnerHealthView {
   return {
     online: Boolean(payload?.success),
@@ -100,23 +107,59 @@ export async function captureLocalRunnerPage(waitMs = 300) {
   })
 }
 
-export async function validateLocalRunnerLocators(locators: LocalRunnerValidateLocatorInput[]) {
-  const payload = await requestLocalRunner<{ results?: WebUiElementCollectValidationResult[] }>('/collect/validate', {
-    method: 'POST',
-    timeoutMs: LOCAL_RUNNER_VALIDATION_TIMEOUT_MS,
-    body: {
-      locators: locators
-        .filter(item => item.locatorValue?.trim())
-        .map(item => ({
-          locatorType: normalizeLocatorType(item.locatorType),
-          locatorValue: item.locatorValue.trim(),
-        })),
-    },
-  })
+export async function validateLocalRunnerLocators(
+  locators: LocalRunnerValidateLocatorInput[],
+  options: {
+    onProgress?: (progress: LocalRunnerValidationProgress) => void
+  } = {},
+) {
+  const normalizedLocators = locators
+    .filter(item => item.locatorValue?.trim())
+    .map(item => ({
+      locatorType: normalizeLocatorType(item.locatorType),
+      locatorValue: item.locatorValue.trim(),
+    }))
+  const results: WebUiElementCollectValidationResult[] = []
+  let batchFailed = 0
+  let lastError: unknown = null
 
-  return Array.isArray(payload.results)
-    ? payload.results.map(normalizeLocalRunnerValidationResult)
-    : []
+  for (let index = 0; index < normalizedLocators.length; index += LOCAL_RUNNER_VALIDATION_BATCH_SIZE) {
+    const batch = normalizedLocators.slice(index, index + LOCAL_RUNNER_VALIDATION_BATCH_SIZE)
+    try {
+      const payload = await requestLocalRunner<{ results?: WebUiElementCollectValidationResult[] }>('/collect/validate', {
+        method: 'POST',
+        timeoutMs: LOCAL_RUNNER_VALIDATION_TIMEOUT_MS,
+        body: {
+          locators: batch,
+        },
+      })
+      if (Array.isArray(payload.results)) {
+        results.push(...payload.results.map(normalizeLocalRunnerValidationResult))
+      }
+    } catch (error) {
+      batchFailed += 1
+      lastError = error
+      results.push(...batch.map(item => ({
+        locatorType: item.locatorType,
+        locatorValue: item.locatorValue,
+        validationStatus: 'FAILED',
+        matchCount: 0,
+        validationMessage: `本批真机验证失败：${getLocalRunnerErrorMessage(error)}`,
+        screenshotBase64: null,
+      })))
+    }
+    options.onProgress?.({
+      done: Math.min(index + batch.length, normalizedLocators.length),
+      total: normalizedLocators.length,
+      batchFailed,
+    })
+  }
+
+  if (normalizedLocators.length > 0 && batchFailed === Math.ceil(normalizedLocators.length / LOCAL_RUNNER_VALIDATION_BATCH_SIZE)) {
+    throw lastError instanceof Error ? lastError : new Error('本地 Runner 所有验证批次均失败')
+  }
+
+  return results
 }
 
 export async function saveLocalRunnerAuth(payload: Omit<LocalRunnerOpenPayload, 'url'>) {
@@ -226,6 +269,10 @@ function normalizeLocalRunnerValidationResult(item: WebUiElementCollectValidatio
     validationMessage: item.validationMessage || null,
     screenshotBase64: item.screenshotBase64 || null,
   }
+}
+
+function getLocalRunnerErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function clampConfidence(value?: number | null) {

@@ -60,12 +60,12 @@ export const WEB_UI_LOCATOR_OPTIONS: Array<{
   value: WebUiLocatorType
   description: string
 }> = [
+  { label: 'Test ID', value: 'TEST_ID', description: '按 data-testid、data-test、data-qa 或 id 定位' },
   { label: 'CSS 选择器', value: 'CSS', description: '例如 #submit 或 .login-form input' },
-  { label: '文本', value: 'TEXT', description: '按页面可见文本定位' },
-  { label: '角色', value: 'ROLE', description: '按按钮、链接等可访问角色定位' },
-  { label: '占位文本', value: 'PLACEHOLDER', description: '按 input placeholder 定位' },
-  { label: 'Label', value: 'LABEL', description: '按表单标签定位' },
-  { label: '测试 ID', value: 'TEST_ID', description: '按 data-testid 定位' },
+  { label: '文本 Text', value: 'TEXT', description: '按页面可见文本定位' },
+  { label: '角色 Role', value: 'ROLE', description: '按按钮、链接等可访问角色定位' },
+  { label: '标签 Label', value: 'LABEL', description: '按表单标签定位' },
+  { label: '占位符 Placeholder', value: 'PLACEHOLDER', description: '按 input placeholder 定位' },
   { label: 'XPath', value: 'XPATH', description: '用于复杂 DOM，优先少用' },
 ]
 

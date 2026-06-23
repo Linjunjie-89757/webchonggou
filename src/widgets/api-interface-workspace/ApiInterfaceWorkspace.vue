@@ -293,6 +293,8 @@ const importMode = ref<ApiImportMode>('swagger')
 const importInputMode = ref<ApiImportInputMode>('url')
 const importUrl = ref('')
 const importFileName = ref('')
+const importFile = ref<File | null>(null)
+const importSubmitting = ref(false)
 const softPromptVisible = ref(false)
 const softPromptTitle = ref('')
 const softPromptMessage = ref('')
@@ -426,7 +428,7 @@ const importCapabilityItems: Array<{
     mode: 'swagger',
     name: 'Swagger / OpenAPI',
     description: '支持 Swagger 2.0 / OpenAPI 3.x',
-    status: '待后端接口',
+    status: '已支持批量导入',
     accept: '.json,.yaml,.yml',
     icon: LucideLink,
     tone: 'green',
@@ -435,7 +437,7 @@ const importCapabilityItems: Array<{
     mode: 'postman',
     name: 'Postman Collection',
     description: '支持 Postman v2.0 / v2.1 格式',
-    status: '待后端接口',
+    status: '已支持批量导入',
     accept: '.json',
     icon: LucideFileJson,
     tone: 'orange',
@@ -444,7 +446,7 @@ const importCapabilityItems: Array<{
     mode: 'har',
     name: 'HAR 文件',
     description: '浏览器导出的 HTTP 存档文件',
-    status: '待后端接口',
+    status: '已支持批量导入',
     accept: '.har',
     icon: LucideFileText,
     tone: 'purple',
@@ -2862,10 +2864,11 @@ function guardAllWorkspaceAction(editor: EditorTab, actionText: string) {
   return false
 }
 
-async function loadWorkspaceData() {
+async function loadWorkspaceData(options?: { openDefaultTab?: boolean }) {
   if (!props.workspaceReady) {
     return
   }
+  const openDefaultTab = options?.openDefaultTab ?? true
 
   loading.value = true
   moduleLoading.value = true
@@ -2890,12 +2893,12 @@ async function loadWorkspaceData() {
     expandedKeys.value = collectExpandableDirectoryKeys(directoryTree.value)
     restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
-    if (!tabs.value.length && props.workspaceCode === 'ALL') {
+    if (openDefaultTab && !tabs.value.length && props.workspaceCode === 'ALL') {
       openNewRequestTab()
-    } else if (!tabs.value.length && definitions.value.length) {
+    } else if (openDefaultTab && !tabs.value.length && definitions.value.length) {
       void openDefinition(definitions.value[0], false)
     }
-    if (!tabs.value.length && !definitions.value.length) {
+    if (openDefaultTab && !tabs.value.length && !definitions.value.length) {
       openNewRequestTab()
     }
   } catch (error) {
@@ -3413,20 +3416,59 @@ function openImportDialog() {
   importInputMode.value = 'url'
   importUrl.value = ''
   importFileName.value = ''
+  importFile.value = null
   importDialogVisible.value = true
 }
 
 function closeImportDialog() {
+  if (importSubmitting.value) return
   importDialogVisible.value = false
 }
 
 function handleImportFileChange(event: Event) {
   const input = event.target as HTMLInputElement
-  importFileName.value = input.files?.[0]?.name || ''
+  const file = input.files?.[0] || null
+  importFile.value = file
+  importFileName.value = file?.name || ''
 }
 
-function submitImportDialog() {
-  ElMessage.info('当前导入类型需要后端接口支持')
+async function submitImportDialog() {
+  if (importSubmitting.value) return
+  if (importInputMode.value === 'url' && !importUrl.value.trim()) {
+    ElMessage.warning('请输入导入地址')
+    return
+  }
+  if (importInputMode.value === 'file' && !importFile.value) {
+    ElMessage.warning('请选择导入文件')
+    return
+  }
+
+  importSubmitting.value = true
+  try {
+    const result = importInputMode.value === 'file'
+      ? await apiAutomationApi.importDefinitionFile(props.workspaceCode, importMode.value, importFile.value!)
+      : await apiAutomationApi.importDefinitions(props.workspaceCode, {
+          workspaceCode: props.workspaceCode,
+          mode: importMode.value,
+          inputType: 'url',
+          url: importUrl.value.trim(),
+        })
+    await loadWorkspaceData({ openDefaultTab: false })
+    const firstImported = result.items[0]
+    if (firstImported) {
+      const definition = definitions.value.find(item => item.id === firstImported.id)
+      if (definition) {
+        await openDefinition(definition)
+      }
+    }
+    importDialogVisible.value = false
+    const failedText = result.failedCount ? `，失败 ${result.failedCount} 个` : ''
+    ElMessage.success(`已导入 ${result.createdCount} 个接口${failedText}`)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    importSubmitting.value = false
+  }
 }
 
 function tokenizeCurl(input: string) {
@@ -5422,6 +5464,7 @@ onBeforeUnmount(() => {
         </el-input>
         <el-select v-model="reportObjectType" class="api-report-filter" placeholder="全部类型" clearable @change="searchReports">
           <el-option label="接口用例" value="API_CASE" />
+          <el-option label="场景" value="SCENARIO" />
           <el-option label="执行套件" value="SUITE" />
         </el-select>
         <el-select v-model="reportResult" class="api-report-filter" placeholder="全部结果" clearable @change="searchReports">
@@ -5797,8 +5840,10 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="api-import-footer">
-          <button type="button" class="api-import-cancel" @click="closeImportDialog">取消</button>
-          <button type="button" class="api-import-submit" @click="submitImportDialog">开始导入</button>
+          <button type="button" class="api-import-cancel" :disabled="importSubmitting" @click="closeImportDialog">取消</button>
+          <button type="button" class="api-import-submit" :disabled="importSubmitting" @click="submitImportDialog">
+            {{ importSubmitting ? '导入中...' : '开始导入' }}
+          </button>
         </div>
       </div>
     </el-dialog>
@@ -6671,6 +6716,24 @@ onBeforeUnmount(() => {
                 <span>{{ item.stepCount ?? 0 }} 步</span>
                 <span>{{ formatDuration(item.durationMs) }}</span>
                 <p v-if="item.failureSummary">{{ item.failureSummary }}</p>
+              </div>
+            </div>
+          </section>
+
+          <section v-if="selectedReportDetail.dataIterations.length" class="api-report-detail-section">
+            <h3>测试数据行结果</h3>
+            <div class="api-report-item-list">
+              <div
+                v-for="row in selectedReportDetail.dataIterations"
+                :key="`${row.loopIndex || 1}-${row.rowIndex}`"
+                class="api-report-item-row"
+              >
+                <span :class="['api-report-result', runResultClass(row.result)]">{{ runResultLabel(row.result) }}</span>
+                <small>第 {{ row.loopIndex || 1 }} 轮 / 第 {{ row.rowIndex }} 行</small>
+                <strong>{{ row.caseDesc || '未命名数据行' }}</strong>
+                <span>{{ row.stepCount ?? 0 }} 步</span>
+                <span>{{ formatDuration(row.durationMs) }}</span>
+                <p v-if="row.failureSummary">{{ row.failureSummary }}</p>
               </div>
             </div>
           </section>

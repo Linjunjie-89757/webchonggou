@@ -9,6 +9,7 @@ import {
   type WebUiElementPageItem,
   type WebUiEnvironmentItem,
   type WebUiElementCollectFilterSummary,
+  type WebUiElementCollectFilterDetail,
   type WebUiElementCollectTaskResponse,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
@@ -18,6 +19,7 @@ import type { LocalRunnerHealthView } from '@/entities/web-ui-automation/lib/loc
 import {
   getCollectCandidateReviewLevel,
   getCollectCandidateReviewMessage,
+  formatCollectFilterReason,
   isCollectCandidateSaveable as isAiCandidateSaveable,
   type WebUiCollectCandidateFilter,
 } from '@/entities/web-ui-automation/lib/collectTask'
@@ -97,6 +99,8 @@ const props = defineProps<{
   visibleCandidates: AiElementCandidate[]
   candidateSummary: AiCandidateSummary
   collectFilterSummary: WebUiElementCollectFilterSummary | null
+  collectFilterDetails: WebUiElementCollectFilterDetail[]
+  collectFilterDetailsLoading: boolean
   collectTask: WebUiElementCollectTaskResponse | null
   collectTaskRefreshing: boolean
   collectTaskPolling: boolean
@@ -129,6 +133,7 @@ const emit = defineEmits<{
   'refresh-collect-task': []
   'cancel-collect-task': []
   'revalidate-visible-candidates': []
+  'restore-filter-detail': [detail: WebUiElementCollectFilterDetail]
   save: []
 }>()
 
@@ -178,6 +183,10 @@ function getAiCandidateRowClassName({ row }: { row: AiElementCandidate }) {
   if (level === 'danger') return 'web-ui-ai-collect__row--danger'
   if (level === 'warning') return 'web-ui-ai-collect__row--warning'
   return ''
+}
+
+function recoverableFilterDetailCount() {
+  return props.collectFilterDetails.filter(item => item.recoverable).length
 }
 </script>
 
@@ -410,6 +419,42 @@ function getAiCandidateRowClassName({ row }: { row: AiElementCandidate }) {
             禁止保存 {{ candidateSummary.blocked }}
           </el-tag>
         </div>
+
+        <section
+          v-if="collectFilterDetails.length || collectFilterDetailsLoading"
+          class="web-ui-ai-collect__filter-details"
+        >
+          <div class="web-ui-ai-collect__filter-details-header">
+            <strong>过滤明细</strong>
+            <el-tag type="info" effect="light">共 {{ collectFilterDetails.length }}</el-tag>
+            <el-tag :type="recoverableFilterDetailCount() ? 'warning' : 'info'" effect="light">
+              可恢复 {{ recoverableFilterDetailCount() }}
+            </el-tag>
+          </div>
+          <el-skeleton v-if="collectFilterDetailsLoading" :rows="2" animated />
+          <div v-else class="web-ui-ai-collect__filter-detail-list">
+            <div
+              v-for="detail in collectFilterDetails"
+              :key="detail.id"
+              class="web-ui-ai-collect__filter-detail-item"
+            >
+              <div>
+                <el-tag :type="detail.recoverable ? 'warning' : 'info'" effect="light">
+                  {{ formatCollectFilterReason(detail.reason) }}
+                </el-tag>
+                <strong>{{ detail.candidate.elementName || detail.candidate.locatorValue || '未命名候选' }}</strong>
+                <small>{{ detail.message || '暂无说明' }}</small>
+              </div>
+              <AppButton
+                size="small"
+                :disabled="!detail.recoverable"
+                @click="emit('restore-filter-detail', detail)"
+              >
+                恢复待验证
+              </AppButton>
+            </div>
+          </div>
+        </section>
 
         <div class="web-ui-ai-collect__actions">
           <AppButton
@@ -709,6 +754,47 @@ function getAiCandidateRowClassName({ row }: { row: AiElementCandidate }) {
   align-items: center;
   gap: var(--app-space-2);
   flex-wrap: wrap;
+}
+
+.web-ui-ai-collect__filter-details {
+  display: grid;
+  gap: var(--app-space-2);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-soft);
+}
+
+.web-ui-ai-collect__filter-details-header,
+.web-ui-ai-collect__filter-detail-item {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  flex-wrap: wrap;
+}
+
+.web-ui-ai-collect__filter-detail-list {
+  display: grid;
+  gap: var(--app-space-2);
+}
+
+.web-ui-ai-collect__filter-detail-item {
+  justify-content: space-between;
+  padding: var(--app-space-2);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-card);
+}
+
+.web-ui-ai-collect__filter-detail-item > div {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.web-ui-ai-collect__filter-detail-item small {
+  color: var(--app-text-muted);
 }
 
 .web-ui-ai-collect__footer {

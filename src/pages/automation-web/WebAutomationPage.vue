@@ -7,6 +7,7 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { WebUiCaseWorkspace } from '@/widgets/web-ui-case-workspace'
+import WebUiElementCollectTaskWorkspace from '@/widgets/web-ui-case-workspace/WebUiElementCollectTaskWorkspace.vue'
 import WebUiElementLibraryPanel from '@/widgets/web-ui-case-workspace/WebUiElementLibraryPanel.vue'
 import WebUiVariableSetDetailPage from '@/widgets/web-ui-case-workspace/WebUiVariableSetDetailPage.vue'
 import WebUiVariableSetPanel from '@/widgets/web-ui-case-workspace/WebUiVariableSetPanel.vue'
@@ -20,11 +21,12 @@ const route = useRoute()
 const router = useRouter()
 const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 
-type WebUiSection = 'cases' | 'elements' | 'templates' | 'runs' | 'batches' | 'environments' | 'variables' | 'variableDetail'
+type WebUiSection = 'cases' | 'elements' | 'collectTask' | 'templates' | 'runs' | 'batches' | 'environments' | 'variables' | 'variableDetail'
 
 const routeSectionMap: Record<string, WebUiSection> = {
   'automation-web-cases': 'cases',
   'automation-web-elements': 'elements',
+  'automation-web-element-collect-task': 'collectTask',
   'automation-web-templates': 'templates',
   'automation-web-runs': 'runs',
   'automation-web-batches': 'batches',
@@ -38,7 +40,7 @@ const activeSection = computed<WebUiSection>(() => {
   return routeSectionMap[routeName] || 'cases'
 })
 const workspaceMode = computed<'cases' | 'templates' | 'runs' | 'batches' | 'environments'>(() =>
-  activeSection.value === 'elements' || activeSection.value === 'variables' || activeSection.value === 'variableDetail'
+  activeSection.value === 'elements' || activeSection.value === 'collectTask' || activeSection.value === 'variables' || activeSection.value === 'variableDetail'
     ? 'cases'
     : activeSection.value,
 )
@@ -48,6 +50,12 @@ const pageCopy = computed(() => {
     return {
       title: 'Web UI 元素库',
       description: '维护页面对象和元素定位器，后续用于用例步骤、录制和 AI 生成。',
+    }
+  }
+  if (activeSection.value === 'collectTask') {
+    return {
+      title: 'Web UI AI 采集工作台',
+      description: '查看采集任务进度、候选元素、过滤明细、本地验证和入库操作。',
     }
   }
   if (activeSection.value === 'templates') {
@@ -195,7 +203,7 @@ watch(
   >
     <div class="web-automation-page">
       <WebUiCaseWorkspace
-        v-if="activeSection !== 'elements' && activeSection !== 'variables' && activeSection !== 'variableDetail'"
+        v-if="activeSection !== 'elements' && activeSection !== 'collectTask' && activeSection !== 'variables' && activeSection !== 'variableDetail'"
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :workspaces="workspaces"
@@ -206,6 +214,11 @@ watch(
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :environments="environments"
+      />
+      <WebUiElementCollectTaskWorkspace
+        v-else-if="activeSection === 'collectTask'"
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
       />
       <WebUiVariableSetPanel
         v-else-if="activeSection === 'variables'"

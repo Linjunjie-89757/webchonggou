@@ -197,6 +197,13 @@ export interface WebUiElementItem {
   lastValidateAt: string | null
   lastValidateMessage: string | null
   lastMatchCount: number | null
+  collectTaskId?: number | null
+  collectSource?: string | null
+  collectConfidence?: number | null
+  collectValidationStatus?: string | null
+  collectMatchCount?: number | null
+  collectValidationMessage?: string | null
+  collectScreenshotBase64?: string | null
   createdAt: string | null
   updatedAt: string | null
   usageCount: number
@@ -364,12 +371,15 @@ export interface WebUiElementCollectTaskResponse {
   currentStage: string
   progressPercent: number
   source: string
+  runnerId?: string | null
+  sessionId?: string | null
   actualUrl: string | null
   pageTitle: string | null
   aiModelConfigId?: number | null
   aiModelName?: string | null
   rawCount: number
   finalCount: number
+  globalScreenshotBase64?: string | null
   filterSummary: WebUiElementCollectFilterSummary | null
   filterLogs: WebUiElementCollectFilterLog[]
   candidates: WebUiElementCollectCandidate[]
@@ -391,6 +401,20 @@ export interface WebUiElementCollectFilterLog {
   reason: string
   count: number
   message: string | null
+}
+
+export interface WebUiElementCollectFilterDetail {
+  id: string
+  stage: string
+  reason: string
+  message: string | null
+  recoverable: boolean
+  candidate: WebUiElementCollectCandidate
+}
+
+export interface WebUiElementCollectFilterDetailsResponse {
+  taskId: number
+  details: WebUiElementCollectFilterDetail[]
 }
 
 export interface WebUiElementQualityIssue {
@@ -453,6 +477,13 @@ export interface SaveWebUiElementPayload {
   locatorValue: string
   description?: string | null
   status?: WebUiCaseStatus
+  collectTaskId?: number | null
+  collectSource?: string | null
+  collectConfidence?: number | null
+  collectValidationStatus?: string | null
+  collectMatchCount?: number | null
+  collectValidationMessage?: string | null
+  collectScreenshotBase64?: string | null
 }
 
 export interface WebUiElementListQuery {
@@ -463,6 +494,7 @@ export interface WebUiElementListQuery {
   pageName?: string
   groupName?: string
   status?: WebUiCaseStatus | ''
+  collectTaskId?: number | null
   pageNo?: number
   pageSize?: number
 }

@@ -371,12 +371,15 @@ export function normalizeElementCollectTaskResponse(item: WebUiElementCollectTas
     currentStage: item.currentStage || deriveCollectCurrentStage(item.status),
     progressPercent: Number(item.progressPercent ?? deriveCollectProgressPercent(item.status)),
     source: item.source || 'LOCAL_RUNNER_STATIC',
+    runnerId: item.runnerId || null,
+    sessionId: item.sessionId || null,
     actualUrl: item.actualUrl || null,
     pageTitle: item.pageTitle || null,
     aiModelConfigId: item.aiModelConfigId === null || item.aiModelConfigId === undefined ? null : Number(item.aiModelConfigId),
     aiModelName: item.aiModelName || null,
     rawCount: Number(item.rawCount || 0),
     finalCount: Number(item.finalCount || 0),
+    globalScreenshotBase64: item.globalScreenshotBase64 || null,
     filterSummary,
     filterLogs: Array.isArray(item.filterLogs)
       ? item.filterLogs.map(log => ({
@@ -399,6 +402,8 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
   const canceled = status === 'CANCELED'
   const degraded = status === 'DEGRADED'
   const currentStage = task?.currentStage || deriveCollectCurrentStage(status)
+  const rawCount = Number(task?.rawCount || task?.filterSummary?.originalCount || 0)
+  const finalCount = Number(task?.finalCount || task?.filterSummary?.finalCount || 0)
   const stageOrder: WebUiCollectTaskStageKey[] = ['UPLOAD_SNAPSHOT', 'RULE_CLEAN', 'AI_ANALYZE', 'LOCAL_VALIDATE', 'FINALIZE']
   const currentIndex = stageOrder.indexOf(currentStage as WebUiCollectTaskStageKey)
   const resolveStageStatus = (key: WebUiCollectTaskStageKey): WebUiCollectTaskStageStatus => {
@@ -408,8 +413,11 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
     if (degraded && key === 'LOCAL_VALIDATE') {
       return 'degraded'
     }
-    if (status === 'COMPLETED' || (degraded && key === 'FINALIZE')) {
-      return key === 'AI_ANALYZE' || key === 'LOCAL_VALIDATE' ? 'pending' : 'done'
+    if (status === 'COMPLETED') {
+      return 'done'
+    }
+    if (degraded && key === 'FINALIZE') {
+      return 'done'
     }
     const index = stageOrder.indexOf(key)
     if (currentIndex >= 0 && index >= 0) {
@@ -429,9 +437,7 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
       key: 'RULE_CLEAN',
       title: '规则清洗',
       status: resolveStageStatus('RULE_CLEAN'),
-      description: task?.filterSummary
-        ? `原始 ${task.filterSummary.originalCount}，保留 ${task.filterSummary.finalCount}`
-        : '等待后端规则过滤、去重和评分',
+      description: buildRuleCleanStageDescription(task, status, rawCount, finalCount),
     },
     {
       key: 'AI_ANALYZE',
@@ -445,15 +451,47 @@ export function buildCollectTaskStages(task: WebUiElementCollectTaskResponse | n
       status: resolveStageStatus('LOCAL_VALIDATE'),
       description: degraded
         ? task?.message || '本地 Runner 不可用，已降级为未验证候选'
-        : '后续接入 Runner 本地真机验证',
+        : status === 'WAITING_LOCAL_VALIDATION'
+          ? `等待本地 Runner 验证 ${finalCount || task?.candidates.length || 0} 个定位器`
+          : status === 'VALIDATING'
+            ? `本地 Runner 正在验证 ${finalCount || task?.candidates.length || 0} 个定位器`
+            : status === 'COMPLETED'
+              ? 'Runner 真机验证完成'
+              : '本地 Runner 真机验证已接入',
     },
     {
       key: 'FINALIZE',
       title: '生成候选',
       status: resolveStageStatus('FINALIZE'),
-      description: task?.finalCount === undefined ? '等待候选生成' : `最终候选 ${task.finalCount}`,
+      description: task?.finalCount === undefined ? '等待候选生成' : `最终候选 ${finalCount}`,
     },
   ]
+}
+
+function buildRuleCleanStageDescription(
+  task: WebUiElementCollectTaskResponse | null,
+  status: string,
+  rawCount: number,
+  finalCount: number,
+) {
+  if (!task) {
+    return '等待后端规则过滤、去重和评分'
+  }
+  if (status === 'UPLOADED') {
+    return rawCount ? `快照已上传，等待清洗 ${rawCount} 个原始候选` : '快照已上传，等待后端开始规则清洗'
+  }
+  if (status === 'RULE_CLEANING' || status === 'PROCESSING') {
+    return rawCount ? `正在清洗 ${rawCount} 个原始候选` : '正在执行规则过滤、去重和评分'
+  }
+  if (task.filterSummary && finalCount > 0) {
+    return `原始 ${task.filterSummary.originalCount}，保留 ${finalCount}`
+  }
+  if (rawCount > 0 && finalCount === 0 && status !== 'AI_ANALYZING' && status !== 'WAITING_LOCAL_VALIDATION' && status !== 'VALIDATING' && status !== 'COMPLETED') {
+    return `已收到 ${rawCount} 个原始候选，等待生成最终候选`
+  }
+  return task.filterSummary
+    ? `原始 ${task.filterSummary.originalCount}，等待最终候选生成`
+    : '等待后端规则过滤、去重和评分'
 }
 
 function collectAiStageDescription(task: WebUiElementCollectTaskResponse | null) {
@@ -485,8 +523,9 @@ function deriveCollectCurrentStage(status?: string | null) {
   if (status === 'CANCELED') return 'LOCAL_VALIDATE'
   if (status === 'DEGRADED') return 'LOCAL_VALIDATE'
   if (status === 'WAITING_LOCAL_VALIDATION' || status === 'VALIDATING') return 'LOCAL_VALIDATE'
-  if (status === 'PROCESSING') return 'RULE_CLEAN'
-  if (status === 'PENDING') return 'UPLOAD_SNAPSHOT'
+  if (status === 'AI_ANALYZING') return 'AI_ANALYZE'
+  if (status === 'RULE_CLEANING' || status === 'PROCESSING') return 'RULE_CLEAN'
+  if (status === 'UPLOADED' || status === 'PENDING') return 'UPLOAD_SNAPSHOT'
   return 'FINALIZE'
 }
 
@@ -495,7 +534,8 @@ function deriveCollectProgressPercent(status?: string | null) {
   if (status === 'CANCELED') return 100
   if (status === 'DEGRADED') return 80
   if (status === 'WAITING_LOCAL_VALIDATION' || status === 'VALIDATING') return 75
-  if (status === 'PROCESSING') return 40
-  if (status === 'PENDING') return 10
+  if (status === 'AI_ANALYZING') return 55
+  if (status === 'RULE_CLEANING' || status === 'PROCESSING') return 40
+  if (status === 'UPLOADED' || status === 'PENDING') return 10
   return 100
 }

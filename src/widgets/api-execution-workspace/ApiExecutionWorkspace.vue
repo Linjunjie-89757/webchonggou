@@ -1469,7 +1469,7 @@ function showPending(message: string) {
             </button>
           </div>
 
-          <div class="execution-suite-header">
+          <div v-if="activeExecutionSubTab === 'arrange'" class="execution-suite-header">
             <div class="execution-suite-name-row">
               <span class="execution-priority-badge">{{ activeSuiteDetail.priority }}</span>
               <strong>{{ activeSuiteName }}</strong>

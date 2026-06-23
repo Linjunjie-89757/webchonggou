@@ -20,6 +20,8 @@ import {
 import {
   Folder as LucideFolder,
   FolderOpen as LucideFolderOpen,
+  Clock,
+  Menu,
   Plus as LucidePlus,
   Search as LucideSearch,
 } from '@lucide/vue'
@@ -42,14 +44,19 @@ import {
   type ApiScenarioDetail,
   type ApiScenarioItem,
   type ApiScenarioModuleItem,
+  type ApiScenarioRunHistoryDetail,
+  type ApiScenarioRunHistoryItem,
   type ApiScenarioStep,
   type ApiScenarioStepRefType,
   type ApiScenarioStepType,
+  type ApiScenarioTestDatasetItem,
   type SaveApiScenarioPayload,
 } from '@/entities/api-automation'
 import { configApi, type DbConnectionItem } from '@/entities/config'
 import type { WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
+import AppTableColumnSettingsDrawer, { type AppTableColumnSettingsItem } from '@/shared/ui/app-table-column-settings-drawer/AppTableColumnSettingsDrawer.vue'
+import AppTableSettingsTrigger from '@/shared/ui/app-table-settings-trigger/AppTableSettingsTrigger.vue'
 import ApiCodeEditor from '../api-interface-workspace/ApiCodeEditor.vue'
 import ApiScenarioTestDataPanel from './ApiScenarioTestDataPanel.vue'
 import ScenarioAssertionEditor from './ScenarioAssertionEditor.vue'
@@ -66,6 +73,21 @@ type ScenarioCodeLanguage = 'api-console' | 'json' | 'xml' | 'text' | 'javascrip
 type ScenarioSoftPromptInputType = 'text' | 'textarea'
 type ScenarioImportTab = 'api' | 'case' | 'scenario'
 type ScenarioImportMode = 'copy' | 'ref'
+type ScenarioTableColumnKey =
+  | 'id'
+  | 'name'
+  | 'priority'
+  | 'status'
+  | 'lastRunResult'
+  | 'tags'
+  | 'environment'
+  | 'stepCount'
+  | 'passRate'
+  | 'moduleName'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'createdBy'
+  | 'updatedBy'
 type ScenarioAddStepCommand =
   | 'IMPORT_SYSTEM_API'
   | 'API_CASE'
@@ -116,6 +138,15 @@ interface ScenarioModuleTreeNode {
   name: string
   scenarioCount: number
   children: ScenarioModuleTreeNode[]
+}
+
+interface ScenarioTableColumnDefinition {
+  key: ScenarioTableColumnKey
+  label: string
+  width?: number
+  minWidth?: number
+  required?: boolean
+  defaultVisible?: boolean
 }
 
 interface ScenarioImportTreeNode {
@@ -191,9 +222,24 @@ const expandedScenarioModuleTreeKeys = ref<string[]>([])
 const scenarioModuleTreeRenderKey = ref(0)
 const scenarioFilters = ref({ keyword: '', status: '' })
 const scenarioViewMode = ref('ALL')
+const scenarioTableSettingsVisible = ref(false)
+const scenarioTableDraggingColumnKey = ref<ScenarioTableColumnKey | null>(null)
+const scenarioTableColumnVisibility = ref<Partial<Record<ScenarioTableColumnKey, boolean>>>({})
+const scenarioTableColumnOrder = ref<ScenarioTableColumnKey[]>([])
+const hoveredScenarioRowId = ref<number | null>(null)
 const activeScenarioDetailTab = ref<ScenarioDetailTab>('steps')
 const scenarioSaving = ref(false)
 const scenarioRunning = ref(false)
+const scenarioRunLoopCount = ref(1)
+const scenarioRunThreadCount = ref(1)
+const scenarioRunDatasetId = ref<number | null>(null)
+const scenarioRunDatasets = ref<ApiScenarioTestDatasetItem[]>([])
+const scenarioRunDatasetsLoading = ref(false)
+const scenarioRunHistoryItems = ref<ApiScenarioRunHistoryItem[]>([])
+const selectedScenarioRunHistoryId = ref<number | null>(null)
+const selectedScenarioRunHistoryDetail = ref<ApiScenarioRunHistoryDetail | null>(null)
+const scenarioRunHistoryLoading = ref(false)
+const scenarioRunHistoryDetailLoading = ref(false)
 const scenarioSoftPromptVisible = ref(false)
 const scenarioSoftPromptTitle = ref('')
 const scenarioSoftPromptMessage = ref('')
@@ -242,6 +288,8 @@ const scenarioStepScriptActiveTab = ref<ScenarioScriptConfigTab>('script')
 const scenarioStepScriptActiveAssertionId = ref<string | null>(null)
 const scenarioStepNameEditingId = ref('')
 const scenarioStepNameDraft = ref('')
+const scenarioHeaderNameEditing = ref(false)
+const scenarioHeaderNameDraft = ref('')
 const scenarioEditorTabs = ref<ScenarioEditorTab[]>([
   {
     key: 'scenario-list',
@@ -296,10 +344,77 @@ const activeScenarioEditorTab = computed(() => (
 ))
 
 const activeScenarioDetail = computed(() => activeScenarioEditorTab.value?.detail || buildEmptyScenarioDetail())
-const activeScenarioRunSteps = computed(() => activeScenarioEditorTab.value?.lastRunStepResults || [])
-const activeScenarioRunDataIterations = computed(() => activeScenarioEditorTab.value?.lastRunDataIterations || [])
-const activeScenarioRunResult = computed(() => activeScenarioEditorTab.value?.lastRunResult || activeScenarioDetail.value.lastRunResult || null)
-const activeScenarioRunFailureSummary = computed(() => activeScenarioEditorTab.value?.lastRunFailureSummary || '')
+const activeScenarioRunHistoryDetail = computed(() => selectedScenarioRunHistoryDetail.value)
+const activeScenarioRunSteps = computed(() => activeScenarioRunHistoryDetail.value?.stepResults || activeScenarioEditorTab.value?.lastRunStepResults || [])
+const activeScenarioRunDataIterations = computed(() => activeScenarioRunHistoryDetail.value?.dataIterations || activeScenarioEditorTab.value?.lastRunDataIterations || [])
+const activeScenarioRunResult = computed(() => activeScenarioRunHistoryDetail.value?.result || activeScenarioEditorTab.value?.lastRunResult || activeScenarioDetail.value.lastRunResult || null)
+const activeScenarioRunFailureSummary = computed(() => activeScenarioRunHistoryDetail.value?.failureSummary || activeScenarioEditorTab.value?.lastRunFailureSummary || '')
+const activeScenarioRunDatasetName = computed(() => activeScenarioRunHistoryDetail.value?.testDatasetName || selectedScenarioRunDataset.value?.datasetName || activeScenarioDetail.value.dataFileNameSnapshot || '-')
+const activeScenarioRunLoopCount = computed(() => activeScenarioRunHistoryDetail.value?.loopCount || scenarioRunLoopCount.value)
+const activeScenarioRunThreadCount = computed(() => activeScenarioRunHistoryDetail.value?.threadCount || scenarioRunThreadCount.value)
+const activeScenarioName = computed(() => activeScenarioDetail.value.name?.trim() || '未保存场景')
+const activeScenarioWorkspaceName = computed(() => getWorkspaceName(activeScenarioDetail.value.workspaceCode || props.workspaceCode))
+const activeScenarioUpdatedAt = computed(() => formatScenarioDateTime(activeScenarioDetail.value.updatedAt))
+const activeScenarioModuleLabel = computed(() => {
+  if (activeScenarioDetail.value.moduleName) return activeScenarioDetail.value.moduleName
+  return activeScenarioDetail.value.moduleId == null ? '根目录' : '未命名模块'
+})
+const scenarioRunEnvironmentOptions = computed(() => props.environments || [])
+const enabledScenarioRunDatasets = computed(() => scenarioRunDatasets.value.filter(item => item.enabled !== false))
+const selectedScenarioRunDataset = computed(() => enabledScenarioRunDatasets.value.find(item => item.id === scenarioRunDatasetId.value) || null)
+
+const scenarioTableColumnDefinitions = computed<ScenarioTableColumnDefinition[]>(() => [
+  { key: 'id', label: 'ID', width: 120, required: true, defaultVisible: true },
+  { key: 'name', label: '场景名称', minWidth: 220, required: true, defaultVisible: true },
+  { key: 'priority', label: '场景等级', width: 110, defaultVisible: true },
+  { key: 'status', label: '状态', width: 110, defaultVisible: true },
+  { key: 'lastRunResult', label: '执行结果', width: 120, defaultVisible: true },
+  { key: 'tags', label: '标签', minWidth: 160, defaultVisible: true },
+  { key: 'environment', label: '场景环境', width: 140, defaultVisible: true },
+  { key: 'stepCount', label: '步骤数', width: 100, defaultVisible: false },
+  { key: 'passRate', label: '通过率', width: 100, defaultVisible: false },
+  { key: 'moduleName', label: '所属模块', width: 140, defaultVisible: false },
+  { key: 'createdAt', label: '创建时间', width: 168, defaultVisible: false },
+  { key: 'updatedAt', label: '更新时间', width: 168, defaultVisible: false },
+  { key: 'createdBy', label: '创建人', width: 120, defaultVisible: true },
+  { key: 'updatedBy', label: '更新人', width: 120, defaultVisible: true },
+])
+
+const scenarioTableRequiredColumns = computed(() => scenarioTableColumnDefinitions.value.filter(column => column.required))
+const scenarioTableOptionalColumns = computed(() => scenarioTableColumnDefinitions.value.filter(column => !column.required))
+
+const scenarioTableOrderedColumns = computed(() => scenarioTableColumnOrder.value
+  .map(key => scenarioTableColumnDefinitions.value.find(column => column.key === key))
+  .filter((column): column is ScenarioTableColumnDefinition => Boolean(column)))
+
+const scenarioTableVisibleColumns = computed(() => scenarioTableOrderedColumns.value.filter(column => (
+  column.required || Boolean(scenarioTableColumnVisibility.value[column.key])
+)))
+
+const scenarioTableDrawerColumns = computed<AppTableColumnSettingsItem[]>(() => scenarioTableOrderedColumns.value.map(column => ({
+  key: column.key,
+  label: column.label,
+  required: Boolean(column.required),
+  visible: column.required ? true : Boolean(scenarioTableColumnVisibility.value[column.key]),
+  draggable: !column.required,
+})))
+
+const scenarioTableGridMinWidth = computed(() => {
+  const columnWidth = scenarioTableVisibleColumns.value.reduce((total, column) => {
+    if (typeof column.width === 'number') return total + column.width
+    if (typeof column.minWidth === 'number') return total + column.minWidth
+    return total + 120
+  }, 0)
+
+  return `${columnWidth}px`
+})
+
+const scenarioTableGridTemplateColumns = computed(() => scenarioTableVisibleColumns.value.map((column) => {
+  if (typeof column.width === 'number') return `${column.width}px`
+  if (column.key === 'name' && typeof column.minWidth === 'number') return `minmax(${column.minWidth}px, 1fr)`
+  if (typeof column.minWidth === 'number') return `${column.minWidth}px`
+  return '120px'
+}).join(' '))
 
 const flatScenarioModules = computed(() => flattenScenarioModules(modules.value))
 
@@ -1079,9 +1194,293 @@ function scenarioStepResultTone(row: ApiRunStepResult) {
   return row.success ? 'passed' : 'failed'
 }
 
+function formatScenarioDateTime(value?: string | null) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (num: number) => String(num).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+function scenarioEnvironmentName(row: ApiScenarioItem) {
+  return props.environments?.find(item => item.id === row.defaultEnvironmentId)?.name || '-'
+}
+
+function scenarioPassRate(row: ApiScenarioItem) {
+  const result = String(row.lastRunResult || '').toUpperCase()
+  if (!result) return '-'
+  return result === 'SUCCESS' || result === 'PASSED' || result === 'PASS' ? '100%' : '0%'
+}
+
+function scenarioUnknownColumnValue(row: ApiScenarioItem, key: string) {
+  const value = (row as unknown as Record<string, unknown>)[key]
+  return typeof value === 'string' && value.trim() ? value : '-'
+}
+
+function formatScenarioTableColumnValue(row: ApiScenarioItem, key: ScenarioTableColumnKey) {
+  switch (key) {
+    case 'id':
+      return String(100000 + row.id)
+    case 'name':
+      return row.name || '-'
+    case 'priority':
+      return scenarioPriorityLabel(row.priority)
+    case 'status':
+      return scenarioStatusLabel(row.status)
+    case 'lastRunResult':
+      return scenarioRunResultLabel(row.lastRunResult)
+    case 'tags':
+      return row.tags?.length ? row.tags.join(', ') : '-'
+    case 'environment':
+      return scenarioEnvironmentName(row)
+    case 'stepCount':
+      return String(row.stepCount ?? 0)
+    case 'passRate':
+      return scenarioPassRate(row)
+    case 'moduleName':
+      return row.moduleName || '-'
+    case 'createdAt':
+      return formatScenarioDateTime(scenarioUnknownColumnValue(row, 'createdAt'))
+    case 'updatedAt':
+      return formatScenarioDateTime(row.updatedAt)
+    case 'createdBy':
+      return scenarioUnknownColumnValue(row, 'createdByName')
+    case 'updatedBy':
+      return scenarioUnknownColumnValue(row, 'updatedByName')
+    default:
+      return '-'
+  }
+}
+
+function buildDefaultScenarioTableColumnOrder() {
+  return [
+    ...scenarioTableRequiredColumns.value.map(column => column.key),
+    ...scenarioTableOptionalColumns.value.map(column => column.key),
+  ]
+}
+
+function buildDefaultScenarioTableColumnVisibility() {
+  return scenarioTableColumnDefinitions.value.reduce<Partial<Record<ScenarioTableColumnKey, boolean>>>((result, column) => {
+    result[column.key] = column.required ? true : Boolean(column.defaultVisible)
+    return result
+  }, {})
+}
+
+function normalizeScenarioTableColumnOrder(nextOrder?: ScenarioTableColumnKey[]) {
+  const requiredKeys = scenarioTableRequiredColumns.value.map(column => column.key)
+  const optionalKeys = scenarioTableOptionalColumns.value.map(column => column.key)
+  const preferredOptionalOrder = (nextOrder ?? []).filter(key => optionalKeys.includes(key))
+  const remainingOptionalKeys = optionalKeys.filter(key => !preferredOptionalOrder.includes(key))
+  return [...requiredKeys, ...preferredOptionalOrder, ...remainingOptionalKeys]
+}
+
+function isScenarioTableColumnKey(key: string): key is ScenarioTableColumnKey {
+  return scenarioTableColumnDefinitions.value.some(column => column.key === key)
+}
+
+function syncScenarioTableSettings() {
+  const currentVisibility = scenarioTableColumnVisibility.value
+  scenarioTableColumnOrder.value = normalizeScenarioTableColumnOrder(scenarioTableColumnOrder.value)
+  scenarioTableColumnVisibility.value = scenarioTableColumnDefinitions.value.reduce<Partial<Record<ScenarioTableColumnKey, boolean>>>((result, column) => {
+    result[column.key] = column.required
+      ? true
+      : (currentVisibility[column.key] ?? Boolean(column.defaultVisible))
+    return result
+  }, {})
+}
+
+function persistScenarioTableSettings() {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem('api-scenario-list-table-settings-v1', JSON.stringify({
+    columns: scenarioTableColumnVisibility.value,
+    columnOrder: scenarioTableColumnOrder.value,
+  }))
+}
+
+function loadScenarioTableSettings() {
+  const defaultOrder = buildDefaultScenarioTableColumnOrder()
+  const defaultVisibility = buildDefaultScenarioTableColumnVisibility()
+  if (typeof localStorage === 'undefined') {
+    scenarioTableColumnOrder.value = defaultOrder
+    scenarioTableColumnVisibility.value = defaultVisibility
+    return
+  }
+  const raw = localStorage.getItem('api-scenario-list-table-settings-v1')
+  if (!raw) {
+    scenarioTableColumnOrder.value = defaultOrder
+    scenarioTableColumnVisibility.value = defaultVisibility
+    return
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      columns?: Partial<Record<ScenarioTableColumnKey, boolean>>
+      columnOrder?: ScenarioTableColumnKey[]
+    }
+    scenarioTableColumnOrder.value = normalizeScenarioTableColumnOrder(parsed.columnOrder)
+    scenarioTableColumnVisibility.value = scenarioTableColumnDefinitions.value.reduce<Partial<Record<ScenarioTableColumnKey, boolean>>>((result, column) => {
+      result[column.key] = column.required
+        ? true
+        : (parsed.columns?.[column.key] ?? Boolean(column.defaultVisible))
+      return result
+    }, {})
+  } catch {
+    scenarioTableColumnOrder.value = defaultOrder
+    scenarioTableColumnVisibility.value = defaultVisibility
+  }
+  syncScenarioTableSettings()
+}
+
+function resetScenarioTableSettings() {
+  scenarioTableColumnOrder.value = buildDefaultScenarioTableColumnOrder()
+  scenarioTableColumnVisibility.value = buildDefaultScenarioTableColumnVisibility()
+  persistScenarioTableSettings()
+}
+
+function toggleScenarioTableColumnVisibility(key: string, value: boolean | string | number) {
+  if (!isScenarioTableColumnKey(key)) return
+  const targetColumn = scenarioTableColumnDefinitions.value.find(column => column.key === key)
+  if (!targetColumn || targetColumn.required) return
+  scenarioTableColumnVisibility.value = {
+    ...scenarioTableColumnVisibility.value,
+    [key]: Boolean(value),
+  }
+  persistScenarioTableSettings()
+}
+
+function canDragScenarioTableColumn(key: ScenarioTableColumnKey) {
+  return scenarioTableOptionalColumns.value.some(column => column.key === key)
+}
+
+function handleScenarioTableColumnDragStart(key: string) {
+  if (!isScenarioTableColumnKey(key) || !canDragScenarioTableColumn(key)) return
+  scenarioTableDraggingColumnKey.value = key
+}
+
+function handleScenarioTableColumnDragEnd() {
+  scenarioTableDraggingColumnKey.value = null
+}
+
+function moveScenarioTableColumnToTarget(targetKey: string) {
+  if (!isScenarioTableColumnKey(targetKey)) return
+  const sourceKey = scenarioTableDraggingColumnKey.value
+  if (!sourceKey || sourceKey === targetKey || !canDragScenarioTableColumn(sourceKey) || !canDragScenarioTableColumn(targetKey)) return
+  const nextOrder = [...scenarioTableColumnOrder.value]
+  const sourceIndex = nextOrder.indexOf(sourceKey)
+  const targetIndex = nextOrder.indexOf(targetKey)
+  if (sourceIndex < 0 || targetIndex < 0) return
+  const [sourceColumn] = nextOrder.splice(sourceIndex, 1)
+  nextOrder.splice(targetIndex, 0, sourceColumn)
+  scenarioTableColumnOrder.value = normalizeScenarioTableColumnOrder(nextOrder)
+  scenarioTableDraggingColumnKey.value = null
+  persistScenarioTableSettings()
+}
+
+function setHoveredScenarioRow(rowId: number | null) {
+  hoveredScenarioRowId.value = rowId
+}
+
 function markScenarioDirty() {
   if (activeScenarioEditorTab.value && activeScenarioEditorTab.value.key !== 'scenario-list') {
     activeScenarioEditorTab.value.dirty = true
+  }
+}
+
+function changeScenarioPriority(priority: string | number | object) {
+  activeScenarioDetail.value.priority = String(priority || 'P1')
+  markScenarioDirty()
+}
+
+function startScenarioHeaderNameEdit() {
+  scenarioHeaderNameDraft.value = activeScenarioDetail.value.name || ''
+  scenarioHeaderNameEditing.value = true
+}
+
+function finishScenarioHeaderNameEdit() {
+  const nextName = scenarioHeaderNameDraft.value.trim()
+  if (nextName && nextName !== activeScenarioDetail.value.name) {
+    activeScenarioDetail.value.name = nextName
+    markScenarioDirty()
+  }
+  scenarioHeaderNameEditing.value = false
+}
+
+function handleScenarioRunDatasetChange(datasetId: string | number | boolean | object | null | undefined) {
+  const normalizedDatasetId = typeof datasetId === 'number' ? datasetId : null
+  scenarioRunDatasetId.value = normalizedDatasetId
+}
+
+function resetScenarioRunHistoryState() {
+  scenarioRunHistoryItems.value = []
+  selectedScenarioRunHistoryId.value = null
+  selectedScenarioRunHistoryDetail.value = null
+}
+
+async function loadScenarioRunDatasets() {
+  const detail = activeScenarioDetail.value
+  if (!props.workspaceReady || !detail.id || !detail.workspaceCode || detail.workspaceCode === 'ALL') {
+    scenarioRunDatasets.value = []
+    scenarioRunDatasetId.value = null
+    return
+  }
+  scenarioRunDatasetsLoading.value = true
+  try {
+    scenarioRunDatasets.value = await apiAutomationApi.getScenarioTestDatasets(detail.workspaceCode, detail.id)
+    const matchedDataset = enabledScenarioRunDatasets.value.find(item => item.datasetName === detail.dataFileNameSnapshot)
+    scenarioRunDatasetId.value = matchedDataset?.id ?? null
+  } catch (error) {
+    scenarioRunDatasets.value = []
+    scenarioRunDatasetId.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    scenarioRunDatasetsLoading.value = false
+  }
+}
+
+async function loadScenarioRunHistory(selectLatest = false) {
+  const detail = activeScenarioDetail.value
+  if (!props.workspaceReady || !detail.id || !detail.workspaceCode || detail.workspaceCode === 'ALL') {
+    scenarioRunHistoryItems.value = []
+    selectedScenarioRunHistoryId.value = null
+    selectedScenarioRunHistoryDetail.value = null
+    return
+  }
+  scenarioRunHistoryLoading.value = true
+  try {
+    const page = await apiAutomationApi.getScenarioRunHistory(detail.workspaceCode, detail.id, { pageNo: 1, pageSize: 10 })
+    scenarioRunHistoryItems.value = page.items
+    const targetId = selectLatest
+      ? page.items[0]?.id ?? null
+      : selectedScenarioRunHistoryId.value && page.items.some(item => item.id === selectedScenarioRunHistoryId.value)
+        ? selectedScenarioRunHistoryId.value
+        : page.items[0]?.id ?? null
+    if (targetId) {
+      await loadScenarioRunHistoryDetail(targetId)
+    } else {
+      selectedScenarioRunHistoryId.value = null
+      selectedScenarioRunHistoryDetail.value = null
+    }
+  } catch (error) {
+    scenarioRunHistoryItems.value = []
+    selectedScenarioRunHistoryId.value = null
+    selectedScenarioRunHistoryDetail.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    scenarioRunHistoryLoading.value = false
+  }
+}
+
+async function loadScenarioRunHistoryDetail(historyId: number) {
+  const detail = activeScenarioDetail.value
+  if (!detail.workspaceCode || detail.workspaceCode === 'ALL') return
+  selectedScenarioRunHistoryId.value = historyId
+  scenarioRunHistoryDetailLoading.value = true
+  try {
+    selectedScenarioRunHistoryDetail.value = await apiAutomationApi.getScenarioRunHistoryDetail(detail.workspaceCode, historyId)
+  } catch (error) {
+    selectedScenarioRunHistoryDetail.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    scenarioRunHistoryDetailLoading.value = false
   }
 }
 
@@ -1388,11 +1787,15 @@ function openNewScenarioTab() {
   })
   activeScenarioEditorKey.value = key
   activeScenarioDetailTab.value = 'steps'
+  scenarioRunDatasets.value = []
+  scenarioRunDatasetId.value = null
   void nextTick(scrollActiveScenarioTabIntoView)
 }
 
 function activateScenarioEditorTab(key: string) {
   activeScenarioEditorKey.value = key
+  resetScenarioRunHistoryState()
+  void loadScenarioRunDatasets()
   void nextTick(scrollActiveScenarioTabIntoView)
 }
 
@@ -1400,6 +1803,8 @@ async function selectScenario(id: number) {
   const existing = scenarioEditorTabs.value.find(item => item.id === id)
   if (existing) {
     activeScenarioEditorKey.value = existing.key
+    resetScenarioRunHistoryState()
+    void loadScenarioRunDatasets()
     void nextTick(scrollActiveScenarioTabIntoView)
     return true
   }
@@ -1421,6 +1826,8 @@ async function selectScenario(id: number) {
       lastRunFailureSummary: null,
     })
     activeScenarioEditorKey.value = key
+    resetScenarioRunHistoryState()
+    void loadScenarioRunDatasets()
     void nextTick(scrollActiveScenarioTabIntoView)
     return true
   } catch (error) {
@@ -1628,6 +2035,8 @@ async function copyScenario(row: ApiScenarioItem) {
     })
     activeScenarioEditorKey.value = key
     activeScenarioDetailTab.value = 'steps'
+    scenarioRunDatasets.value = []
+    scenarioRunDatasetId.value = null
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   }
@@ -2392,6 +2801,7 @@ async function saveScenario() {
     currentTab.savedFingerprint = fingerprintScenarioDetail(savedDetail)
     currentTab.detail = savedDetail
     activeScenarioEditorKey.value = nextKey
+    await loadScenarioRunDatasets()
     await loadScenarioWorkspace()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -2415,6 +2825,10 @@ async function runScenario() {
     const response = await apiAutomationApi.runScenario(detail.workspaceCode, detail.id, {
       environmentId: detail.defaultEnvironmentId,
       variableSetId: detail.variableSetId,
+      testDatasetEnabled: Boolean(scenarioRunDatasetId.value),
+      testDatasetId: scenarioRunDatasetId.value,
+      loopCount: scenarioRunLoopCount.value,
+      threadCount: scenarioRunThreadCount.value,
     })
     activeScenarioEditorTab.value.lastRunStepResults = response.stepResults || []
     activeScenarioEditorTab.value.lastRunDataIterations = response.dataIterations || []
@@ -2422,6 +2836,7 @@ async function runScenario() {
     activeScenarioEditorTab.value.lastRunFailureSummary = response.failureSummary || null
     detail.lastRunResult = response.result
     ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
+    await loadScenarioRunHistory(true)
     activeScenarioDetailTab.value = 'reports'
     await loadScenarioWorkspace()
   } catch (error) {
@@ -2456,6 +2871,7 @@ async function loadScenarioWorkspace() {
 }
 
 onMounted(() => {
+  loadScenarioTableSettings()
   void loadScenarioWorkspace()
   document.addEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
   window.addEventListener('resize', updateScenarioTabOverflow)
@@ -2486,7 +2902,14 @@ watch(scenarioEditorTabs, () => {
 }, { deep: true })
 
 watch(activeScenarioEditorKey, () => {
+  resetScenarioRunHistoryState()
   void nextTick(updateScenarioTabOverflow)
+})
+
+watch(activeScenarioDetailTab, (tab) => {
+  if (tab === 'reports' && !scenarioRunHistoryItems.value.length && !scenarioRunHistoryLoading.value) {
+    void loadScenarioRunHistory(false)
+  }
 })
 </script>
 
@@ -2673,7 +3096,100 @@ watch(activeScenarioEditorKey, () => {
               </el-select>
               <el-button class="ms-scenario-tool-button">筛选</el-button>
             </div>
-            <el-table :data="filteredScenarios" size="small" class="scenario-table ms-scenario-table">
+            <div class="ms-scenario-grid-shell">
+              <div class="ms-scenario-grid-data">
+                <div class="ms-scenario-grid-scroll">
+                  <div
+                    class="ms-scenario-grid ms-scenario-grid--header"
+                    :style="{ gridTemplateColumns: scenarioTableGridTemplateColumns, minWidth: scenarioTableGridMinWidth }"
+                  >
+                    <div
+                      v-for="column in scenarioTableVisibleColumns"
+                      :key="`scenario-header-${column.key}`"
+                      :class="['ms-scenario-grid-cell', `is-${column.key}`]"
+                    >
+                      {{ column.label }}
+                    </div>
+                  </div>
+
+                  <template v-if="filteredScenarios.length">
+                    <div
+                      v-for="row in filteredScenarios"
+                      :key="row.id"
+                      :class="['ms-scenario-grid', 'ms-scenario-grid--row', { 'is-active': hoveredScenarioRowId === row.id }]"
+                      :style="{ gridTemplateColumns: scenarioTableGridTemplateColumns, minWidth: scenarioTableGridMinWidth }"
+                      @mouseenter="setHoveredScenarioRow(row.id)"
+                      @mouseleave="setHoveredScenarioRow(null)"
+                    >
+                      <div
+                        v-for="column in scenarioTableVisibleColumns"
+                        :key="`${row.id}-${column.key}`"
+                        :class="['ms-scenario-grid-cell', `is-${column.key}`]"
+                      >
+                        <button
+                          v-if="column.key === 'id'"
+                          type="button"
+                          class="scenario-link"
+                          @click="selectScenario(row.id)"
+                        >
+                          {{ formatScenarioTableColumnValue(row, column.key) }}
+                        </button>
+                        <button
+                          v-else-if="column.key === 'name'"
+                          type="button"
+                          class="ms-scenario-name-link"
+                          @click="selectScenario(row.id)"
+                        >
+                          {{ row.name }}
+                        </button>
+                        <span v-else-if="column.key === 'priority'" class="ms-scenario-priority"><i></i>{{ scenarioPriorityLabel(row.priority) }}</span>
+                        <span v-else-if="column.key === 'status'" class="ms-scenario-status">{{ scenarioStatusLabel(row.status) }}</span>
+                        <span v-else-if="column.key === 'lastRunResult'" :class="['ms-scenario-result', `is-${scenarioRunResultTone(row.lastRunResult)}`]">
+                          {{ scenarioRunResultLabel(row.lastRunResult) }}
+                        </span>
+                        <span v-else class="ms-scenario-grid-text">{{ formatScenarioTableColumnValue(row, column.key) }}</span>
+                      </div>
+                    </div>
+                  </template>
+
+                  <div v-else class="ms-scenario-grid-empty">
+                    暂无场景数据
+                  </div>
+                </div>
+              </div>
+
+              <div class="ms-scenario-grid-actions">
+                <div class="ms-scenario-grid-actions-header">
+                  <span>操作</span>
+                  <AppTableSettingsTrigger @click="scenarioTableSettingsVisible = true" />
+                </div>
+                <template v-if="filteredScenarios.length">
+                  <div
+                    v-for="row in filteredScenarios"
+                    :key="`scenario-action-${row.id}`"
+                    :class="['ms-scenario-grid-actions-row', { 'is-active': hoveredScenarioRowId === row.id }]"
+                    @mouseenter="setHoveredScenarioRow(row.id)"
+                    @mouseleave="setHoveredScenarioRow(null)"
+                  >
+                    <div class="ms-scenario-grid-action-buttons">
+                      <button type="button" class="ms-scenario-action" @click="selectScenario(row.id)">编辑</button>
+                      <button type="button" class="ms-scenario-action" @click="runScenarioFromList(row.id)">执行</button>
+                      <el-dropdown trigger="click">
+                        <button type="button" class="ms-scenario-action">...</button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item @click="copyScenario(row)">复制</el-dropdown-item>
+                            <el-dropdown-item @click="removeScenarioFromList(row)">删除</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                    </div>
+                  </div>
+                </template>
+                <div v-else class="ms-scenario-grid-actions-empty">-</div>
+              </div>
+            </div>
+            <el-table v-if="false" :data="filteredScenarios" size="small" class="scenario-table ms-scenario-table">
               <el-table-column type="selection" width="44" />
               <el-table-column width="34">
                 <template #default>≡</template>
@@ -2759,6 +3275,54 @@ watch(activeScenarioEditorKey, () => {
               </div>
 
               <div v-if="activeScenarioDetailTab === 'steps'" class="scenario-step-panel">
+                <div class="scenario-suite-like-header">
+                  <div class="scenario-suite-like-name-row">
+                    <el-dropdown trigger="click" @command="changeScenarioPriority">
+                      <button
+                        type="button"
+                        :class="['scenario-suite-like-priority-badge', `is-${scenarioPriorityLabel(activeScenarioDetail.priority).toLowerCase()}`]"
+                      >
+                        <span>{{ scenarioPriorityLabel(activeScenarioDetail.priority) }}</span>
+                        <el-icon><ArrowDown /></el-icon>
+                      </button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item command="P0">P0</el-dropdown-item>
+                          <el-dropdown-item command="P1">P1</el-dropdown-item>
+                          <el-dropdown-item command="P2">P2</el-dropdown-item>
+                          <el-dropdown-item command="P3">P3</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                    <div class="scenario-suite-like-title">
+                      <el-input
+                        v-if="scenarioHeaderNameEditing"
+                        v-model="scenarioHeaderNameDraft"
+                        class="scenario-suite-like-title-input"
+                        maxlength="255"
+                        @blur="finishScenarioHeaderNameEdit"
+                        @keyup.enter="finishScenarioHeaderNameEdit"
+                      />
+                      <strong v-else>{{ activeScenarioName }}</strong>
+                      <button v-if="!scenarioHeaderNameEditing" type="button" class="scenario-suite-like-edit" title="编辑场景标题" @click="startScenarioHeaderNameEdit">
+                        <el-icon><EditPen /></el-icon>
+                      </button>
+                    </div>
+                  </div>
+                  <el-input
+                    v-model="activeScenarioDetail.description"
+                    class="scenario-suite-like-description-input"
+                    placeholder="输入描述"
+                    @input="markScenarioDirty"
+                  />
+                  <div class="scenario-suite-like-meta">
+                    <Clock />
+                    <span>{{ activeScenarioWorkspaceName }}</span>
+                    <span>更新于 {{ activeScenarioUpdatedAt }}</span>
+                    <span>·</span>
+                    <span>{{ activeScenarioModuleLabel }}</span>
+                  </div>
+                </div>
                 <div class="scenario-step-toolbar">
                   <span>共 {{ activeScenarioDetail.steps.length }} 个步骤</span>
                   <el-dropdown trigger="click" popper-class="scenario-add-step-menu" @command="handleScenarioAddStepAction">
@@ -2910,11 +3474,11 @@ watch(activeScenarioEditorKey, () => {
                 @dirty="markScenarioDirty"
               />
 
-              <div v-else-if="activeScenarioDetailTab === 'reports'" class="scenario-placeholder-panel">
+              <div v-else-if="activeScenarioDetailTab === 'reports'" v-loading="scenarioRunHistoryLoading || scenarioRunHistoryDetailLoading" class="scenario-placeholder-panel">
                 <div class="scenario-run-history-head">
                   <div>
                     <span class="scenario-run-history-title">测试报告</span>
-                    <small>最近一次运行结果，后续展示最近 10 次场景报告</small>
+                    <small>最近 10 次场景运行结果，点击后查看数据行和步骤明细</small>
                   </div>
                   <span
                     v-if="activeScenarioRunResult"
@@ -2923,9 +3487,32 @@ watch(activeScenarioEditorKey, () => {
                     {{ scenarioRunResultLabel(activeScenarioRunResult) }}
                   </span>
                 </div>
+                <div class="scenario-run-history-list">
+                  <button
+                    v-for="item in scenarioRunHistoryItems"
+                    :key="item.id"
+                    type="button"
+                    :class="['scenario-run-history-item', { active: selectedScenarioRunHistoryId === item.id }]"
+                    @click="loadScenarioRunHistoryDetail(item.id)"
+                  >
+                    <span :class="['scenario-run-result-pill', `is-${scenarioRunResultTone(item.result)}`]">
+                      {{ scenarioRunResultLabel(item.result) }}
+                    </span>
+                    <span class="scenario-run-history-item-main">
+                      <strong>{{ item.scenarioName }}</strong>
+                      <small>{{ formatScenarioDateTime(item.createdAt) }} · {{ item.testDatasetName || '未使用测试数据' }}</small>
+                    </span>
+                    <span class="scenario-run-history-item-meta">
+                      {{ item.loopCount || 1 }} 轮 / {{ item.threadCount || 1 }} 线程 / {{ item.durationMs ?? 0 }} ms
+                    </span>
+                  </button>
+                  <div v-if="!scenarioRunHistoryItems.length" class="scenario-step-empty">暂无测试报告</div>
+                </div>
                 <div v-if="activeScenarioRunDataIterations.length" class="scenario-run-data-meta">
-                  <span><b>数据文件</b>{{ activeScenarioDetail.dataFileNameSnapshot || '-' }}</span>
+                  <span><b>测试数据</b>{{ activeScenarioRunDatasetName }}</span>
                   <span><b>数据行数</b>{{ activeScenarioRunDataSummary.total }}</span>
+                  <span><b>循环次数</b>{{ activeScenarioRunLoopCount }}</span>
+                  <span><b>线程数</b>{{ activeScenarioRunThreadCount }}</span>
                   <span><b>用例描述列</b>{{ activeScenarioDetail.caseDescColumn || 'caseDesc' }}</span>
                   <span><b>行失败策略</b>{{ activeScenarioDetail.dataFailureStrategy === 'CONTINUE_ON_ROW_FAILURE' ? '失败后继续下一行' : '失败后停止' }}</span>
                 </div>
@@ -2952,6 +3539,7 @@ watch(activeScenarioEditorKey, () => {
                 </div>
                 <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table">
                   <div class="scenario-step-table-header">
+                    <span>轮次</span>
                     <span>行号</span>
                     <span>用例描述</span>
                     <span>结果</span>
@@ -2962,9 +3550,10 @@ watch(activeScenarioEditorKey, () => {
                   </div>
                   <div
                     v-for="row in activeScenarioRunDataIterations"
-                    :key="row.rowIndex"
+                    :key="`${row.loopIndex || 1}-${row.rowIndex}`"
                     class="scenario-step-table-row"
                   >
+                    <span>{{ row.loopIndex || 1 }}</span>
                     <span>{{ row.rowIndex }}</span>
                     <span>{{ row.caseDesc || '-' }}</span>
                     <span :class="['scenario-run-step-result', `is-${scenarioRunResultTone(row.result)}`]">
@@ -3086,6 +3675,25 @@ watch(activeScenarioEditorKey, () => {
             <aside class="scenario-property-panel">
               <div class="scenario-property-card">
                 <div class="scenario-property-header">
+                  <div class="scenario-property-env-row">
+                    <el-select
+                      v-model="activeScenarioDetail.defaultEnvironmentId"
+                      class="scenario-property-env-select"
+                      placeholder="请选择运行环境"
+                      clearable
+                      @change="markScenarioDirty"
+                    >
+                      <el-option
+                        v-for="environment in scenarioRunEnvironmentOptions"
+                        :key="environment.id"
+                        :label="environment.name"
+                        :value="environment.id"
+                      />
+                    </el-select>
+                    <el-button class="scenario-property-config-button" @click="activeScenarioDetailTab = 'settings'">
+                      <el-icon><Setting /></el-icon>
+                    </el-button>
+                  </div>
                   <div class="scenario-property-run-actions">
                     <el-button type="primary" class="scenario-property-run-button" :disabled="!activeScenarioDetail.id || scenarioSaving" :loading="scenarioRunning" @click="runScenario">
                       <el-icon><CaretRight /></el-icon>
@@ -3100,24 +3708,55 @@ watch(activeScenarioEditorKey, () => {
                 <el-scrollbar class="scenario-property-scrollbar">
                   <div class="scenario-property-body">
                     <label class="scenario-property-field">
-                      <span><b>*</b> 场景名称</span>
-                      <el-input v-model="activeScenarioDetail.name" placeholder="请输入场景名称" @input="markScenarioDirty" />
-                    </label>
-                    <label class="scenario-property-field">
                       <span><b>*</b> 所属模块</span>
                       <el-select v-model="activeScenarioDetail.moduleId" placeholder="请选择所属模块" @change="markScenarioDirty">
                         <el-option v-for="item in scenarioModuleOptions" :key="item.value" :label="item.label" :value="item.value" />
                       </el-select>
                     </label>
                     <label class="scenario-property-field">
-                      <span>场景等级</span>
-                      <el-select v-model="activeScenarioDetail.priority" placeholder="请选择场景等级" @change="markScenarioDirty">
-                        <el-option label="P0" value="P0" />
-                        <el-option label="P1" value="P1" />
-                        <el-option label="P2" value="P2" />
-                        <el-option label="P3" value="P3" />
-                      </el-select>
+                      <span>测试数据</span>
+                      <div class="scenario-property-inline-control">
+                        <el-select
+                          v-model="scenarioRunDatasetId"
+                          class="scenario-property-data-select"
+                          :loading="scenarioRunDatasetsLoading"
+                          clearable
+                          placeholder="不使用测试数据"
+                          @change="handleScenarioRunDatasetChange"
+                          @visible-change="(visible: boolean) => visible && loadScenarioRunDatasets()"
+                        >
+                          <el-option
+                            v-for="dataset in enabledScenarioRunDatasets"
+                            :key="dataset.id"
+                            :label="dataset.datasetName"
+                            :value="dataset.id"
+                          />
+                        </el-select>
+                        <el-button class="scenario-property-inline-button" @click="activeScenarioDetailTab = 'testData'">
+                          <Menu />
+                        </el-button>
+                      </div>
                     </label>
+                    <div class="scenario-property-field-grid">
+                      <label class="scenario-property-field">
+                        <span>循环次数</span>
+                        <el-input-number
+                          v-model="scenarioRunLoopCount"
+                          :min="1"
+                          :max="999"
+                          :controls="false"
+                        />
+                      </label>
+                      <label class="scenario-property-field">
+                        <span>线程数</span>
+                        <el-input-number
+                          v-model="scenarioRunThreadCount"
+                          :min="1"
+                          :max="99"
+                          :controls="false"
+                        />
+                      </label>
+                    </div>
                     <label class="scenario-property-field">
                       <span>运行于</span>
                       <el-select v-model="activeScenarioDetail.runOn" placeholder="请选择运行位置" @change="markScenarioDirty">
@@ -3134,10 +3773,6 @@ watch(activeScenarioEditorKey, () => {
                     <label class="scenario-property-field">
                       <span>标签</span>
                       <el-input :model-value="readTagInput(activeScenarioDetail.tags)" placeholder="添加标签，回车结束" @update:model-value="(value: string | number) => updateScenarioTagInput(String(value))" />
-                    </label>
-                    <label class="scenario-property-field">
-                      <span>描述</span>
-                      <el-input v-model="activeScenarioDetail.description" type="textarea" :rows="3" placeholder="请对该场景进行描述" @input="markScenarioDirty" />
                     </label>
                   </div>
                 </el-scrollbar>
@@ -3861,6 +4496,18 @@ watch(activeScenarioEditorKey, () => {
         </div>
       </div>
     </el-dialog>
+
+    <AppTableColumnSettingsDrawer
+      v-model="scenarioTableSettingsVisible"
+      title="表头设置"
+      :columns="scenarioTableDrawerColumns"
+      :dragging-key="scenarioTableDraggingColumnKey"
+      @toggle-column="toggleScenarioTableColumnVisibility"
+      @drag-start="handleScenarioTableColumnDragStart"
+      @drag-end="handleScenarioTableColumnDragEnd"
+      @drop-column="moveScenarioTableColumnToTarget"
+      @reset="resetScenarioTableSettings"
+    />
   </div>
 </template>
 
@@ -4277,9 +4924,166 @@ watch(activeScenarioEditorKey, () => {
 }
 
 .ms-scenario-table {
+  display: none;
   flex: 1;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
+}
+
+.ms-scenario-grid-shell {
+  --scenario-grid-header-height: 44px;
+  --scenario-grid-row-height: 56px;
+  --scenario-grid-actions-width: 150px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--scenario-grid-actions-width);
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.ms-scenario-grid-data {
+  min-width: 0;
+  overflow: visible;
+}
+
+.ms-scenario-grid-scroll {
+  min-height: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-gutter: stable;
+}
+
+.ms-scenario-grid {
+  display: grid;
+}
+
+.ms-scenario-grid--header {
+  min-height: var(--scenario-grid-header-height);
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ms-scenario-grid--row {
+  min-height: var(--scenario-grid-row-height);
+  border-bottom: 1px solid #f0f2f5;
+  background: #ffffff;
+  transition: background-color 160ms ease;
+}
+
+.ms-scenario-grid--row:hover,
+.ms-scenario-grid--row.is-active {
+  background: #f8fafc;
+}
+
+.ms-scenario-grid-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  padding: 0 18px;
+}
+
+.ms-scenario-grid--header .ms-scenario-grid-cell {
+  min-height: var(--scenario-grid-header-height);
+}
+
+.ms-scenario-grid-text {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: #303640;
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-scenario-grid-actions {
+  display: flex;
+  position: relative;
+  z-index: 1;
+  width: var(--scenario-grid-actions-width);
+  min-width: var(--scenario-grid-actions-width);
+  flex-direction: column;
+  border-left: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.ms-scenario-grid-actions-header {
+  display: flex;
+  min-height: var(--scenario-grid-header-height);
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ms-scenario-grid-actions-row {
+  display: flex;
+  min-height: var(--scenario-grid-row-height);
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-bottom: 1px solid #f0f2f5;
+  background: #ffffff;
+  transition: background-color 160ms ease;
+}
+
+.ms-scenario-grid-actions-row.is-active {
+  background: #f8fafc;
+}
+
+.ms-scenario-grid-action-buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.ms-scenario-grid-actions-empty,
+.ms-scenario-grid-empty {
+  display: flex;
+  min-height: 232px;
+  align-items: center;
+  justify-content: center;
+  color: #98a2b3;
+  font-size: 13px;
+}
+
+.ms-scenario-grid-actions-empty {
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.ms-scenario-grid-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.ms-scenario-grid-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ms-scenario-grid-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.44);
+}
+
+.ms-scenario-grid-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 134, 156, 0.72);
 }
 
 .ms-scenario-table :deep(.el-table__inner-wrapper) {
@@ -4317,7 +5121,15 @@ watch(activeScenarioEditorKey, () => {
 }
 
 .ms-scenario-name-link {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   color: #303640;
+  line-height: 20px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ms-scenario-name-link:hover,
@@ -4434,6 +5246,175 @@ watch(activeScenarioEditorKey, () => {
   background: #2563eb;
 }
 
+.scenario-suite-like-header {
+  display: grid;
+  gap: 8px;
+  padding: 16px 24px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.scenario-suite-like-name-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.scenario-suite-like-name-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-suite-like-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-suite-like-title-input {
+  width: min(420px, 52vw);
+}
+
+.scenario-suite-like-title-input :deep(.el-input__wrapper) {
+  min-height: 28px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #dbeafe inset;
+}
+
+.scenario-suite-like-edit {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #98a2b3;
+  cursor: pointer;
+}
+
+.scenario-suite-like-edit:hover {
+  background: #f3f4f6;
+  color: #2563eb;
+}
+
+.scenario-suite-like-edit .el-icon {
+  font-size: 14px;
+}
+
+.scenario-suite-like-priority-badge {
+  --scenario-priority-bg: #ffedd5;
+  --scenario-priority-border: #fed7aa;
+  --scenario-priority-color: #c2410c;
+  --scenario-priority-hover-bg: #fed7aa;
+  --scenario-priority-hover-border: #fdba74;
+  display: inline-flex;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--scenario-priority-border);
+  border-radius: 6px;
+  background: var(--scenario-priority-bg);
+  color: var(--scenario-priority-color);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.scenario-suite-like-priority-badge:hover {
+  border-color: var(--scenario-priority-hover-border);
+  background: var(--scenario-priority-hover-bg);
+}
+
+.scenario-suite-like-priority-badge .el-icon {
+  font-size: 11px;
+}
+
+.scenario-suite-like-priority-badge.is-p0 {
+  --scenario-priority-bg: #fef2f2;
+  --scenario-priority-border: #fecaca;
+  --scenario-priority-color: #dc2626;
+  --scenario-priority-hover-bg: #fee2e2;
+  --scenario-priority-hover-border: #fca5a5;
+}
+
+.scenario-suite-like-priority-badge.is-p1 {
+  --scenario-priority-bg: #ffedd5;
+  --scenario-priority-border: #fed7aa;
+  --scenario-priority-color: #c2410c;
+  --scenario-priority-hover-bg: #fed7aa;
+  --scenario-priority-hover-border: #fdba74;
+}
+
+.scenario-suite-like-priority-badge.is-p2 {
+  --scenario-priority-bg: #eff6ff;
+  --scenario-priority-border: #bfdbfe;
+  --scenario-priority-color: #2563eb;
+  --scenario-priority-hover-bg: #dbeafe;
+  --scenario-priority-hover-border: #93c5fd;
+}
+
+.scenario-suite-like-priority-badge.is-p3 {
+  --scenario-priority-bg: #f1f5f9;
+  --scenario-priority-border: #cbd5e1;
+  --scenario-priority-color: #475569;
+  --scenario-priority-hover-bg: #e2e8f0;
+  --scenario-priority-hover-border: #94a3b8;
+}
+
+.scenario-suite-like-description-input {
+  width: min(640px, 100%);
+}
+
+.scenario-suite-like-description-input :deep(.el-input__wrapper) {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.scenario-suite-like-description-input :deep(.el-input__wrapper:hover),
+.scenario-suite-like-description-input :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+  box-shadow: 0 0 0 1px #d1d5db inset;
+}
+
+.scenario-suite-like-description-input :deep(.el-input__inner) {
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.scenario-suite-like-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.scenario-suite-like-meta span {
+  min-width: 0;
+}
+
+.scenario-suite-like-meta svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+
 .scenario-step-panel,
 .scenario-placeholder-panel {
   display: flex;
@@ -4464,7 +5445,6 @@ watch(activeScenarioEditorKey, () => {
 
 .scenario-step-tree {
   display: flex;
-  height: calc(100% - 42px);
   flex: 1;
   min-height: 0;
   flex-direction: column;
@@ -5001,6 +5981,66 @@ watch(activeScenarioEditorKey, () => {
   font-size: 12px;
 }
 
+.scenario-run-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fbfcff;
+}
+
+.scenario-run-history-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scenario-run-history-item:hover,
+.scenario-run-history-item.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.scenario-run-history-item-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.scenario-run-history-item-main strong,
+.scenario-run-history-item-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-run-history-item-main strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scenario-run-history-item-main small,
+.scenario-run-history-item-meta {
+  color: #667085;
+  font-size: 12px;
+}
+
+.scenario-run-history-item-meta {
+  white-space: nowrap;
+}
+
 .scenario-run-result-pill {
   display: inline-flex;
   align-items: center;
@@ -5061,7 +6101,7 @@ watch(activeScenarioEditorKey, () => {
 
 .scenario-run-data-table .scenario-step-table-header,
 .scenario-run-data-table .scenario-step-table-row {
-  grid-template-columns: 64px minmax(160px, 1.1fr) 96px 80px 96px minmax(120px, 0.8fr) minmax(180px, 1.2fr);
+  grid-template-columns: 64px 64px minmax(160px, 1.1fr) 96px 80px 96px minmax(120px, 0.8fr) minmax(180px, 1.2fr);
 }
 
 .scenario-run-data-meta {
@@ -5286,6 +6326,34 @@ watch(activeScenarioEditorKey, () => {
   border-bottom: 1px solid #f3f4f6;
 }
 
+.scenario-property-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+  gap: 8px;
+}
+
+.scenario-property-env-select {
+  min-width: 0;
+}
+
+.scenario-property-config-button,
+.scenario-property-inline-button {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 8px;
+  color: #667085;
+}
+
+.scenario-property-config-button svg,
+.scenario-property-inline-button svg {
+  width: 16px;
+  height: 16px;
+}
+
 .scenario-property-run-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -5347,6 +6415,32 @@ watch(activeScenarioEditorKey, () => {
   padding: 12px 12px 16px;
 }
 
+.scenario-property-inline-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+
+.scenario-property-inline-control :deep(.el-select__wrapper) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.scenario-property-inline-button {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+.scenario-property-data-select {
+  min-width: 0;
+}
+
+.scenario-property-field-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
 .scenario-property-field {
   display: flex;
   min-width: 0;
@@ -5382,8 +6476,14 @@ watch(activeScenarioEditorKey, () => {
 
 .scenario-property-field .el-select,
 .scenario-property-field .el-input,
+.scenario-property-field .el-input-number,
 .scenario-property-field .el-textarea {
   width: 100%;
+}
+
+.scenario-property-field-grid :deep(.el-input-number .el-input__wrapper) {
+  padding-right: 11px;
+  padding-left: 11px;
 }
 
 :deep(.scenario-step-config-drawer .el-drawer__header) {

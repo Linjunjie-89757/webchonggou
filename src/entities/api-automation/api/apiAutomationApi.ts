@@ -13,6 +13,8 @@ import type {
   ApiCaseListQuery,
   ApiDefinitionCaseDetail,
   ApiDefinitionDetail,
+  ApiDefinitionImportPayload,
+  ApiDefinitionImportResult,
   ApiDefinitionListQuery,
   ApiDefinitionCaseItem,
   ApiDefinitionItem,
@@ -33,6 +35,8 @@ import type {
   ApiScenarioItem,
   ApiScenarioListQuery,
   ApiScenarioModuleItem,
+  ApiScenarioRunHistoryDetail,
+  ApiScenarioRunHistoryItem,
   ApiScenarioTestDatasetDetail,
   ApiScenarioTestDatasetItem,
   ApiScenarioTestDatasetRow,
@@ -291,6 +295,40 @@ function normalizeRunHistoryItem(item: ApiRunHistoryItem): ApiRunHistoryItem {
 function normalizeRunHistoryDetail(item: ApiRunHistoryDetail): ApiRunHistoryDetail {
   return {
     ...normalizeRunHistoryItem(item),
+    stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
+  }
+}
+
+function normalizeScenarioRunHistoryItem(item: ApiScenarioRunHistoryItem): ApiScenarioRunHistoryItem {
+  return {
+    ...item,
+    workspaceCode: item.workspaceCode || 'ALL',
+    workspaceName: item.workspaceName || item.workspaceCode || 'ALL',
+    scenarioName: item.scenarioName || '-',
+    reportId: item.reportId ?? null,
+    result: item.result || null,
+    failureSummary: item.failureSummary || null,
+    totalCount: item.totalCount ?? null,
+    successCount: item.successCount ?? null,
+    failedCount: item.failedCount ?? null,
+    skippedCount: item.skippedCount ?? null,
+    durationMs: item.durationMs ?? null,
+    environmentId: item.environmentId ?? null,
+    variableSetId: item.variableSetId ?? null,
+    testDatasetId: item.testDatasetId ?? null,
+    testDatasetName: item.testDatasetName || null,
+    loopCount: item.loopCount ?? null,
+    threadCount: item.threadCount ?? null,
+    operatorId: item.operatorId ?? null,
+    operatorName: item.operatorName || null,
+    createdAt: item.createdAt || null,
+  }
+}
+
+function normalizeScenarioRunHistoryDetail(item: ApiScenarioRunHistoryDetail): ApiScenarioRunHistoryDetail {
+  return {
+    ...normalizeScenarioRunHistoryItem(item),
+    dataIterations: Array.isArray(item.dataIterations) ? item.dataIterations.map(normalizeDataIteration) : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],
   }
 }
@@ -910,6 +948,59 @@ export const apiAutomationApi = {
     return normalizeDefinitionDetail(unwrapApiResponse(payload))
   },
 
+  async importDefinitions(workspaceCode = 'ALL', data: ApiDefinitionImportPayload) {
+    const payload = await httpPost<ApiResponse<ApiDefinitionImportResult>, ApiDefinitionImportPayload>(
+      '/automation/api/definitions/import',
+      data,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    const result = unwrapApiResponse(payload)
+    return {
+      createdCount: Number(result.createdCount || 0),
+      failedCount: Number(result.failedCount || 0),
+      items: Array.isArray(result.items) ? result.items : [],
+      errors: Array.isArray(result.errors) ? result.errors : [],
+    }
+  },
+
+  async importDefinitionFile(
+    workspaceCode = 'ALL',
+    mode: ApiDefinitionImportPayload['mode'],
+    file: File,
+    directoryName?: string | null,
+  ) {
+    const form = new FormData()
+    form.append('workspaceCode', workspaceCode)
+    form.append('mode', mode)
+    if (directoryName) {
+      form.append('directoryName', directoryName)
+    }
+    form.append('file', file)
+
+    const response = await fetch(`${env.apiBaseUrl}/automation/api/definitions/import-file`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: workspaceHeaders(workspaceCode),
+      body: form,
+    })
+
+    if (!response.ok) {
+      throw new Error(await response.text() || `Request failed with status ${response.status}`)
+    }
+
+    const payload = await response.json() as ApiResponse<ApiDefinitionImportResult>
+    const result = unwrapApiResponse(payload)
+    return {
+      createdCount: Number(result.createdCount || 0),
+      failedCount: Number(result.failedCount || 0),
+      items: Array.isArray(result.items) ? result.items : [],
+      errors: Array.isArray(result.errors) ? result.errors : [],
+    }
+  },
+
   async updateDefinition(workspaceCode = 'ALL', id: number, data: SaveApiDefinitionPayload) {
     const payload = await httpPut<ApiResponse<ApiDefinitionDetail>, SaveApiDefinitionPayload>(
       `/automation/api/definitions/${id}`,
@@ -1048,6 +1139,29 @@ export const apiAutomationApi = {
     )
 
     return normalizeRunHistoryDetail(unwrapApiResponse(payload))
+  },
+
+  async getScenarioRunHistory(workspaceCode = 'ALL', scenarioId: number, query?: { pageNo?: number; pageSize?: number }) {
+    const payload = await httpGet<ApiResponse<PageResponse<ApiScenarioRunHistoryItem>>>(
+      `/automation/api/scenarios/${scenarioId}/run-history`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery(query),
+      },
+    )
+
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeScenarioRunHistoryItem)
+  },
+
+  async getScenarioRunHistoryDetail(workspaceCode = 'ALL', historyId: number) {
+    const payload = await httpGet<ApiResponse<ApiScenarioRunHistoryDetail>>(
+      `/automation/api/scenarios/run-history/${historyId}`,
+      {
+        headers: workspaceHeaders(workspaceCode),
+      },
+    )
+
+    return normalizeScenarioRunHistoryDetail(unwrapApiResponse(payload))
   },
 
   async getReports(workspaceCode = 'ALL', query?: ApiAutomationReportListQuery) {

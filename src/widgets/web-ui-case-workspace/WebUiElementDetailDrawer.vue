@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Edit, Link } from '@element-plus/icons-vue'
+import { Camera, Edit, Link } from '@element-plus/icons-vue'
 
 import {
   formatLocatorType,
@@ -19,11 +19,37 @@ defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'open-reference': [target: WebUiElementItem]
+  'open-collect-task': [target: WebUiElementItem]
+  'preview-collect-screenshot': [target: WebUiElementItem]
   edit: [target: WebUiElementItem]
 }>()
 
 function isAiCollectedElement(item?: WebUiElementItem | null) {
-  return Boolean(item?.description?.includes('来源：智能采集'))
+  return Boolean(item?.collectTaskId || item?.description?.includes('来源：智能采集'))
+}
+
+function formatCollectSource(source?: string | null) {
+  if (source === 'AI_SUPPLEMENT') return 'AI 补充候选'
+  if (source === 'STATIC_RULE') return '静态规则'
+  if (source === 'RULE') return '规则候选'
+  return source || '-'
+}
+
+function formatCollectValidationStatus(status?: string | null) {
+  if (status === 'PASSED') return '验证通过'
+  if (status === 'FAILED') return '未找到'
+  if (status === 'MULTIPLE') return '多匹配'
+  if (status === 'UNVERIFIED') return '未验证'
+  if (status === 'AI_UNVERIFIED') return 'AI 建议未验证'
+  if (status === 'SKIPPED') return '跳过验证'
+  return status || '-'
+}
+
+function getCollectValidationTagType(status?: string | null) {
+  if (status === 'PASSED') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (status === 'MULTIPLE' || status === 'UNVERIFIED' || status === 'AI_UNVERIFIED') return 'warning'
+  return 'info'
 }
 </script>
 
@@ -71,6 +97,39 @@ function isAiCollectedElement(item?: WebUiElementItem | null) {
             {{ isAiCollectedElement(target) ? '智能采集' : '手工维护' }}
           </el-tag>
         </el-descriptions-item>
+        <el-descriptions-item label="采集任务">
+          <template v-if="target.collectTaskId">
+            <el-button link type="primary" @click="emit('open-collect-task', target)">
+              #{{ target.collectTaskId }}
+            </el-button>
+          </template>
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="采集来源">{{ formatCollectSource(target.collectSource) }}</el-descriptions-item>
+        <el-descriptions-item label="采集稳定性">
+          {{ target.collectConfidence === null || target.collectConfidence === undefined ? '-' : `${target.collectConfidence}%` }}
+        </el-descriptions-item>
+        <el-descriptions-item label="采集验证">
+          <el-tag :type="getCollectValidationTagType(target.collectValidationStatus)" effect="light">
+            {{ formatCollectValidationStatus(target.collectValidationStatus) }}
+          </el-tag>
+          <span v-if="target.collectMatchCount !== null && target.collectMatchCount !== undefined">
+            匹配 {{ target.collectMatchCount }} 个
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item label="采集截图">
+          <el-button
+            link
+            type="primary"
+            :disabled="!target.collectScreenshotBase64"
+            @click="emit('preview-collect-screenshot', target)"
+          >
+            查看截图证据
+          </el-button>
+        </el-descriptions-item>
+        <el-descriptions-item label="采集验证信息" :span="2">
+          {{ target.collectValidationMessage || '-' }}
+        </el-descriptions-item>
         <el-descriptions-item label="验证信息" :span="2">
           {{ target.lastValidateMessage || '-' }}
         </el-descriptions-item>
@@ -97,6 +156,13 @@ function isAiCollectedElement(item?: WebUiElementItem | null) {
           @click="emit('open-reference', target)"
         >
           查看引用
+        </AppButton>
+        <AppButton
+          v-if="target?.collectTaskId"
+          :icon="Camera"
+          @click="emit('open-collect-task', target)"
+        >
+          采集任务
         </AppButton>
         <AppButton
           v-if="target"

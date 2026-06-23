@@ -14,6 +14,8 @@ const DEFAULT_PORT = 39118;
 const RUNNER_VERSION = '0.1.0';
 const DATA_DIR = join(homedir(), '.auto-web-ui-runner');
 const AUTH_DIR = join(DATA_DIR, 'auth');
+const VALIDATION_LOCATOR_LIMIT = 200;
+const VALIDATION_SCREENSHOT_LIMIT = 8;
 
 let browser;
 let context;
@@ -98,6 +100,8 @@ async function getHealth() {
     }
   }
 
+  clearClosedSession();
+
   return {
     success: true,
     runner: {
@@ -125,10 +129,11 @@ async function openCollectPage(payload) {
   const environmentId = optionalString(payload.environmentId) || 'default-environment';
   const headed = payload.headless === true ? false : true;
   const playwright = await ensurePlaywright();
+  clearClosedSession();
   const target = resolveOpenTarget({
     requestedUrl: payload.url,
-    hasActivePage: Boolean(page),
-    currentUrl: page?.url() || '',
+    hasActivePage: hasUsablePage(),
+    currentUrl: getActivePageUrl(),
   });
 
   if (target.action === 'REUSE_CURRENT_PAGE') {
@@ -211,8 +216,9 @@ async function validateCurrentPageLocators(payload) {
   ensurePage();
   const locators = Array.isArray(payload.locators) ? payload.locators : [];
   const results = [];
+  let screenshotCount = 0;
 
-  for (const item of locators.slice(0, 200)) {
+  for (const item of locators.slice(0, VALIDATION_LOCATOR_LIMIT)) {
     const locatorType = optionalString(item.locatorType).toUpperCase();
     const locatorValue = optionalString(item.locatorValue);
     if (!locatorType || !locatorValue) {
@@ -234,12 +240,17 @@ async function validateCurrentPageLocators(payload) {
       let enabled = false;
       if (matchCount > 0) {
         const first = locator.first();
-        await first.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        await first.scrollIntoViewIfNeeded({ timeout: 1000 }).catch(() => {});
         visible = await first.isVisible({ timeout: 1000 }).catch(() => false);
         editable = await first.isEditable({ timeout: 1000 }).catch(() => false);
         enabled = await first.isEnabled({ timeout: 1000 }).catch(() => false);
-        const screenshot = await first.screenshot({ timeout: 3000 }).catch(() => null);
-        screenshotBase64 = screenshot ? screenshot.toString('base64') : null;
+        if (screenshotCount < VALIDATION_SCREENSHOT_LIMIT) {
+          const screenshot = await first.screenshot({ timeout: 1200 }).catch(() => null);
+          screenshotBase64 = screenshot ? screenshot.toString('base64') : null;
+          if (screenshotBase64) {
+            screenshotCount += 1;
+          }
+        }
       }
       results.push(normalizeLocatorValidationResult({
         locatorType,
@@ -292,14 +303,24 @@ function resolveLocator(targetPage, locatorType, locatorValue) {
     case 'PLACEHOLDER':
       return targetPage.getByPlaceholder(locatorValue);
     case 'TEST_ID':
-      return targetPage.getByTestId(locatorValue);
+      return targetPage.locator([
+        `[data-testid="${cssAttributeEscape(locatorValue)}"]`,
+        `[data-test="${cssAttributeEscape(locatorValue)}"]`,
+        `[data-qa="${cssAttributeEscape(locatorValue)}"]`,
+        `[id="${cssAttributeEscape(locatorValue)}"]`,
+      ].join(', '));
     default:
       return targetPage.locator(locatorValue);
   }
 }
 
+function cssAttributeEscape(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 async function saveAuthState(payload) {
   ensureContext();
+  ensurePage();
   const workspaceId = optionalString(payload.workspaceId) || activeSession?.workspaceId || 'default-workspace';
   const environmentId = optionalString(payload.environmentId) || activeSession?.environmentId || 'default-environment';
   const storageStatePath = getStorageStatePath(workspaceId, environmentId);
@@ -490,14 +511,16 @@ async function ensurePlaywright() {
 }
 
 function ensureContext() {
+  clearClosedSession();
   if (!context) {
-    throw new Error('No active browser context. Open a collect page first.');
+    throw new Error('No active browser context. Please click "打开目标页" or run /collect/open first.');
   }
 }
 
 function ensurePage() {
-  if (!page) {
-    throw new Error('No active page. Call /collect/open first.');
+  clearClosedSession();
+  if (!hasUsablePage()) {
+    throw new Error('No active browser page. Please click "打开目标页" or run /collect/open before capture.');
   }
 }
 
@@ -549,6 +572,23 @@ function requireString(value, fieldName) {
     throw new Error(`${fieldName} is required`);
   }
   return normalized;
+}
+
+function hasUsablePage() {
+  return Boolean(page && !page.isClosed());
+}
+
+function getActivePageUrl() {
+  return hasUsablePage() ? page.url() : '';
+}
+
+function clearClosedSession() {
+  if (page && page.isClosed()) {
+    page = undefined;
+  }
+  if (!page) {
+    activeSession = undefined;
+  }
 }
 
 function optionalString(value) {

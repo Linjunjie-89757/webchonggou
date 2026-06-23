@@ -196,6 +196,39 @@ export interface SaveApiDefinitionPayload {
   postProcessors: unknown[]
 }
 
+export type ApiDefinitionImportMode = 'swagger' | 'postman' | 'har'
+
+export interface ApiDefinitionImportPayload {
+  workspaceCode?: string
+  mode: ApiDefinitionImportMode
+  inputType?: 'url' | 'content' | 'file' | string
+  url?: string | null
+  content?: string | null
+  directoryName?: string | null
+}
+
+export interface ApiDefinitionImportItem {
+  id: number
+  name: string
+  method: string
+  path: string
+  directoryName: string | null
+}
+
+export interface ApiDefinitionImportError {
+  name: string | null
+  method: string | null
+  path: string | null
+  message: string | null
+}
+
+export interface ApiDefinitionImportResult {
+  createdCount: number
+  failedCount: number
+  items: ApiDefinitionImportItem[]
+  errors: ApiDefinitionImportError[]
+}
+
 export interface ApiDefinitionModuleItem {
   id: number
   workspaceCode: string
@@ -473,6 +506,10 @@ export interface ApiRunPayload {
   variableSetId?: number | null
   branchName?: string | null
   triggerSource?: string | null
+  testDatasetEnabled?: boolean | null
+  testDatasetId?: number | null
+  loopCount?: number | null
+  threadCount?: number | null
   rowVariables?: Record<string, string> | null
 }
 
@@ -562,6 +599,36 @@ export interface ApiRunHistoryDetail extends ApiRunHistoryItem {
   stepResults: ApiRunStepResult[]
 }
 
+export interface ApiScenarioRunHistoryItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string | null
+  scenarioId: number
+  scenarioName: string
+  reportId: number | null
+  result: string | null
+  failureSummary: string | null
+  totalCount: number | null
+  successCount: number | null
+  failedCount: number | null
+  skippedCount: number | null
+  durationMs: number | null
+  environmentId: number | null
+  variableSetId: number | null
+  testDatasetId: number | null
+  testDatasetName: string | null
+  loopCount: number | null
+  threadCount: number | null
+  operatorId: number | null
+  operatorName: string | null
+  createdAt: string | null
+}
+
+export interface ApiScenarioRunHistoryDetail extends ApiScenarioRunHistoryItem {
+  dataIterations: ApiExecutionSuiteDataIteration[]
+  stepResults: ApiRunStepResult[]
+}
+
 export interface ApiExecutionSuiteRunItemSnapshot {
   itemId: number | null
   itemType: string
@@ -576,6 +643,7 @@ export interface ApiExecutionSuiteRunItemSnapshot {
 }
 
 export interface ApiExecutionSuiteDataIteration {
+  loopIndex?: number | null
   rowIndex: number
   caseDesc: string | null
   rowValues: Record<string, string>
