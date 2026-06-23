@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   CaretRight,
+  Check,
   Close,
   CopyDocument,
   Delete,
@@ -42,6 +43,7 @@ import {
   type ApiScenarioItem,
   type ApiScenarioModuleItem,
   type ApiScenarioStep,
+  type ApiScenarioStepRefType,
   type ApiScenarioStepType,
   type SaveApiScenarioPayload,
 } from '@/entities/api-automation'
@@ -63,6 +65,7 @@ type ScenarioBodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 
 type ScenarioCodeLanguage = 'api-console' | 'json' | 'xml' | 'text' | 'javascript'
 type ScenarioSoftPromptInputType = 'text' | 'textarea'
 type ScenarioImportTab = 'api' | 'case' | 'scenario'
+type ScenarioImportMode = 'copy' | 'ref'
 type ScenarioAddStepCommand =
   | 'IMPORT_SYSTEM_API'
   | 'API_CASE'
@@ -528,8 +531,9 @@ const scenarioStepConfigTitle = computed(() => {
 })
 
 const showScenarioStepConfigFooter = computed(() => {
-  const stepType = activeScenarioStep.value?.stepType
-  return stepType === 'CUSTOM_REQUEST' || stepType === 'SCRIPT'
+  const step = activeScenarioStep.value
+  const stepType = step?.stepType
+  return stepType === 'CUSTOM_REQUEST' || stepType === 'SCRIPT' || isScenarioStepCopyRequest(step)
 })
 
 const scenarioFlatSteps = computed(() => flattenScenarioSteps(activeScenarioDetail.value.steps || []))
@@ -656,7 +660,7 @@ const scenarioStepCustomConsole = computed(() => buildScenarioRunConsolePreview(
 const scenarioStepCustomLatestResponseBody = computed(() => scenarioStepCustomResponseStep.value?.response?.body || '')
 const scenarioStepCustomCanDebug = computed(() => {
   const config = activeScenarioStepRequestConfig.value
-  return Boolean(activeScenarioStep.value?.stepType === 'CUSTOM_REQUEST' && config.method && config.path?.trim() && activeScenarioDetail.value.workspaceCode && activeScenarioDetail.value.workspaceCode !== 'ALL')
+  return Boolean(isScenarioStepEditableRequest(activeScenarioStep.value) && config.method && config.path?.trim() && activeScenarioDetail.value.workspaceCode && activeScenarioDetail.value.workspaceCode !== 'ALL')
 })
 const scenarioStepScriptAssertionEnabledCount = computed(() => enabledScenarioUnknownRows(activeScenarioStep.value?.assertions || []).length)
 const scenarioStepScriptResponseStep = computed(() => {
@@ -1666,8 +1670,35 @@ function scenarioStepTypeBadgeLabel(type?: ApiScenarioStepType | null) {
   return labels[type || 'API'] || '引用 API'
 }
 
+function scenarioStepRefTypeLabel(step?: ApiScenarioStep | null) {
+  const refType = normalizeScenarioStepRefType(step)
+  if (refType === 'COPY') return '复制'
+  if (refType === 'REF') return '引用'
+  return '自定义'
+}
+
 function scenarioStepTypeClass(type?: ApiScenarioStepType | null) {
   return `is-${String(type || 'API').toLowerCase().replaceAll('_', '-')}`
+}
+
+function normalizeScenarioStepRefType(step?: ApiScenarioStep | null): ApiScenarioStepRefType {
+  if (!step) return 'DIRECT'
+  const raw = String(step.refType || '').toUpperCase()
+  if (raw === 'COPY' || raw === 'REF' || raw === 'DIRECT') return raw
+  if (step.stepType === 'API' || step.stepType === 'API_CASE' || step.stepType === 'API_SCENARIO') return 'REF'
+  return 'DIRECT'
+}
+
+function isScenarioStepCopyRequest(step?: ApiScenarioStep | null) {
+  return Boolean(step && (step.stepType === 'API' || step.stepType === 'API_CASE') && normalizeScenarioStepRefType(step) === 'COPY')
+}
+
+function isScenarioStepEditableRequest(step?: ApiScenarioStep | null) {
+  return Boolean(step?.stepType === 'CUSTOM_REQUEST' || isScenarioStepCopyRequest(step))
+}
+
+function deepClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function createScenarioStep(command: ScenarioAddStepCommand): ApiScenarioStep {
@@ -1687,6 +1718,11 @@ function createScenarioStep(command: ScenarioAddStepCommand): ApiScenarioStep {
     id: `draft-step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     stepName: preset.name,
     stepType: preset.type,
+    refType: preset.type === 'CUSTOM_REQUEST'
+      ? 'DIRECT'
+      : preset.type === 'API' || preset.type === 'API_CASE' || preset.type === 'API_SCENARIO'
+        ? 'REF'
+        : 'DIRECT',
     resourceType: preset.resourceType,
     resourceId: null,
     enabled: true,
@@ -1741,6 +1777,7 @@ function getScenarioStepListByParentPath(parentPath: number[]) {
 function cloneScenarioStep(step: ApiScenarioStep): ApiScenarioStep {
   const copy = JSON.parse(JSON.stringify(step)) as ApiScenarioStep
   copy.id = `draft-step-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  copy.refType = normalizeScenarioStepRefType(copy)
   copy.stepName = copy.stepName?.trim() ? `${copy.stepName.trim()} 副本` : scenarioStepTypeTitle(copy.stepType)
   copy.children = (copy.children || []).map(cloneScenarioStep)
   return copy
@@ -1897,7 +1934,7 @@ function openScenarioStepConfig(path: number[], mode: 'create' | 'edit' = 'edit'
   scenarioStepScriptActiveAssertionId.value = null
   resetScenarioStepSystemState()
   resetScenarioStepCustomDebugState()
-  if (step.stepType === 'CUSTOM_REQUEST') {
+  if (isScenarioStepEditableRequest(step)) {
     step.requestConfig = normalizeScenarioRequestConfig(step.requestConfig)
     if (!Array.isArray(step.preProcessors)) step.preProcessors = []
     if (!Array.isArray(step.postProcessors)) step.postProcessors = []
@@ -1908,7 +1945,7 @@ function openScenarioStepConfig(path: number[], mode: 'create' | 'edit' = 'edit'
   }
   scenarioStepConfigVisible.value = true
   void ensureScenarioStepResources()
-  if (step.stepType === 'API' || step.stepType === 'API_CASE') {
+  if ((step.stepType === 'API' || step.stepType === 'API_CASE') && !isScenarioStepCopyRequest(step)) {
     void loadScenarioStepSystemDetail(step)
   }
 }
@@ -1927,7 +1964,7 @@ function closeScenarioStepConfig() {
 
 function cancelScenarioStepConfig() {
   const step = activeScenarioStep.value
-  if (step?.stepType === 'CUSTOM_REQUEST' && scenarioStepConfigMode.value === 'create') {
+  if (isScenarioStepEditableRequest(step) && scenarioStepConfigMode.value === 'create') {
     const list = getScenarioStepListByParentPath(scenarioStepConfigPath.value.slice(0, -1))
     list.splice(scenarioStepConfigPath.value[scenarioStepConfigPath.value.length - 1], 1)
     markScenarioDirty()
@@ -2040,8 +2077,21 @@ function createReferenceStepFromDefinition(item: ApiDefinitionItem): ApiScenario
   return {
     ...createScenarioStep('IMPORT_SYSTEM_API'),
     stepName: item.name,
-    resourceType: 'DEFINITION',
+    refType: 'REF',
     resourceId: item.id,
+  }
+}
+
+function createCopyStepFromDefinition(detail: Awaited<ReturnType<typeof apiAutomationApi.getDefinitionDetail>>): ApiScenarioStep {
+  return {
+    ...createScenarioStep('IMPORT_SYSTEM_API'),
+    stepName: detail.name,
+    refType: 'COPY',
+    resourceId: detail.id,
+    requestConfig: deepClone(detail.requestConfig),
+    assertions: deepClone(detail.assertions || []),
+    preProcessors: deepClone(detail.preProcessors || []),
+    postProcessors: deepClone(detail.postProcessors || []),
   }
 }
 
@@ -2049,39 +2099,21 @@ function createReferenceStepFromCase(item: ApiDefinitionCaseItem): ApiScenarioSt
   return {
     ...createScenarioStep('API_CASE'),
     stepName: item.name,
-    resourceType: 'CASE',
+    refType: 'REF',
     resourceId: item.id,
   }
 }
 
-function createReferenceStepFromScenario(item: ApiScenarioItem): ApiScenarioStep {
+function createCopyStepFromCase(detail: Awaited<ReturnType<typeof apiAutomationApi.getCaseDetail>>): ApiScenarioStep {
   return {
-    ...createScenarioStep('API_SCENARIO'),
-    stepName: item.name,
-    resourceType: null,
-    resourceId: item.id,
-  }
-}
-
-function createCustomStepFromDefinition(detail: Awaited<ReturnType<typeof apiAutomationApi.getDefinitionDetail>>): ApiScenarioStep {
-  return {
-    ...createScenarioStep('CUSTOM_REQUEST'),
+    ...createScenarioStep('API_CASE'),
     stepName: detail.name,
-    requestConfig: JSON.parse(JSON.stringify(detail.requestConfig)),
-    assertions: JSON.parse(JSON.stringify(detail.assertions || [])),
-    preProcessors: JSON.parse(JSON.stringify(detail.preProcessors || [])),
-    postProcessors: JSON.parse(JSON.stringify(detail.postProcessors || [])),
-  }
-}
-
-function createCustomStepFromCase(detail: Awaited<ReturnType<typeof apiAutomationApi.getCaseDetail>>): ApiScenarioStep {
-  return {
-    ...createScenarioStep('CUSTOM_REQUEST'),
-    stepName: detail.name,
-    requestConfig: JSON.parse(JSON.stringify(detail.requestConfig)),
-    assertions: JSON.parse(JSON.stringify(detail.assertions || [])),
-    preProcessors: JSON.parse(JSON.stringify(detail.preProcessors || [])),
-    postProcessors: JSON.parse(JSON.stringify(detail.postProcessors || [])),
+    refType: 'COPY',
+    resourceId: detail.id,
+    requestConfig: deepClone(detail.requestConfig),
+    assertions: deepClone(detail.assertions || []),
+    preProcessors: deepClone(detail.preProcessors || []),
+    postProcessors: deepClone(detail.postProcessors || []),
   }
 }
 
@@ -2089,35 +2121,31 @@ function cloneScenarioStepsForImport(steps: ApiScenarioStep[]): ApiScenarioStep[
   return steps.map(step => cloneScenarioStep(step))
 }
 
-async function handleScenarioImport(mode: 'copy' | 'quote') {
+async function handleScenarioImport(mode: ScenarioImportMode) {
   if (!scenarioImportSelectedTotal.value) return
   const workspaceCode = activeScenarioDetail.value.workspaceCode || props.workspaceCode
   scenarioImportLoading.value = true
   try {
-    if (mode === 'quote') {
-      activeScenarioDetail.value.steps.push(
-        ...scenarioImportSelectedDefinitionRows.value.map(createReferenceStepFromDefinition),
-        ...scenarioImportSelectedCaseRows.value.map(createReferenceStepFromCase),
-        ...scenarioImportSelectedScenarioRows.value.map(createReferenceStepFromScenario),
-      )
-    } else {
-      const copiedDefinitionSteps = await Promise.all(
-        scenarioImportSelectedDefinitionRows.value.map(async item => createCustomStepFromDefinition(await apiAutomationApi.getDefinitionDetail(workspaceCode, item.id))),
-      )
-      const copiedCaseSteps = await Promise.all(
-        scenarioImportSelectedCaseRows.value.map(async item => createCustomStepFromCase(await apiAutomationApi.getCaseDetail(workspaceCode, item.id))),
-      )
-      const copiedScenarioStepGroups = await Promise.all(
-        scenarioImportSelectedScenarioRows.value.map(async item => cloneScenarioStepsForImport((await apiAutomationApi.getScenarioDetail(workspaceCode, item.id)).steps || [])),
-      )
-      activeScenarioDetail.value.steps.push(
-        ...copiedDefinitionSteps,
-        ...copiedCaseSteps,
-        ...copiedScenarioStepGroups.flat(),
-      )
-    }
+    const copiedDefinitionSteps = mode === 'copy'
+      ? await Promise.all(
+          scenarioImportSelectedDefinitionRows.value.map(async item => createCopyStepFromDefinition(await apiAutomationApi.getDefinitionDetail(workspaceCode, item.id))),
+        )
+      : scenarioImportSelectedDefinitionRows.value.map(createReferenceStepFromDefinition)
+    const copiedCaseSteps = mode === 'copy'
+      ? await Promise.all(
+          scenarioImportSelectedCaseRows.value.map(async item => createCopyStepFromCase(await apiAutomationApi.getCaseDetail(workspaceCode, item.id))),
+        )
+      : scenarioImportSelectedCaseRows.value.map(createReferenceStepFromCase)
+    const copiedScenarioStepGroups = await Promise.all(
+      scenarioImportSelectedScenarioRows.value.map(async item => cloneScenarioStepsForImport((await apiAutomationApi.getScenarioDetail(workspaceCode, item.id)).steps || [])),
+    )
+    activeScenarioDetail.value.steps.push(
+      ...copiedDefinitionSteps,
+      ...copiedCaseSteps,
+      ...copiedScenarioStepGroups.flat(),
+    )
     markScenarioDirty()
-    ElMessage.success(mode === 'quote' ? '已引用到场景步骤' : '已复制到场景步骤')
+    ElMessage.success('已添加到场景步骤')
     scenarioImportDrawerVisible.value = false
     resetScenarioImportSelection()
   } catch (error) {
@@ -2182,13 +2210,13 @@ function prepareNextScriptStep() {
 function saveScenarioStepConfig(keepOpen = false) {
   const step = activeScenarioStep.value
   if (!step) return
-  if (step.stepType === 'CUSTOM_REQUEST') {
+  if (isScenarioStepEditableRequest(step)) {
     step.requestConfig = normalizeScenarioRequestConfig(step.requestConfig)
     if (!step.requestConfig.path?.trim()) {
       ElMessage.warning('请输入请求 URL')
       return
     }
-    step.stepName = step.stepName?.trim() || '自定义请求'
+    step.stepName = step.stepName?.trim() || scenarioStepTypeTitle(step.stepType)
   }
   if (step.stepType === 'SCRIPT') {
     step.stepName = step.stepName?.trim() || '脚本操作'
@@ -2211,6 +2239,9 @@ function saveScenarioStepConfig(keepOpen = false) {
 }
 
 function selectedScenarioResourceMethod(step: ApiScenarioStep) {
+  if (isScenarioStepCopyRequest(step)) {
+    return step.requestConfig?.method || 'HTTP'
+  }
   if (step.stepType === 'API') {
     return scenarioDefinitions.value.find(definition => definition.id === step.resourceId)?.method || 'HTTP'
   }
@@ -2223,6 +2254,9 @@ function selectedScenarioResourceMethod(step: ApiScenarioStep) {
 function hasInvalidScenarioStep(steps: ApiScenarioStep[]): boolean {
   return steps.some((step) => {
     if (!step.enabled) return false
+    if (isScenarioStepCopyRequest(step)) {
+      return !step.requestConfig?.path?.trim()
+    }
     if (step.stepType === 'API' || step.stepType === 'API_CASE' || step.stepType === 'API_SCENARIO') {
       return !step.resourceId
     }
@@ -2242,6 +2276,7 @@ function hasInvalidScenarioStep(steps: ApiScenarioStep[]): boolean {
 function normalizeScenarioStepPayload(steps: ApiScenarioStep[]): ApiScenarioStep[] {
   return steps.map((step) => ({
     ...step,
+    refType: normalizeScenarioStepRefType(step),
     stepName: step.stepName?.trim() || scenarioStepTypeTitle(step.stepType),
     requestConfig: step.requestConfig ? normalizeScenarioRequestConfig(step.requestConfig) : null,
     assertions: Array.isArray(step.assertions) ? step.assertions : [],
@@ -2259,6 +2294,12 @@ function mergeScenarioStepSaveEcho(savedSteps: ApiScenarioStep[], submittedSteps
     if (!submittedStep) return savedStep
 
     const mergedStep: ApiScenarioStep = { ...savedStep }
+    if (!mergedStep.refType) {
+      mergedStep.refType = normalizeScenarioStepRefType(submittedStep)
+    }
+    if (isScenarioStepCopyRequest(submittedStep) && !mergedStep.requestConfig && submittedStep.requestConfig) {
+      mergedStep.requestConfig = submittedStep.requestConfig
+    }
     ;(['assertions', 'preProcessors', 'postProcessors'] as ScenarioStepAdvancedListKey[]).forEach((key) => {
       const savedValue = mergedStep[key]
       const submittedValue = submittedStep[key]
@@ -2766,10 +2807,16 @@ watch(activeScenarioEditorKey, () => {
                         <span :class="['scenario-step-method', requestMethodClass(selectedScenarioResourceMethod(item.step))]">
                           {{ selectedScenarioResourceMethod(item.step) || 'HTTP' }}
                         </span>
+                        <span :class="['scenario-step-ref-pill', `is-${normalizeScenarioStepRefType(item.step).toLowerCase()}`]">
+                          {{ scenarioStepRefTypeLabel(item.step) }}
+                        </span>
                       </template>
                       <template v-else-if="item.step.stepType === 'API_CASE'">
                         <span :class="['scenario-step-method', requestMethodClass(selectedScenarioResourceMethod(item.step))]">
                           {{ selectedScenarioResourceMethod(item.step) || 'HTTP' }}
+                        </span>
+                        <span :class="['scenario-step-ref-pill', `is-${normalizeScenarioStepRefType(item.step).toLowerCase()}`]">
+                          {{ scenarioStepRefTypeLabel(item.step) }}
                         </span>
                       </template>
                       <template v-else-if="item.step.stepType === 'CUSTOM_REQUEST'">
@@ -3230,8 +3277,8 @@ watch(activeScenarioEditorKey, () => {
           </div>
           <div class="scenario-import-actions">
             <el-button :disabled="scenarioImportLoading" @click="scenarioImportDrawerVisible = false">取消</el-button>
+            <el-button :loading="scenarioImportLoading" :disabled="!scenarioImportSelectedTotal" @click="handleScenarioImport('ref')">引用</el-button>
             <el-button type="primary" :loading="scenarioImportLoading" :disabled="!scenarioImportSelectedTotal" @click="handleScenarioImport('copy')">复制</el-button>
-            <el-button type="primary" :loading="scenarioImportLoading" :disabled="!scenarioImportSelectedTotal" @click="handleScenarioImport('quote')">引用</el-button>
           </div>
         </div>
       </template>
@@ -3256,7 +3303,7 @@ watch(activeScenarioEditorKey, () => {
       </template>
 
       <div v-if="activeScenarioStep" class="scenario-step-config-shell">
-        <template v-if="activeScenarioStep.stepType === 'API' || activeScenarioStep.stepType === 'API_CASE'">
+        <template v-if="(activeScenarioStep.stepType === 'API' || activeScenarioStep.stepType === 'API_CASE') && !isScenarioStepCopyRequest(activeScenarioStep)">
           <div v-loading="scenarioStepSystemDetailLoading" class="scenario-step-system-shell">
             <template v-if="scenarioStepSystemDetail">
               <div class="scenario-step-config-request-row">
@@ -3413,7 +3460,7 @@ watch(activeScenarioEditorKey, () => {
           </div>
         </template>
 
-        <template v-else-if="activeScenarioStep.stepType === 'CUSTOM_REQUEST'">
+        <template v-else-if="isScenarioStepEditableRequest(activeScenarioStep)">
           <div class="scenario-step-config-request-row">
             <el-select model-value="HTTP" class="scenario-step-protocol-select" disabled>
               <el-option label="HTTP" value="HTTP" />
@@ -3734,7 +3781,7 @@ watch(activeScenarioEditorKey, () => {
           </el-button>
           <el-button
             type="primary"
-            :disabled="activeScenarioStep?.stepType === 'CUSTOM_REQUEST' && !activeScenarioStepRequestConfig.path?.trim()"
+            :disabled="isScenarioStepEditableRequest(activeScenarioStep) && !activeScenarioStepRequestConfig.path?.trim()"
             @click="saveScenarioStepConfig(false)"
           >
             {{ activeScenarioStep?.stepType === 'CUSTOM_REQUEST' && scenarioStepConfigMode === 'create' ? '添加' : '保存' }}
@@ -5528,6 +5575,26 @@ watch(activeScenarioEditorKey, () => {
   font-size: 13px;
   font-weight: 700;
   line-height: 18px;
+}
+
+.scenario-step-ref-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.scenario-step-ref-pill.is-copy {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #ea580c;
 }
 
 .scenario-step-method.is-get {

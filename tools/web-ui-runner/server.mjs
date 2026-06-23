@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
-import { buildCandidatesFromElements, isProbablyLoginPage } from './collector.mjs';
+import { buildCandidatesFromElements, normalizeLocatorValidationResult, isProbablyLoginPage } from './collector.mjs';
 import { isAllowedRunnerOrigin, parseAllowedOrigins } from './cors.mjs';
 import { resolveOpenTarget } from './session.mjs';
 
@@ -45,6 +45,12 @@ const server = createServer(async (request, response) => {
     if (route === 'POST /collect/capture') {
       const payload = await readJson(request);
       const result = await captureCurrentPage(payload);
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /collect/validate') {
+      const payload = await readJson(request);
+      const result = await validateCurrentPageLocators(payload);
       return sendJson(response, 200, result);
     }
 
@@ -199,6 +205,97 @@ async function captureCurrentPage(payload) {
     rawCount: rawElements.length,
     screenshotBase64: screenshot.toString('base64'),
   };
+}
+
+async function validateCurrentPageLocators(payload) {
+  ensurePage();
+  const locators = Array.isArray(payload.locators) ? payload.locators : [];
+  const results = [];
+
+  for (const item of locators.slice(0, 200)) {
+    const locatorType = optionalString(item.locatorType).toUpperCase();
+    const locatorValue = optionalString(item.locatorValue);
+    if (!locatorType || !locatorValue) {
+      results.push(normalizeLocatorValidationResult({
+        locatorType,
+        locatorValue,
+        matchCount: 0,
+        screenshotBase64: null,
+      }));
+      continue;
+    }
+
+    try {
+      const locator = resolveLocator(page, locatorType, locatorValue);
+      const matchCount = await locator.count();
+      let screenshotBase64 = null;
+      let visible = false;
+      let editable = false;
+      let enabled = false;
+      if (matchCount > 0) {
+        const first = locator.first();
+        await first.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+        visible = await first.isVisible({ timeout: 1000 }).catch(() => false);
+        editable = await first.isEditable({ timeout: 1000 }).catch(() => false);
+        enabled = await first.isEnabled({ timeout: 1000 }).catch(() => false);
+        const screenshot = await first.screenshot({ timeout: 3000 }).catch(() => null);
+        screenshotBase64 = screenshot ? screenshot.toString('base64') : null;
+      }
+      results.push(normalizeLocatorValidationResult({
+        locatorType,
+        locatorValue,
+        matchCount,
+        visible,
+        editable,
+        enabled,
+        screenshotBase64,
+      }));
+    } catch (error) {
+      results.push({
+        locatorType,
+        locatorValue,
+        validationStatus: 'FAILED',
+        matchCount: 0,
+        validationMessage: error instanceof Error ? error.message : String(error),
+        screenshotBase64: null,
+      });
+    }
+  }
+
+  return {
+    success: true,
+    session: activeSession,
+    page: await getPageInfo(page),
+    results,
+  };
+}
+
+function resolveLocator(targetPage, locatorType, locatorValue) {
+  switch (locatorType) {
+    case 'XPATH':
+      return targetPage.locator(`xpath=${locatorValue}`);
+    case 'TEXT':
+      return targetPage.getByText(locatorValue);
+    case 'ROLE': {
+      const match = locatorValue.match(/^([^[]+)\[name="(.+)"\]$/);
+      if (match) {
+        return targetPage.getByRole(match[1], { name: match[2] });
+      }
+      const legacyParts = locatorValue.split(':');
+      if (legacyParts.length > 1) {
+        return targetPage.getByRole(legacyParts[0], { name: legacyParts.slice(1).join(':') });
+      }
+      return targetPage.getByRole(locatorValue);
+    }
+    case 'LABEL':
+      return targetPage.getByLabel(locatorValue);
+    case 'PLACEHOLDER':
+      return targetPage.getByPlaceholder(locatorValue);
+    case 'TEST_ID':
+      return targetPage.getByTestId(locatorValue);
+    default:
+      return targetPage.locator(locatorValue);
+  }
 }
 
 async function saveAuthState(payload) {

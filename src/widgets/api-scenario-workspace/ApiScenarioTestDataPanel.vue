@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowLeft, Download, FileSpreadsheet, Plus, Trash2, Upload } from '@lucide/vue'
+import { ArrowLeft, ChevronDown, FileSpreadsheet, Plus, Trash2 } from '@lucide/vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
@@ -31,6 +31,7 @@ const mode = ref<ViewMode>('list')
 const datasets = ref<ApiScenarioTestDatasetItem[]>([])
 const activeDataset = ref<ApiScenarioTestDatasetDetail | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
+const importType = ref<'csv' | 'json'>('csv')
 const variableDialogVisible = ref(false)
 const variableDraft = ref<ApiScenarioTestDatasetColumn[]>([])
 const editor = reactive({
@@ -232,19 +233,31 @@ async function deleteDataset(item: ApiScenarioTestDatasetItem) {
   await loadDatasets()
 }
 
-function chooseCsv() {
+const importAccept = computed(() => (importType.value === 'json' ? '.json' : '.csv,.txt'))
+
+function chooseImport(type: 'csv' | 'json') {
   if (!canUseApi.value) {
     ElMessage.warning('请先保存场景并切换到具体工作空间')
     return
   }
+  importType.value = type
   fileInputRef.value?.click()
 }
 
-async function handleCsvImport(event: Event) {
+async function handleDatasetImport(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
   input.value = ''
   if (!file || !props.scenarioId) return
+  if (importType.value === 'json') {
+    await importJson(file)
+    return
+  }
+  await importCsv(file)
+}
+
+async function importCsv(file: File) {
+  if (!props.scenarioId) return
   const lowerName = file.name.toLowerCase()
   if (!lowerName.endsWith('.csv') && !lowerName.endsWith('.txt')) {
     ElMessage.warning('本期先支持 CSV 文件')
@@ -276,6 +289,58 @@ async function handleCsvImport(event: Event) {
   }
 }
 
+async function importJson(file: File) {
+  const lowerName = file.name.toLowerCase()
+  if (!lowerName.endsWith('.json')) {
+    ElMessage.warning('请选择 JSON 文件')
+    return
+  }
+  importing.value = true
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text) as {
+      datasetName?: string
+      enabled?: boolean
+      columns?: Array<{ name?: string }>
+      rows?: Array<Record<string, unknown> | { values?: Record<string, unknown> }>
+      data?: Array<Record<string, unknown>>
+    }
+    const sourceRows = Array.isArray(parsed.rows) ? parsed.rows : Array.isArray(parsed.data) ? parsed.data : []
+    const columnNames = Array.isArray(parsed.columns)
+      ? parsed.columns.map(column => String(column.name || '').trim()).filter(Boolean)
+      : Array.from(new Set(sourceRows.flatMap(row => Object.keys('values' in row && row.values ? row.values : row))))
+    if (!columnNames.length) {
+      ElMessage.warning('JSON 中没有可用变量列')
+      return
+    }
+    editor.datasetName = parsed.datasetName || editor.datasetName || file.name.replace(/\.json$/i, '')
+    editor.enabled = parsed.enabled ?? editor.enabled
+    editor.sourceType = 'MANUAL'
+    editor.columns = columnNames.map(name => ({ name, sourceType: 'MANUAL' }))
+    editor.rows = sourceRows.map((row, index) => {
+      const rawValues: Record<string, unknown> =
+        'values' in row && row.values && typeof row.values === 'object'
+          ? row.values as Record<string, unknown>
+          : row
+      const values: Record<string, string> = {}
+      columnNames.forEach((name) => {
+        values[name] = String(rawValues[name] ?? '')
+      })
+      return { rowIndex: index + 1, values }
+    })
+    if (!editor.rows.length) {
+      addRow()
+    } else {
+      markDirty()
+    }
+    ElMessage.success('JSON 已导入')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : 'JSON 导入失败')
+  } finally {
+    importing.value = false
+  }
+}
+
 function escapeCsvCell(value: string) {
   const text = String(value ?? '')
   if (/[",\r\n]/.test(text)) {
@@ -301,6 +366,53 @@ function exportCsv() {
   link.download = `${editor.datasetName || 'scenario-test-data'}.csv`
   link.click()
   URL.revokeObjectURL(url)
+}
+
+function downloadTextFile(filename: string, content: string, type: string) {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportJson() {
+  if (!editor.columns.length) {
+    ElMessage.warning('请先设置变量列')
+    return
+  }
+  const payload = {
+    datasetName: editor.datasetName || 'scenario-test-data',
+    enabled: editor.enabled,
+    columns: editor.columns.map(column => ({ name: column.name, sourceType: column.sourceType || 'MANUAL' })),
+    rows: editor.rows.map(row => ({ ...row.values })),
+  }
+  downloadTextFile(
+    `${editor.datasetName || 'scenario-test-data'}.json`,
+    JSON.stringify(payload, null, 2),
+    'application/json;charset=utf-8',
+  )
+}
+
+function handleImportExportCommand(command: string | number | object) {
+  switch (command) {
+    case 'import-csv':
+      chooseImport('csv')
+      break
+    case 'export-csv':
+      exportCsv()
+      break
+    case 'import-json':
+      chooseImport('json')
+      break
+    case 'export-json':
+      exportJson()
+      break
+    default:
+      break
+  }
 }
 
 watch(() => [props.scenarioId, props.workspaceCode, props.workspaceReady], () => {
@@ -373,44 +485,51 @@ onMounted(() => {
         </div>
       </header>
 
-      <div class="scenario-test-data-info">
-        每个数据集可包含多个变量；场景运行时，使用变量的地方会读取当前行对应的值。
-      </div>
-
       <div class="scenario-test-data-editor-toolbar">
-        <el-button @click="openVariableDialog">设置变量（列）</el-button>
-        <el-button :icon="Upload" :loading="importing" @click="chooseCsv">导入 CSV</el-button>
-        <el-button :icon="Download" :disabled="!hasColumns" @click="exportCsv">导出 CSV</el-button>
-        <el-switch v-model="editor.enabled" active-text="启用" inactive-text="停用" @change="markDirty" />
-        <input ref="fileInputRef" class="scenario-test-data-file" type="file" accept=".csv,.txt" @change="handleCsvImport">
+        <el-button class="scenario-test-data-toolbar-plain" disabled>批量生成</el-button>
+        <el-dropdown trigger="click" @command="handleImportExportCommand">
+          <el-button class="scenario-test-data-dropdown-button" :loading="importing">
+            导入/导出
+            <ChevronDown :size="13" />
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu class="scenario-test-data-dropdown-menu">
+              <el-dropdown-item command="import-csv">导入 CSV</el-dropdown-item>
+              <el-dropdown-item command="export-csv" :disabled="!hasColumns">导出 CSV（可用作导入模板）</el-dropdown-item>
+              <el-dropdown-item divided command="import-json">导入 JSON</el-dropdown-item>
+              <el-dropdown-item command="export-json" :disabled="!hasColumns">导出 JSON（可用作导入模板）</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+        <input ref="fileInputRef" class="scenario-test-data-file" type="file" :accept="importAccept" @change="handleDatasetImport">
       </div>
 
       <div v-if="!hasColumns" class="scenario-test-data-editor-empty">
         <FileSpreadsheet :size="40" />
         <strong>当前测试数据为空</strong>
         <span>请设置变量列，或上传 CSV 格式测试数据。</span>
-        <el-button type="primary" @click="openVariableDialog">设置变量（列）</el-button>
       </div>
 
       <div v-else class="scenario-test-data-grid">
-        <el-table :data="displayRows" border height="100%">
-          <el-table-column label="#" width="64" fixed>
+        <el-table class="scenario-test-data-sheet" :data="displayRows" border height="100%">
+          <el-table-column label="#" width="42" fixed>
             <template #default="{ $index }">{{ $index + 1 }}</template>
           </el-table-column>
           <el-table-column
             v-for="column in editor.columns"
             :key="column.name"
             :label="column.name"
-            min-width="160"
+            min-width="120"
           >
             <template #default="{ row }">
               <el-input
+                class="scenario-test-data-cell-input"
                 :model-value="row.values[column.name] || ''"
                 @input="(value: string | number) => updateCell(row, column.name, value)"
               />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="92" fixed="right">
+          <el-table-column label="操作" width="76" fixed="right">
             <template #default="{ $index }">
               <el-button text :icon="Trash2" @click="removeRow($index)" />
             </template>
@@ -483,8 +602,7 @@ onMounted(() => {
 .scenario-test-data-toolbar span,
 .scenario-test-data-row small,
 .scenario-test-data-empty span,
-.scenario-test-data-editor-empty span,
-.scenario-test-data-info {
+.scenario-test-data-editor-empty span {
   color: #667085;
   font-size: 12px;
 }
@@ -610,18 +728,40 @@ onMounted(() => {
   gap: 8px;
 }
 
-.scenario-test-data-info {
-  margin: 12px 16px 0;
-  border: 1px solid #dbeafe;
-  border-radius: 6px;
-  background: #eff6ff;
-  color: #2563eb;
-  line-height: 20px;
-  padding: 9px 12px;
-}
-
 .scenario-test-data-editor-toolbar {
   padding: 12px 16px;
+}
+
+.scenario-test-data-toolbar-plain,
+.scenario-test-data-dropdown-button {
+  height: 28px;
+  padding: 0 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.scenario-test-data-toolbar-plain:not(.is-disabled):hover,
+.scenario-test-data-dropdown-button:hover {
+  border-color: #e5e7eb;
+  background: #f8fafc;
+  color: #344054;
+}
+
+.scenario-test-data-dropdown-button {
+  gap: 4px;
+}
+
+:global(.scenario-test-data-dropdown-menu) {
+  min-width: 208px;
+}
+
+:global(.scenario-test-data-dropdown-menu .el-dropdown-menu__item) {
+  height: 34px;
+  color: #344054;
+  font-size: 13px;
 }
 
 .scenario-test-data-file {
@@ -637,6 +777,70 @@ onMounted(() => {
   overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
+}
+
+.scenario-test-data-sheet {
+  --el-table-border-color: #eef1f5;
+  --el-table-header-bg-color: #fbfcfe;
+  --el-table-row-hover-bg-color: #fbfdff;
+  color: #172b4d;
+  font-size: 13px;
+}
+
+.scenario-test-data-sheet :deep(.el-table__cell) {
+  height: 28px;
+  padding: 0;
+  border-color: #eef1f5;
+}
+
+.scenario-test-data-sheet :deep(.el-table__header .el-table__cell) {
+  height: 28px;
+  background: #fbfcfe;
+  color: #172b4d;
+  font-weight: 500;
+}
+
+.scenario-test-data-sheet :deep(.el-table__body .el-table__cell:first-child) {
+  color: #8a96aa;
+  font-weight: 400;
+  text-align: center;
+}
+
+.scenario-test-data-sheet :deep(.cell) {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  overflow: visible;
+  line-height: 28px;
+}
+
+.scenario-test-data-sheet :deep(.scenario-test-data-cell-input) {
+  margin: -1px 0;
+}
+
+.scenario-test-data-sheet :deep(.el-input__wrapper) {
+  min-height: 30px;
+  padding: 0 7px;
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.scenario-test-data-sheet :deep(.el-input__wrapper:hover) {
+  background: #f8fafc;
+  box-shadow: none;
+}
+
+.scenario-test-data-sheet :deep(.el-input__wrapper.is-focus) {
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px #3b82f6;
+}
+
+.scenario-test-data-sheet :deep(.el-input__inner) {
+  height: 30px;
+  color: #172b4d;
+  font-size: 13px;
+  line-height: 30px;
 }
 
 .scenario-test-data-grid-footer {

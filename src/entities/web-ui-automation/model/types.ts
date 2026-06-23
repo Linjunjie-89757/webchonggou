@@ -309,6 +309,31 @@ export interface WebUiElementCollectCandidate {
   saveBlockedReason?: string | null
 }
 
+export interface WebUiElementCollectValidationResult {
+  locatorType: WebUiLocatorType
+  locatorValue: string
+  validationStatus: 'PASSED' | 'FAILED' | 'MULTIPLE' | 'UNVERIFIED' | string
+  matchCount: number
+  validationMessage: string | null
+  screenshotBase64: string | null
+}
+
+export interface LocalRunnerCollectValidationResultPayload {
+  results: WebUiElementCollectValidationResult[]
+}
+
+export interface LocalRunnerCollectTaskDegradePayload {
+  reason?: string | null
+}
+
+export interface LocalRunnerCollectTaskCancelPayload {
+  reason?: string | null
+}
+
+export interface LocalRunnerCollectTaskValidationTimeoutPayload {
+  reason?: string | null
+}
+
 export interface WebUiElementCollectResponse {
   candidates: WebUiElementCollectCandidate[]
   source: 'HTML' | 'PLAYWRIGHT' | string
@@ -341,6 +366,8 @@ export interface WebUiElementCollectTaskResponse {
   source: string
   actualUrl: string | null
   pageTitle: string | null
+  aiModelConfigId?: number | null
+  aiModelName?: string | null
   rawCount: number
   finalCount: number
   filterSummary: WebUiElementCollectFilterSummary | null

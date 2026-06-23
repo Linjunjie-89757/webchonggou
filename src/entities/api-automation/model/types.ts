@@ -264,6 +264,8 @@ export type ApiScenarioStepType =
   | 'CONSTANT_TIMER'
   | 'SCRIPT'
 
+export type ApiScenarioStepRefType = 'COPY' | 'REF' | 'DIRECT'
+
 export interface ApiScenarioVariableItem {
   name: string
   value: string
@@ -302,6 +304,7 @@ export interface ApiScenarioStep {
   id?: string
   stepName: string
   stepType?: ApiScenarioStepType
+  refType?: ApiScenarioStepRefType | null
   resourceType: ApiScenarioStepResourceType
   resourceId: number | null
   enabled?: boolean

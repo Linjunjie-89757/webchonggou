@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildCandidatesFromElements, isProbablyLoginPage } from './collector.mjs';
+import { buildCandidatesFromElements, normalizeLocatorValidationResult, isProbablyLoginPage } from './collector.mjs';
 
 test('buildCandidatesFromElements keeps useful visible controls and ranks stable locators first', () => {
   const candidates = buildCandidatesFromElements([
@@ -121,4 +121,29 @@ test('buildCandidatesFromElements removes duplicate alternative locators', () =>
     cssAlternatives.map((item) => item.value),
     ['#username'],
   );
+});
+
+test('normalizeLocatorValidationResult maps match counts to validation statuses', () => {
+  assert.deepEqual(
+    normalizeLocatorValidationResult({
+      locatorType: 'CSS',
+      locatorValue: '#submit',
+      matchCount: 1,
+      visible: true,
+      editable: false,
+      enabled: true,
+      screenshotBase64: 'png',
+    }),
+    {
+      locatorType: 'CSS',
+      locatorValue: '#submit',
+      validationStatus: 'PASSED',
+      matchCount: 1,
+      validationMessage: '真机验证通过',
+      screenshotBase64: 'png',
+    },
+  );
+
+  assert.equal(normalizeLocatorValidationResult({ locatorType: 'CSS', locatorValue: '.row', matchCount: 2 }).validationStatus, 'MULTIPLE');
+  assert.equal(normalizeLocatorValidationResult({ locatorType: 'CSS', locatorValue: '#missing', matchCount: 0 }).validationStatus, 'FAILED');
 });

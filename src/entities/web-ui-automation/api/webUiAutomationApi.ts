@@ -11,6 +11,10 @@ import type {
   BatchUpdateWebUiElementStatusPayload,
   BatchValidateWebUiElementPayload,
   CollectWebUiElementsPayload,
+  LocalRunnerCollectTaskCancelPayload,
+  LocalRunnerCollectTaskDegradePayload,
+  LocalRunnerCollectTaskValidationTimeoutPayload,
+  LocalRunnerCollectValidationResultPayload,
   LocalRunnerCollectTaskPayload,
   PageResponse,
   SaveWebUiCasePayload,
@@ -849,6 +853,58 @@ export const webUiAutomationApi = {
   async getLocalRunnerCollectTask(workspaceCode = 'ALL', taskId: number) {
     const payload = await httpGet<ApiResponse<WebUiElementCollectTaskResponse>>(
       `/automation/web/elements/collect-tasks/${taskId}`,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async submitLocalRunnerCollectValidationResults(
+    workspaceCode = 'ALL',
+    taskId: number,
+    data: LocalRunnerCollectValidationResultPayload,
+  ) {
+    const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectValidationResultPayload>(
+      `/automation/web/elements/collect-tasks/${taskId}/local-validation-results`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async degradeLocalRunnerCollectTask(
+    workspaceCode = 'ALL',
+    taskId: number,
+    data: LocalRunnerCollectTaskDegradePayload,
+  ) {
+    const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectTaskDegradePayload>(
+      `/automation/web/elements/collect-tasks/${taskId}/degrade`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async cancelLocalRunnerCollectTask(
+    workspaceCode = 'ALL',
+    taskId: number,
+    data: LocalRunnerCollectTaskCancelPayload = {},
+  ) {
+    const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectTaskCancelPayload>(
+      `/automation/web/elements/collect-tasks/${taskId}/cancel`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async timeoutLocalRunnerCollectValidation(
+    workspaceCode = 'ALL',
+    taskId: number,
+    data: LocalRunnerCollectTaskValidationTimeoutPayload = {},
+  ) {
+    const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectTaskValidationTimeoutPayload>(
+      `/automation/web/elements/collect-tasks/${taskId}/validation-timeout`,
+      data,
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))

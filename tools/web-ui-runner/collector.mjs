@@ -72,6 +72,25 @@ export function isProbablyLoginPage(pageInfo) {
   return LOGIN_HINTS.some((hint) => haystack.includes(hint.toLowerCase()));
 }
 
+export function normalizeLocatorValidationResult(result) {
+  const matchCount = Number(result.matchCount || 0);
+  const validationStatus = matchCount === 1 ? 'PASSED' : matchCount > 1 ? 'MULTIPLE' : 'FAILED';
+  const validationMessage = validationStatus === 'PASSED'
+    ? '真机验证通过'
+    : validationStatus === 'MULTIPLE'
+      ? `定位器匹配到 ${matchCount} 个元素，建议人工确认唯一性`
+      : '真机验证未找到元素';
+
+  return {
+    locatorType: result.locatorType,
+    locatorValue: result.locatorValue,
+    validationStatus,
+    matchCount,
+    validationMessage,
+    screenshotBase64: result.screenshotBase64 || null,
+  };
+}
+
 function isUsefulElement(element) {
   const tagName = String(element.tagName || '').toLowerCase();
   const role = String(element.role || '').toLowerCase();

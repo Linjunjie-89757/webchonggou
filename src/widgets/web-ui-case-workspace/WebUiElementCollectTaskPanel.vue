@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import {
+  Close,
   Clock,
+  Cpu,
   Link,
   RefreshRight,
   Timer,
@@ -11,6 +13,7 @@ import {
 import type { WebUiElementCollectTaskResponse } from '@/entities/web-ui-automation'
 import {
   buildCollectTaskStages,
+  formatCollectFilterReason,
   type WebUiCollectTaskStageStatus,
 } from '@/entities/web-ui-automation/lib/collectTask'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -23,9 +26,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   refresh: []
+  cancel: []
 }>()
 
 const collectTaskStages = computed(() => buildCollectTaskStages(props.task))
+const canCancelTask = computed(() => !['COMPLETED', 'FAILED', 'DEGRADED', 'CANCELED'].includes(props.task.status || ''))
 
 const taskDurationText = computed(() => {
   if (!props.task.createdAt) return '-'
@@ -62,6 +67,13 @@ const taskWarning = computed(() => {
       description: '当前候选可能没有经过本地真机验证，保存前建议重新连接 Runner 或重新进入目标页面采集。',
     }
   }
+  if (props.task.status === 'CANCELED') {
+    return {
+      type: 'info' as const,
+      title: props.task.message || '采集任务已取消',
+      description: '任务已停止刷新。已生成的候选仍可查看，如需继续请重新采集当前页。',
+    }
+  }
   return null
 })
 
@@ -89,13 +101,6 @@ function toElementStepStatus(status: WebUiCollectTaskStageStatus) {
   return 'wait'
 }
 
-function formatCollectFilterReason(reason?: string | null) {
-  if (reason === 'EMPTY_LOCATOR') return '空定位'
-  if (reason === 'DUPLICATE_LOCATOR') return '重复定位'
-  if (reason === 'LOW_STABILITY') return '低稳定性'
-  if (reason === 'FINAL_CANDIDATE') return '最终候选'
-  return reason || '未知'
-}
 </script>
 
 <template>
@@ -109,14 +114,24 @@ function formatCollectFilterReason(reason?: string | null) {
         <el-tag v-if="polling" type="info" effect="light">自动刷新中</el-tag>
         <span>{{ task.source }}</span>
       </div>
-      <AppButton
-        size="small"
-        :icon="RefreshRight"
-        :loading="refreshing"
-        @click="emit('refresh')"
-      >
-        刷新
-      </AppButton>
+      <div class="web-ui-collect-task__actions">
+        <AppButton
+          v-if="canCancelTask"
+          size="small"
+          :icon="Close"
+          @click="emit('cancel')"
+        >
+          取消任务
+        </AppButton>
+        <AppButton
+          size="small"
+          :icon="RefreshRight"
+          :loading="refreshing"
+          @click="emit('refresh')"
+        >
+          刷新
+        </AppButton>
+      </div>
     </div>
 
     <el-alert
@@ -130,6 +145,10 @@ function formatCollectFilterReason(reason?: string | null) {
 
     <div class="web-ui-collect-task__meta">
       <span v-if="task.pageTitle">页面：{{ task.pageTitle }}</span>
+      <span v-if="task.aiModelName">
+        <el-icon><Cpu /></el-icon>
+        AI 模型：{{ task.aiModelName }}
+      </span>
       <span v-if="task.actualUrl" class="web-ui-collect-task__url">
         <el-icon><Link /></el-icon>
         {{ task.actualUrl }}
@@ -144,6 +163,16 @@ function formatCollectFilterReason(reason?: string | null) {
         耗时：{{ taskDurationText }}
       </span>
     </div>
+
+    <el-alert
+      v-if="task.aiModelName || (task.message && /AI|ai/.test(task.message))"
+      class="web-ui-collect-task__ai-alert"
+      :type="task.message && /失败|不可用|unavailable|failed/i.test(task.message) ? 'warning' : 'success'"
+      :title="task.aiModelName ? `AI 处理：${task.aiModelName}` : 'AI 处理'"
+      :description="task.message || 'AI 已参与候选元素命名、分组和说明增强'"
+      show-icon
+      :closable="false"
+    />
 
     <div class="web-ui-collect-task__stats">
       <div v-for="item in taskStats" :key="item.label" class="web-ui-collect-task__stat">
@@ -205,6 +234,7 @@ function formatCollectFilterReason(reason?: string | null) {
 }
 
 .web-ui-collect-task__header,
+.web-ui-collect-task__actions,
 .web-ui-collect-task__identity,
 .web-ui-collect-task__meta,
 .web-ui-collect-task__filter-log,

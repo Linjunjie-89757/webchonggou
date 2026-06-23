@@ -1,9 +1,11 @@
 import type {
   WebUiElementCollectCandidate,
+  WebUiElementCollectValidationResult,
   WebUiLocatorType,
 } from '../model/types'
 
 export const LOCAL_RUNNER_BASE_URL = 'http://127.0.0.1:39118'
+export const LOCAL_RUNNER_VALIDATION_TIMEOUT_MS = 30000
 
 export interface LocalRunnerHealthView {
   online: boolean
@@ -64,6 +66,11 @@ export interface LocalRunnerCandidate {
   source?: string | null
 }
 
+export interface LocalRunnerValidateLocatorInput {
+  locatorType: WebUiLocatorType
+  locatorValue: string
+}
+
 export function normalizeRunnerHealth(payload: any): LocalRunnerHealthView {
   return {
     online: Boolean(payload?.success),
@@ -91,6 +98,25 @@ export async function captureLocalRunnerPage(waitMs = 300) {
     method: 'POST',
     body: { waitMs },
   })
+}
+
+export async function validateLocalRunnerLocators(locators: LocalRunnerValidateLocatorInput[]) {
+  const payload = await requestLocalRunner<{ results?: WebUiElementCollectValidationResult[] }>('/collect/validate', {
+    method: 'POST',
+    timeoutMs: LOCAL_RUNNER_VALIDATION_TIMEOUT_MS,
+    body: {
+      locators: locators
+        .filter(item => item.locatorValue?.trim())
+        .map(item => ({
+          locatorType: normalizeLocatorType(item.locatorType),
+          locatorValue: item.locatorValue.trim(),
+        })),
+    },
+  })
+
+  return Array.isArray(payload.results)
+    ? payload.results.map(normalizeLocalRunnerValidationResult)
+    : []
 }
 
 export async function saveLocalRunnerAuth(payload: Omit<LocalRunnerOpenPayload, 'url'>) {
@@ -142,13 +168,31 @@ async function requestLocalRunner<T = any>(
   options: {
     method?: 'GET' | 'POST'
     body?: unknown
+    timeoutMs?: number
   } = {},
 ): Promise<T> {
-  const response = await fetch(`${LOCAL_RUNNER_BASE_URL}${path}`, {
-    method: options.method || 'GET',
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  })
+  const controller = options.timeoutMs ? new AbortController() : null
+  const timeoutId = controller
+    ? globalThis.setTimeout(() => controller.abort(), options.timeoutMs)
+    : null
+  let response: Response
+  try {
+    response = await fetch(`${LOCAL_RUNNER_BASE_URL}${path}`, {
+      method: options.method || 'GET',
+      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+      signal: controller?.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('本地执行器请求超时')
+    }
+    throw error
+  } finally {
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId)
+    }
+  }
 
   const payload = await response.json().catch(() => null)
   if (!response.ok || payload?.success === false) {
@@ -171,6 +215,17 @@ function normalizeLocatorType(value?: string | null): WebUiLocatorType {
   }
 
   return 'CSS'
+}
+
+function normalizeLocalRunnerValidationResult(item: WebUiElementCollectValidationResult): WebUiElementCollectValidationResult {
+  return {
+    locatorType: normalizeLocatorType(item.locatorType),
+    locatorValue: item.locatorValue || '',
+    validationStatus: item.validationStatus || 'UNVERIFIED',
+    matchCount: Number(item.matchCount || 0),
+    validationMessage: item.validationMessage || null,
+    screenshotBase64: item.screenshotBase64 || null,
+  }
 }
 
 function clampConfidence(value?: number | null) {

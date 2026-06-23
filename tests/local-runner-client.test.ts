@@ -5,6 +5,7 @@ import {
   LOCAL_RUNNER_BASE_URL,
   mapRunnerCandidateToCollectCandidate,
   normalizeRunnerHealth,
+  validateLocalRunnerLocators,
 } from '../src/entities/web-ui-automation/lib/localRunnerClient.ts'
 
 test('local runner client uses localhost runner endpoint', () => {
@@ -55,4 +56,75 @@ test('mapRunnerCandidateToCollectCandidate maps runner candidates as static unve
   assert.equal(candidate.matchCount, null)
   assert.equal(candidate.validationMessage, '静态生成，尚未经过 Runner 真机验证')
   assert.equal(candidate.screenshotBase64, 'screen')
+})
+
+test('validateLocalRunnerLocators posts locators and normalizes validation results', async () => {
+  const originalFetch = globalThis.fetch
+  let requestUrl = ''
+  let requestBody: unknown = null
+  let requestSignal: AbortSignal | null = null
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    requestUrl = String(url)
+    requestBody = JSON.parse(String(init?.body || '{}'))
+    requestSignal = init?.signal as AbortSignal
+    return {
+      ok: true,
+      json: async () => ({
+        success: true,
+        results: [
+          {
+            locatorType: 'CSS',
+            locatorValue: '#search',
+            validationStatus: 'PASSED',
+            matchCount: 1,
+            validationMessage: 'ok',
+            screenshotBase64: 'png',
+          },
+          {
+            locatorType: 'TEXT',
+            locatorValue: 'Submit',
+            validationStatus: 'MULTIPLE',
+            matchCount: 2,
+          },
+        ],
+      }),
+    } as Response
+  }) as typeof fetch
+
+  try {
+    const results = await validateLocalRunnerLocators([
+      { locatorType: 'CSS', locatorValue: '#search' },
+      { locatorType: 'TEXT', locatorValue: 'Submit' },
+      { locatorType: 'CSS', locatorValue: '' },
+    ])
+
+    assert.equal(requestUrl, `${LOCAL_RUNNER_BASE_URL}/collect/validate`)
+    assert.equal(requestSignal instanceof AbortSignal, true)
+    assert.deepEqual(requestBody, {
+      locators: [
+        { locatorType: 'CSS', locatorValue: '#search' },
+        { locatorType: 'TEXT', locatorValue: 'Submit' },
+      ],
+    })
+    assert.deepEqual(results, [
+      {
+        locatorType: 'CSS',
+        locatorValue: '#search',
+        validationStatus: 'PASSED',
+        matchCount: 1,
+        validationMessage: 'ok',
+        screenshotBase64: 'png',
+      },
+      {
+        locatorType: 'TEXT',
+        locatorValue: 'Submit',
+        validationStatus: 'MULTIPLE',
+        matchCount: 2,
+        validationMessage: null,
+        screenshotBase64: null,
+      },
+    ])
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })

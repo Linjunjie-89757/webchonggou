@@ -15,12 +15,18 @@ import {
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import type { LocalRunnerHealthView } from '@/entities/web-ui-automation/lib/localRunnerClient'
+import {
+  getCollectCandidateReviewLevel,
+  getCollectCandidateReviewMessage,
+  isCollectCandidateSaveable as isAiCandidateSaveable,
+  type WebUiCollectCandidateFilter,
+} from '@/entities/web-ui-automation/lib/collectTask'
 import WebUiElementCollectTaskPanel from './WebUiElementCollectTaskPanel.vue'
 
 type AiCollectMode = 'ONLINE' | 'OFFLINE'
 type AiCollectScope = 'ALL' | 'FORM' | 'BUTTON' | 'TABLE' | 'DIALOG'
 type AiCollectGroupStrategy = 'AI' | 'CUSTOM'
-type AiCandidateFilter = 'ALL' | 'RECOMMENDED' | 'FAILED' | 'LOW_CONFIDENCE'
+type AiCandidateFilter = WebUiCollectCandidateFilter
 
 interface AiCollectFormState {
   providerConnectionId: number | null
@@ -67,8 +73,12 @@ interface AiCandidateSummary {
   total: number
   recommended: number
   passed: number
+  failed: number
+  multiple: number
+  unverified: number
   abnormal: number
   lowConfidence: number
+  aiEnhanced: number
   aiSupplement: number
   blocked: number
 }
@@ -96,6 +106,7 @@ const props = defineProps<{
   localRunnerChecking: boolean
   localRunnerOpening: boolean
   localRunnerCapturing: boolean
+  localRunnerValidating: boolean
   localRunnerHealth: LocalRunnerHealthView | null
   saving: boolean
 }>()
@@ -116,11 +127,13 @@ const emit = defineEmits<{
   'open-local-runner-page': []
   'capture-local-runner-page': []
   'refresh-collect-task': []
+  'cancel-collect-task': []
+  'revalidate-visible-candidates': []
   save: []
 }>()
 
 function formatAiValidationStatus(status?: string | null) {
-  if (status === 'AI_UNVERIFIED') return 'AI 建议未验证'
+  if (status === 'AI_UNVERIFIED') return 'AI 补充待验证'
   if (status === 'UNVERIFIED') return '未真机验证'
   if (status === 'PASSED') return '已验证'
   if (status === 'FAILED') return '未找到'
@@ -151,14 +164,20 @@ function formatAiCandidateSource(source?: string | null) {
   return '规则候选'
 }
 
+function isAiMetadataEnhanced(row: AiElementCandidate) {
+  return row.candidateSource !== 'AI_SUPPLEMENT'
+    && Boolean(row.businessMeaning || row.maintenanceSuggestion || row.stabilityNote)
+}
+
 function getAiCandidateSourceTagType(source?: string | null) {
   return source === 'AI_SUPPLEMENT' ? 'warning' : 'info'
 }
 
-function isAiCandidateSaveable(candidate: AiElementCandidate) {
-  return candidate.recommendedToSave
-    && (candidate.validationStatus === 'PASSED' || candidate.validationStatus === 'UNVERIFIED')
-    && !candidate.saveBlockedReason
+function getAiCandidateRowClassName({ row }: { row: AiElementCandidate }) {
+  const level = getCollectCandidateReviewLevel(row)
+  if (level === 'danger') return 'web-ui-ai-collect__row--danger'
+  if (level === 'warning') return 'web-ui-ai-collect__row--warning'
+  return ''
 }
 </script>
 
@@ -340,6 +359,16 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
           :refreshing="collectTaskRefreshing"
           :polling="collectTaskPolling"
           @refresh="emit('refresh-collect-task')"
+          @cancel="emit('cancel-collect-task')"
+        />
+
+        <el-alert
+          v-if="localRunnerValidating"
+          title="正在进行本地真机验证"
+          description="Runner 会在当前页面批量校验候选定位器，完成后自动更新通过、失败和多匹配状态。"
+          type="info"
+          show-icon
+          :closable="false"
         />
 
         <div v-if="candidates.length" class="web-ui-ai-collect__summary">
@@ -357,13 +386,22 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
             </el-tag>
             <el-tag type="success" effect="light">最终候选 {{ collectFilterSummary.finalCount }}</el-tag>
           </template>
-          <el-tag type="success" effect="light">推荐保存 {{ candidateSummary.recommended }}</el-tag>
+          <el-tag type="primary" effect="light">可保存 {{ candidateSummary.recommended }}</el-tag>
           <el-tag type="success" effect="light">验证通过 {{ candidateSummary.passed }}</el-tag>
-          <el-tag :type="candidateSummary.abnormal ? 'danger' : 'info'" effect="light">
-            验证异常 {{ candidateSummary.abnormal }}
+          <el-tag :type="candidateSummary.failed ? 'danger' : 'info'" effect="light">
+            验证失败 {{ candidateSummary.failed }}
+          </el-tag>
+          <el-tag :type="candidateSummary.multiple ? 'warning' : 'info'" effect="light">
+            多匹配 {{ candidateSummary.multiple }}
+          </el-tag>
+          <el-tag :type="candidateSummary.unverified ? 'warning' : 'info'" effect="light">
+            未验证 {{ candidateSummary.unverified }}
           </el-tag>
           <el-tag :type="candidateSummary.lowConfidence ? 'warning' : 'info'" effect="light">
             低稳定性 {{ candidateSummary.lowConfidence }}
+          </el-tag>
+          <el-tag :type="candidateSummary.aiEnhanced ? 'success' : 'info'" effect="light">
+            AI 增强 {{ candidateSummary.aiEnhanced }}
           </el-tag>
           <el-tag :type="candidateSummary.aiSupplement ? 'warning' : 'info'" effect="light">
             AI 补充 {{ candidateSummary.aiSupplement }}
@@ -377,25 +415,50 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
           <AppButton
             type="primary"
             :icon="Cpu"
-            :loading="aiCollectMode === 'ONLINE' ? localRunnerCapturing : collecting"
+            :loading="aiCollectMode === 'ONLINE' ? (localRunnerCapturing || localRunnerValidating) : collecting"
             @click="aiCollectMode === 'ONLINE' ? emit('capture-local-runner-page') : emit('generate')"
           >
-            {{ aiCollectMode === 'ONLINE' ? '采集当前页' : '生成候选元素' }}
+            {{ localRunnerValidating ? '正在真机验证' : aiCollectMode === 'ONLINE' ? '采集当前页' : '生成候选元素' }}
           </AppButton>
           <div v-if="candidates.length" class="web-ui-ai-collect__batch-actions">
             <AppButton size="small" @click="emit('select-recommended')">选择推荐且通过</AppButton>
             <AppButton size="small" @click="emit('unselect-risky')">取消风险候选</AppButton>
             <AppButton size="small" @click="emit('batch-update-group')">批量改分组</AppButton>
+            <AppButton
+              size="small"
+              :loading="localRunnerValidating"
+              @click="emit('revalidate-visible-candidates')"
+            >
+              重新验证当前筛选
+            </AppButton>
           </div>
           <div class="web-ui-ai-collect__filters">
             <AppButton size="small" :type="candidateFilter === 'ALL' ? 'primary' : 'default'" @click="emit('filter-change', 'ALL')">
               全部
             </AppButton>
             <AppButton size="small" :type="candidateFilter === 'RECOMMENDED' ? 'primary' : 'default'" @click="emit('filter-change', 'RECOMMENDED')">
-              推荐保存
+              可保存
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'PASSED' ? 'primary' : 'default'" @click="emit('filter-change', 'PASSED')">
+              验证通过
             </AppButton>
             <AppButton size="small" :type="candidateFilter === 'FAILED' ? 'primary' : 'default'" @click="emit('filter-change', 'FAILED')">
-              验证异常
+              验证失败
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'MULTIPLE' ? 'primary' : 'default'" @click="emit('filter-change', 'MULTIPLE')">
+              多匹配
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'UNVERIFIED' ? 'primary' : 'default'" @click="emit('filter-change', 'UNVERIFIED')">
+              未验证
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'BLOCKED' ? 'primary' : 'default'" @click="emit('filter-change', 'BLOCKED')">
+              禁止保存
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'AI_SUPPLEMENT' ? 'primary' : 'default'" @click="emit('filter-change', 'AI_SUPPLEMENT')">
+              AI 补充
+            </AppButton>
+            <AppButton size="small" :type="candidateFilter === 'AI_UNVERIFIED' ? 'primary' : 'default'" @click="emit('filter-change', 'AI_UNVERIFIED')">
+              AI 待验证
             </AppButton>
             <AppButton size="small" :type="candidateFilter === 'LOW_CONFIDENCE' ? 'primary' : 'default'" @click="emit('filter-change', 'LOW_CONFIDENCE')">
               低稳定性
@@ -410,6 +473,7 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
           row-key="id"
           border
           class="web-ui-ai-collect__table"
+          :row-class-name="getAiCandidateRowClassName"
           empty-text="当前筛选下暂无候选元素"
         >
           <el-table-column label="选择" width="72" align="center">
@@ -421,6 +485,9 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
             <template #default="{ row }">
               <el-tag :type="getAiCandidateSourceTagType(row.candidateSource)" effect="light">
                 {{ formatAiCandidateSource(row.candidateSource) }}
+              </el-tag>
+              <el-tag v-if="isAiMetadataEnhanced(row)" type="success" effect="light" class="web-ui-ai-collect__source-tag">
+                AI 增强
               </el-tag>
               <small v-if="row.saveBlockedReason" class="web-ui-ai-collect__hint">{{ row.saveBlockedReason }}</small>
             </template>
@@ -460,16 +527,20 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
               <el-tag :type="getAiValidationTagType(row.validationStatus)" effect="light">
                 {{ formatAiValidationStatus(row.validationStatus) }}
               </el-tag>
-              <small class="web-ui-ai-collect__hint">
-                {{ row.matchCount === null ? row.validationMessage || '-' : `匹配 ${row.matchCount} 个` }}
+              <small
+                class="web-ui-ai-collect__hint"
+                :class="`web-ui-ai-collect__hint--${getCollectCandidateReviewLevel(row)}`"
+              >
+                {{ getCollectCandidateReviewMessage(row) }}
               </small>
               <el-button
                 v-if="row.screenshotBase64"
                 link
-                type="primary"
+                :type="getCollectCandidateReviewLevel(row) === 'danger' ? 'danger' : 'primary'"
+                class="web-ui-ai-collect__evidence-link"
                 @click="emit('preview-screenshot', row)"
               >
-                截图
+                查看截图证据
               </el-button>
             </template>
           </el-table-column>
@@ -486,7 +557,10 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
             </template>
           </el-table-column>
           <el-table-column label="业务含义" min-width="150" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.businessMeaning || row.text || row.placeholder || '-' }}</template>
+            <template #default="{ row }">
+              <span>{{ row.businessMeaning || row.text || row.placeholder || '-' }}</span>
+              <small v-if="row.stabilityNote" class="web-ui-ai-collect__hint">{{ row.stabilityNote }}</small>
+            </template>
           </el-table-column>
           <el-table-column prop="maintenanceSuggestion" label="维护建议" min-width="180" show-overflow-tooltip />
           <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
@@ -502,6 +576,9 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
 
     <template #footer>
       <div class="web-ui-ai-collect__footer">
+        <span v-if="candidates.length" class="web-ui-ai-collect__footer-hint">
+          已选 {{ selectedCount }} 个，可保存 {{ candidateSummary.recommended }} 个，禁止保存 {{ candidateSummary.blocked }} 个
+        </span>
         <AppButton @click="emit('update:modelValue', false)">关闭</AppButton>
         <AppButton
           type="primary"
@@ -638,8 +715,22 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
   justify-content: flex-end;
 }
 
+.web-ui-ai-collect__footer-hint {
+  margin-right: auto;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+}
+
 .web-ui-ai-collect__table {
   width: 100%;
+}
+
+.web-ui-ai-collect__table :deep(.web-ui-ai-collect__row--danger) {
+  --el-table-tr-bg-color: var(--el-color-danger-light-9);
+}
+
+.web-ui-ai-collect__table :deep(.web-ui-ai-collect__row--warning) {
+  --el-table-tr-bg-color: var(--el-color-warning-light-9);
 }
 
 .web-ui-ai-collect__score {
@@ -649,12 +740,33 @@ function isAiCandidateSaveable(candidate: AiElementCandidate) {
   text-align: center;
 }
 
+.web-ui-ai-collect__source-tag {
+  margin-top: var(--app-space-1);
+}
+
+.web-ui-ai-collect__evidence-link {
+  margin-top: var(--app-space-1);
+  padding: 0;
+}
+
 .web-ui-ai-collect__hint {
   display: block;
   margin-top: var(--app-space-1);
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
   line-height: 1.4;
+}
+
+.web-ui-ai-collect__hint--danger {
+  color: var(--el-color-danger);
+}
+
+.web-ui-ai-collect__hint--warning {
+  color: var(--el-color-warning-dark-2);
+}
+
+.web-ui-ai-collect__hint--success {
+  color: var(--el-color-success);
 }
 
 .web-ui-ai-collect :deep(.el-select),

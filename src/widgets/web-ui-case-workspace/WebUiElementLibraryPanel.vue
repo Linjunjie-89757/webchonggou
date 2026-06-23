@@ -33,9 +33,18 @@ import {
   mapRunnerCandidateToCollectCandidate,
   openLocalRunnerPage,
   saveLocalRunnerAuth,
+  validateLocalRunnerLocators,
   type LocalRunnerHealthView,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
-import { isCollectTaskTerminalStatus } from '@/entities/web-ui-automation/lib/collectTask'
+import {
+  buildCollectCandidateSaveSummary,
+  buildCollectCandidateValidationLocators,
+  buildCollectCandidateValidationSummary,
+  isCollectCandidateSaveable as isAiCandidateSaveable,
+  isCollectTaskTerminalStatus,
+  shouldShowCollectCandidateForFilter,
+  type WebUiCollectCandidateFilter,
+} from '@/entities/web-ui-automation/lib/collectTask'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
@@ -70,6 +79,8 @@ type TreeSelection = {
 type AiCollectMode = 'ONLINE' | 'OFFLINE'
 type AiCollectScope = 'ALL' | 'FORM' | 'BUTTON' | 'TABLE' | 'DIALOG'
 type AiCollectGroupStrategy = 'AI' | 'CUSTOM'
+type AiCandidateFilter = WebUiCollectCandidateFilter
+type AiCandidateLocatorInput = Pick<AiElementCandidate, 'locatorType' | 'locatorValue'>
 type ElementImportRow = {
   moduleName?: string
   pageName?: string
@@ -187,6 +198,7 @@ const aiCollecting = ref(false)
 const localRunnerChecking = ref(false)
 const localRunnerOpening = ref(false)
 const localRunnerCapturing = ref(false)
+const localRunnerValidating = ref(false)
 const collectTaskRefreshing = ref(false)
 const collectTaskPolling = ref(false)
 const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
@@ -290,7 +302,7 @@ const aiCollectForm = reactive({
   htmlText: '',
   screenshotNote: '',
 })
-const aiCandidateFilter = ref<'ALL' | 'RECOMMENDED' | 'FAILED' | 'LOW_CONFIDENCE'>('ALL')
+const aiCandidateFilter = ref<AiCandidateFilter>('ALL')
 let collectTaskPollingTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const batchMoveForm = reactive({
@@ -347,35 +359,9 @@ const aiCollectGroupOptions = computed(() => {
   return groups.value.filter(item => item.pageId === aiCollectForm.pageId)
 })
 const aiSelectedCandidates = computed(() => aiCandidates.value.filter(item => item.selected))
-const aiCandidateSummary = computed(() => {
-  const total = aiCandidates.value.length
-  const recommended = aiCandidates.value.filter(item => item.recommendedToSave).length
-  const passed = aiCandidates.value.filter(item => item.validationStatus === 'PASSED').length
-  const abnormal = aiCandidates.value.filter(item => item.validationStatus === 'FAILED' || item.validationStatus === 'MULTIPLE').length
-  const lowConfidence = aiCandidates.value.filter(item => item.confidence < 70).length
-  const aiSupplement = aiCandidates.value.filter(item => item.candidateSource === 'AI_SUPPLEMENT').length
-  const blocked = aiCandidates.value.filter(item => Boolean(item.saveBlockedReason)).length
-  return {
-    total,
-    recommended,
-    passed,
-    abnormal,
-    lowConfidence,
-    aiSupplement,
-    blocked,
-  }
-})
+const aiCandidateSummary = computed(() => buildCollectCandidateValidationSummary(aiCandidates.value))
 const visibleAiCandidates = computed(() => {
-  if (aiCandidateFilter.value === 'RECOMMENDED') {
-    return aiCandidates.value.filter(item => item.recommendedToSave)
-  }
-  if (aiCandidateFilter.value === 'FAILED') {
-    return aiCandidates.value.filter(item => item.validationStatus === 'FAILED' || item.validationStatus === 'MULTIPLE')
-  }
-  if (aiCandidateFilter.value === 'LOW_CONFIDENCE') {
-    return aiCandidates.value.filter(item => item.confidence < 70)
-  }
-  return aiCandidates.value
+  return aiCandidates.value.filter(item => shouldShowCollectCandidateForFilter(item, aiCandidateFilter.value))
 })
 const batchMoveGroupOptions = computed(() => {
   if (!batchMoveForm.pageId) {
@@ -1125,12 +1111,6 @@ function formatAiValidationStatus(status?: string | null) {
   return status || '未验证'
 }
 
-function isAiCandidateSaveable(candidate: AiElementCandidate) {
-  return candidate.recommendedToSave
-    && (candidate.validationStatus === 'PASSED' || candidate.validationStatus === 'UNVERIFIED')
-    && !candidate.saveBlockedReason
-}
-
 function previewAiCandidateScreenshot(candidate: AiElementCandidate) {
   if (!candidate.screenshotBase64) {
     ElMessage.warning('该候选元素没有验证截图')
@@ -1225,6 +1205,86 @@ function scheduleCollectTaskPolling() {
     }
     stopCollectTaskPolling()
   }, 3000)
+}
+
+async function validateCurrentCollectTaskWithLocalRunner(
+  workspaceCode: string,
+  taskDetail: WebUiElementCollectTaskResponse,
+  customGroupName: string,
+  candidates: AiCandidateLocatorInput[] = taskDetail.candidates,
+) {
+  const locators = buildCollectCandidateValidationLocators(candidates)
+  if (!locators.length) {
+    return taskDetail
+  }
+
+  try {
+    localRunnerValidating.value = true
+    const results = await validateLocalRunnerLocators(locators)
+    if (!results.length) {
+      return taskDetail
+    }
+    const validatedTask = await webUiAutomationApi.submitLocalRunnerCollectValidationResults(
+      workspaceCode,
+      taskDetail.taskId,
+      { results },
+    )
+    applyCollectTaskDetail(validatedTask, customGroupName)
+    return validatedTask
+  } catch (error) {
+    stopCollectTaskPolling()
+    const errorMessage = getRequestErrorMessage(error)
+    const timedOut = errorMessage.includes('超时')
+    const reason = timedOut ? 'Runner 真机验证超时，已降级为未验证候选' : `Runner 真机验证失败：${errorMessage}`
+    try {
+      const degradedTask = timedOut
+        ? await webUiAutomationApi.timeoutLocalRunnerCollectValidation(workspaceCode, taskDetail.taskId, { reason })
+        : await webUiAutomationApi.degradeLocalRunnerCollectTask(workspaceCode, taskDetail.taskId, { reason })
+      applyCollectTaskDetail(degradedTask, customGroupName)
+      ElMessage.warning(timedOut
+        ? '采集成功，但本地真机验证超时，已降级为未验证候选'
+        : '采集成功，但本地真机验证失败，已降级为未验证候选')
+      return degradedTask
+    } catch (degradeError) {
+      ElMessage.warning(`${reason}。降级状态同步失败：${getRequestErrorMessage(degradeError)}`)
+    }
+    return taskDetail
+  } finally {
+    localRunnerValidating.value = false
+  }
+}
+
+async function revalidateVisibleAiCandidates() {
+  if (!currentCollectTask.value) {
+    ElMessage.warning('暂无可重新验证的采集任务')
+    return
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  const locators = buildCollectCandidateValidationLocators(visibleAiCandidates.value)
+  if (!locators.length) {
+    ElMessage.warning('当前筛选下没有可验证的候选定位器')
+    return
+  }
+  try {
+    const validatedTask = await validateCurrentCollectTaskWithLocalRunner(
+      moduleItem.workspaceCode,
+      currentCollectTask.value,
+      getAiCustomGroupName(),
+      visibleAiCandidates.value,
+    )
+    currentCollectTask.value = validatedTask
+    if (validatedTask.status === 'COMPLETED') {
+      ElMessage.success(`已重新验证 ${locators.length} 个候选定位器`)
+    } else if (validatedTask.status === 'DEGRADED') {
+      ElMessage.warning('本地真机验证未完成，当前任务已降级为未验证候选')
+    }
+  } catch (error) {
+    ElMessage.error(`重新验证失败：${getRequestErrorMessage(error)}`)
+  }
 }
 
 function selectRecommendedPassedAiCandidates() {
@@ -1341,46 +1401,37 @@ async function focusElementScope(page: WebUiElementPageItem, group: WebUiElement
 }
 
 function estimateAiSaveSummary(existingElements: WebUiElementItem[], pageId: number) {
-  let duplicateCount = 0
-  let abnormalCount = 0
-  const seenNameKeys = new Set<string>()
-  const seenLocatorKeys = new Set<string>()
-  for (const item of existingElements.filter(item => item.pageId === pageId)) {
-    seenNameKeys.add(`${item.groupName || ''}::${item.elementName}`)
-    seenLocatorKeys.add(`${item.locatorType}::${item.locatorValue}`)
-  }
-  for (const candidate of aiSelectedCandidates.value) {
-    const groupName = candidate.groupName.trim()
-    const elementName = candidate.elementName.trim()
-    const locatorValue = candidate.locatorValue.trim()
-    const nameKey = `${groupName}::${elementName}`
-    const locatorKey = `${candidate.locatorType}::${locatorValue}`
-    if (candidate.validationStatus === 'FAILED' || candidate.validationStatus === 'MULTIPLE' || candidate.confidence < 70) {
-      abnormalCount += 1
-    }
-    if (seenNameKeys.has(nameKey) || seenLocatorKeys.has(locatorKey)) {
-      duplicateCount += 1
-    } else {
-      seenNameKeys.add(nameKey)
-      seenLocatorKeys.add(locatorKey)
-    }
-  }
-  return {
-    selectedCount: aiSelectedCandidates.value.length,
-    createCount: Math.max(aiSelectedCandidates.value.length - duplicateCount, 0),
-    duplicateCount,
-    abnormalCount,
-  }
+  return buildCollectCandidateSaveSummary(
+    aiSelectedCandidates.value,
+    existingElements.filter(item => item.pageId === pageId),
+  )
 }
 
 async function confirmAiSaveSummary(summary: ReturnType<typeof estimateAiSaveSummary>) {
+  const riskParts = [
+    summary.blockedCount ? `禁止保存 ${summary.blockedCount} 个` : '',
+    summary.aiSupplementUnverifiedCount ? `AI 补充待验证 ${summary.aiSupplementUnverifiedCount} 个` : '',
+    summary.failedCount ? `验证失败 ${summary.failedCount} 个` : '',
+    summary.multipleCount ? `多匹配 ${summary.multipleCount} 个` : '',
+    summary.unverifiedCount ? `未验证 ${summary.unverifiedCount} 个` : '',
+    summary.lowConfidenceCount ? `低稳定性 ${summary.lowConfidenceCount} 个` : '',
+  ].filter(Boolean)
+  const detailItems = [
+    `已选择 <strong>${summary.selectedCount}</strong> 个候选`,
+    `预计新增 <strong>${summary.createCount}</strong> 个`,
+    `跳过 <strong>${summary.skippedCount}</strong> 个`,
+    `重复 <strong>${summary.duplicateCount}</strong> 个`,
+    summary.aiSupplementCount ? `AI 补充 <strong>${summary.aiSupplementCount}</strong> 个，其中已解锁 <strong>${summary.aiSupplementUnlockedCount}</strong> 个` : '',
+    riskParts.length ? `需要注意：${riskParts.join('，')}` : '',
+  ].filter(Boolean)
   await ElMessageBox.confirm(
-    `本次选择 ${summary.selectedCount} 个候选元素，预计新增 ${summary.createCount} 个，跳过重复 ${summary.duplicateCount} 个，包含异常候选 ${summary.abnormalCount} 个。是否继续保存？`,
+    `<div class="web-ui-ai-save-confirm">${detailItems.map(item => `<p>${item}</p>`).join('')}</div>`,
     '确认批量保存',
     {
       confirmButtonText: '继续保存',
       cancelButtonText: '取消',
-      type: summary.abnormalCount || summary.duplicateCount ? 'warning' : 'info',
+      dangerouslyUseHTMLString: true,
+      type: summary.blockedCount || summary.abnormalCount || summary.duplicateCount ? 'warning' : 'info',
     },
   )
 }
@@ -1569,9 +1620,14 @@ async function captureLocalRunnerCandidates() {
       candidates: collectCandidates,
     })
     const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, task.taskId)
-    const candidates = applyCollectTaskDetail(taskDetail, customGroupName)
+    const validatedTaskDetail = taskDetail.status === 'WAITING_LOCAL_VALIDATION'
+      ? await validateCurrentCollectTaskWithLocalRunner(moduleItem.workspaceCode, taskDetail, customGroupName)
+      : taskDetail
+    const candidates = applyCollectTaskDetail(validatedTaskDetail, customGroupName)
     aiCandidateFilter.value = 'ALL'
-    scheduleCollectTaskPolling()
+    if (!isCollectTaskTerminalStatus(validatedTaskDetail.status)) {
+      scheduleCollectTaskPolling()
+    }
     localRunnerHealth.value = await checkLocalRunnerHealth()
 
     if (!candidates.length) {
@@ -1579,7 +1635,10 @@ async function captureLocalRunnerCandidates() {
       return
     }
 
-    ElMessage.success(task.message || `本地 Runner 已创建采集任务 #${task.taskId}，生成 ${candidates.length} 个静态候选`)
+    const validationDone = validatedTaskDetail.status === 'COMPLETED'
+    ElMessage.success(validationDone
+      ? `本地 Runner 已完成采集任务 #${task.taskId}，生成并验证 ${candidates.length} 个候选元素`
+      : task.message || `本地 Runner 已创建采集任务 #${task.taskId}，生成 ${candidates.length} 个静态候选`)
   } catch (error) {
     aiCandidates.value = []
     aiCollectFilterSummary.value = null
@@ -1598,6 +1657,41 @@ async function refreshCurrentCollectTask() {
     }
   } catch {
     // Error message is shown by fetchCurrentCollectTaskDetail.
+  }
+}
+
+async function cancelCurrentCollectTask() {
+  if (!currentCollectTask.value) {
+    ElMessage.warning('暂无可取消的采集任务')
+    return
+  }
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '取消后当前采集任务会停止刷新，已生成的候选仍可查看。是否继续？',
+      '取消采集任务',
+      {
+        confirmButtonText: '取消任务',
+        cancelButtonText: '继续等待',
+        type: 'warning',
+      },
+    )
+    const task = await webUiAutomationApi.cancelLocalRunnerCollectTask(
+      moduleItem.workspaceCode,
+      currentCollectTask.value.taskId,
+      { reason: '用户取消采集任务' },
+    )
+    stopCollectTaskPolling()
+    applyCollectTaskDetail(task, getAiCustomGroupName())
+    ElMessage.success('采集任务已取消')
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error(`取消采集任务失败：${getRequestErrorMessage(error)}`)
+    }
   }
 }
 
@@ -3125,6 +3219,7 @@ onBeforeUnmount(() => {
       :local-runner-checking="localRunnerChecking"
       :local-runner-opening="localRunnerOpening"
       :local-runner-capturing="localRunnerCapturing"
+      :local-runner-validating="localRunnerValidating"
       :local-runner-health="localRunnerHealth"
       :saving="aiSaving"
       @module-change="handleAiModuleChange"
@@ -3136,6 +3231,8 @@ onBeforeUnmount(() => {
       @open-local-runner-page="openLocalRunnerCollectPage"
       @capture-local-runner-page="captureLocalRunnerCandidates"
       @refresh-collect-task="refreshCurrentCollectTask"
+      @cancel-collect-task="cancelCurrentCollectTask"
+      @revalidate-visible-candidates="revalidateVisibleAiCandidates"
       @select-recommended="selectRecommendedPassedAiCandidates"
       @unselect-risky="unselectRiskyAiCandidates"
       @batch-update-group="batchUpdateAiCandidateGroup"
