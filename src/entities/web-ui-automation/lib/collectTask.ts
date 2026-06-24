@@ -63,6 +63,12 @@ export interface WebUiCollectCandidateSaveSummary {
   abnormalCount: number
 }
 
+export interface WebUiCollectCandidateDisplayMeta {
+  label: string
+  tagType: 'success' | 'danger' | 'info' | 'warning' | 'primary'
+  description: string
+}
+
 type CandidateReviewShape = Pick<
   WebUiElementCollectCandidate,
   'validationStatus' | 'matchCount' | 'validationMessage' | 'confidence' | 'saveBlockedReason'
@@ -79,6 +85,11 @@ type CandidateFilterShape = Pick<
 >
 
 type CandidateLocatorShape = Pick<WebUiElementCollectCandidate, 'locatorType' | 'locatorValue'>
+
+type CandidateSortShape = CandidateFilterShape & CandidateReviewShape & {
+  id?: string | number
+  recommendedToSave: boolean
+}
 
 type ExistingElementShape = Pick<
   WebUiElementCollectCandidate,
@@ -134,6 +145,111 @@ export function getCollectCandidateReviewMessage(candidate: CandidateReviewShape
     return `真机验证通过，定位器匹配 ${count} 个元素`
   }
   return candidate.validationMessage || '确认候选元素名称、分组和定位器后保存'
+}
+
+export function getCollectCandidateValidationMeta(status?: string | null): WebUiCollectCandidateDisplayMeta {
+  if (status === 'PASSED') {
+    return {
+      label: '验证通过',
+      tagType: 'success',
+      description: 'Runner 已在当前页面确认定位器可命中。',
+    }
+  }
+  if (status === 'FAILED') {
+    return {
+      label: '验证失败',
+      tagType: 'danger',
+      description: 'Runner 没有找到元素，保存前建议重新采集或修正定位器。',
+    }
+  }
+  if (status === 'MULTIPLE') {
+    return {
+      label: '多匹配',
+      tagType: 'warning',
+      description: '定位器命中多个元素，建议改成唯一定位器。',
+    }
+  }
+  if (status === 'AI_UNVERIFIED') {
+    return {
+      label: 'AI 建议未验证',
+      tagType: 'warning',
+      description: '这是 AI 补充的候选，还没有经过本地真机验证。',
+    }
+  }
+  if (status === 'UNVERIFIED') {
+    return {
+      label: '未验证',
+      tagType: 'warning',
+      description: '候选尚未经过本地 Runner 真机验证。',
+    }
+  }
+  if (status === 'SKIPPED') {
+    return {
+      label: '跳过验证',
+      tagType: 'info',
+      description: '当前流程没有执行真机验证。',
+    }
+  }
+  return {
+    label: status || '未验证',
+    tagType: 'info',
+    description: '确认候选元素名称、分组和定位器后再保存。',
+  }
+}
+
+export function getCollectCandidateSourceMeta(source?: string | null): WebUiCollectCandidateDisplayMeta {
+  if (source === 'AI_SUPPLEMENT') {
+    return {
+      label: 'AI 补充',
+      tagType: 'warning',
+      description: '规则可能漏掉的元素，由 AI 提出，需真机验证通过后再保存。',
+    }
+  }
+  if (source === 'STATIC_RULE') {
+    return {
+      label: '静态规则',
+      tagType: 'info',
+      description: '由后端静态规则从页面素材中提取。',
+    }
+  }
+  if (source === 'RULE') {
+    return {
+      label: '规则候选',
+      tagType: 'info',
+      description: '由规则采集生成的基础候选。',
+    }
+  }
+  return {
+    label: source || '规则候选',
+    tagType: 'info',
+    description: '由采集流程生成的候选。',
+  }
+}
+
+export function sortCollectCandidatesForReview<T extends CandidateSortShape>(candidates: T[]): T[] {
+  const validationRank: Record<string, number> = {
+    PASSED: 0,
+    UNVERIFIED: 1,
+    AI_UNVERIFIED: 2,
+    SKIPPED: 3,
+    MULTIPLE: 4,
+    FAILED: 5,
+  }
+  const score = (candidate: T) => {
+    if (candidate.saveBlockedReason) return 900
+    if (Number(candidate.confidence || 0) < 60) return 700
+    const sourcePenalty = candidate.candidateSource === 'AI_SUPPLEMENT' ? 20 : 0
+    const recommendedPenalty = candidate.recommendedToSave ? 0 : 100
+    const validationPenalty = validationRank[candidate.validationStatus || 'UNVERIFIED'] ?? 200
+    return sourcePenalty + recommendedPenalty + validationPenalty
+  }
+  return [...candidates].sort((left, right) => {
+    const scoreDiff = score(left) - score(right)
+    if (scoreDiff !== 0) return scoreDiff
+    const confidenceDiff = Number(right.confidence || 0) - Number(left.confidence || 0)
+    if (confidenceDiff !== 0) return confidenceDiff
+    return String(left.id ?? '').localeCompare(String(right.id ?? ''))
+  })
 }
 
 export function buildCollectCandidateValidationSummary(

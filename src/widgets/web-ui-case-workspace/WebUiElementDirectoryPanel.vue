@@ -85,3 +85,78 @@ const emit = defineEmits<{
     </el-tree>
   </aside>
 </template>
+
+<style scoped>
+.web-ui-element-tree {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--app-space-3);
+  padding: var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+}
+
+.web-ui-element-tree__create {
+  width: 100%;
+  justify-content: center;
+}
+
+.web-ui-element-tree__title,
+.web-ui-element-tree__node,
+.web-ui-element-tree__node-main {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
+}
+
+.web-ui-element-tree__title {
+  justify-content: flex-start;
+  padding-top: var(--app-space-2);
+}
+
+.web-ui-element-tree__title strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+}
+
+.web-ui-element-tree__title small,
+.web-ui-element-tree__node small {
+  color: var(--app-text-muted);
+}
+
+.web-ui-element-tree__directory {
+  min-height: 0;
+}
+
+.web-ui-element-tree__node {
+  width: 100%;
+  min-width: 0;
+  justify-content: space-between;
+}
+
+.web-ui-element-tree__node-main {
+  min-width: 0;
+  flex: 1;
+  gap: var(--app-space-2);
+}
+
+.web-ui-element-tree__node-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ui-element-tree__folder {
+  flex-shrink: 0;
+  color: #409eff;
+}
+
+.web-ui-element-tree__node-add {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  color: var(--app-text-muted);
+}
+</style>

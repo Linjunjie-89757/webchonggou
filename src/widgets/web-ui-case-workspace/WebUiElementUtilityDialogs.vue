@@ -150,3 +150,38 @@ const emit = defineEmits<{
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.web-ui-element-import {
+  display: grid;
+  gap: var(--app-space-3);
+}
+
+.web-ui-element-validate {
+  display: grid;
+  gap: var(--app-space-3);
+}
+
+.web-ui-element-validate :deep(.el-select) {
+  width: 100%;
+}
+
+.web-ui-element-validate__screenshot {
+  display: grid;
+  gap: var(--app-space-2);
+}
+
+.web-ui-element-validate__screenshot :deep(.app-button) {
+  justify-self: flex-start;
+}
+
+.web-ui-element-validate__image {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-muted);
+}
+</style>

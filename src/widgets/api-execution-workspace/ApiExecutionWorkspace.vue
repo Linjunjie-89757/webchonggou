@@ -338,11 +338,11 @@ function isSuiteTreeNodeExpanded(key: string) {
   return expandedSuiteTreeKeys.value.includes(key)
 }
 
-function handleSuiteTreeExpand(node: ExecutionSuiteTreeNode) {
+function handleSuiteTreeExpand(node: ExecutionSuiteNode) {
   expandedSuiteTreeKeys.value = Array.from(new Set([...expandedSuiteTreeKeys.value, node.key]))
 }
 
-function handleSuiteTreeCollapse(node: ExecutionSuiteTreeNode) {
+function handleSuiteTreeCollapse(node: ExecutionSuiteNode) {
   expandedSuiteTreeKeys.value = expandedSuiteTreeKeys.value.filter(key => key !== node.key)
 }
 

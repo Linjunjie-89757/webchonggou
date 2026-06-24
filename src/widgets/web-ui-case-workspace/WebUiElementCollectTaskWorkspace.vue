@@ -22,6 +22,7 @@ import {
   isCollectCandidateSaveable,
   isCollectTaskTerminalStatus,
   shouldShowCollectCandidateForFilter,
+  sortCollectCandidatesForReview,
   type WebUiCollectCandidateFilter,
 } from '@/entities/web-ui-automation/lib/collectTask'
 import {
@@ -96,7 +97,9 @@ const routeGroupName = computed(() => {
 })
 
 const visibleCandidates = computed(() =>
-  candidates.value.filter(item => shouldShowCollectCandidateForFilter(item, candidateFilter.value)),
+  sortCollectCandidatesForReview(
+    candidates.value.filter(item => shouldShowCollectCandidateForFilter(item, candidateFilter.value)),
+  ),
 )
 const selectedCandidates = computed(() => candidates.value.filter(item => item.selected))
 const candidateSummary = computed(() => buildCollectCandidateValidationSummary(candidates.value))
@@ -568,24 +571,30 @@ async function loadDuplicateBaseline(workspaceCode: string, pageId: number) {
 }
 
 async function confirmSaveSummary(summary: ReturnType<typeof buildCollectCandidateSaveSummary>) {
-  const riskParts = [
-    summary.blockedCount ? `禁止保存 ${summary.blockedCount} 个` : '',
-    summary.aiSupplementUnverifiedCount ? `AI 补充待验证 ${summary.aiSupplementUnverifiedCount} 个` : '',
-    summary.failedCount ? `验证失败 ${summary.failedCount} 个` : '',
-    summary.multipleCount ? `多匹配 ${summary.multipleCount} 个` : '',
-    summary.unverifiedCount ? `未验证 ${summary.unverifiedCount} 个` : '',
-    summary.lowConfidenceCount ? `低稳定性 ${summary.lowConfidenceCount} 个` : '',
+  const planItems = [
+    `已选择 <strong>${summary.selectedCount}</strong> 个候选`,
+    `预计新增 <strong>${summary.createCount}</strong> 个元素`,
+    summary.skippedCount ? `将跳过 <strong>${summary.skippedCount}</strong> 个候选` : '',
+    summary.duplicateCount ? `其中重复元素 / 重复定位器 <strong>${summary.duplicateCount}</strong> 个` : '',
+  ].filter(Boolean)
+  const riskItems = [
+    summary.blockedCount ? `禁止保存：${summary.blockedCount} 个，将不会入库` : '',
+    summary.failedCount ? `验证失败：${summary.failedCount} 个，建议先重新采集或修正定位器` : '',
+    summary.multipleCount ? `多匹配：${summary.multipleCount} 个，建议改成唯一定位器` : '',
+    summary.unverifiedCount ? `未验证：${summary.unverifiedCount} 个，保存后可能不可用` : '',
+    summary.lowConfidenceCount ? `低稳定性：${summary.lowConfidenceCount} 个，后续页面改版时更容易失效` : '',
+    summary.aiSupplementCount
+      ? `AI 补充：${summary.aiSupplementCount} 个，其中真机验证通过 ${summary.aiSupplementUnlockedCount} 个，未验证 ${summary.aiSupplementUnverifiedCount} 个`
+      : '',
   ].filter(Boolean)
   const detailItems = [
-    `已选择 <strong>${summary.selectedCount}</strong> 个候选`,
-    `预计新增 <strong>${summary.createCount}</strong> 个`,
-    `跳过 <strong>${summary.skippedCount}</strong> 个`,
-    `重复 <strong>${summary.duplicateCount}</strong> 个`,
-    summary.aiSupplementCount ? `AI 补充 <strong>${summary.aiSupplementCount}</strong> 个，其中已解锁 <strong>${summary.aiSupplementUnlockedCount}</strong> 个` : '',
-    riskParts.length ? `需要注意：${riskParts.join('；')}` : '',
+    '<h4>保存计划</h4>',
+    ...planItems.map(item => `<p>${item}</p>`),
+    riskItems.length ? '<h4>质量提醒</h4>' : '',
+    ...riskItems.map(item => `<p class="web-ui-ai-save-confirm__risk">${item}</p>`),
   ].filter(Boolean)
   await ElMessageBox.confirm(
-    `<div class="web-ui-ai-save-confirm">${detailItems.map(item => `<p>${item}</p>`).join('')}</div>`,
+    `<div class="web-ui-ai-save-confirm">${detailItems.join('')}</div>`,
     '确认批量保存',
     {
       confirmButtonText: '继续保存',
@@ -986,5 +995,28 @@ onBeforeUnmount(() => {
   background: var(--app-bg-soft);
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
+}
+
+:global(.web-ui-ai-save-confirm) {
+  display: grid;
+  gap: var(--app-space-2);
+}
+
+:global(.web-ui-ai-save-confirm h4) {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+:global(.web-ui-ai-save-confirm p) {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 1.6;
+}
+
+:global(.web-ui-ai-save-confirm__risk) {
+  color: var(--el-color-warning-dark-2);
 }
 </style>

@@ -67,3 +67,68 @@ const emit = defineEmits<{
     </div>
   </header>
 </template>
+
+<style scoped>
+.web-ui-element-library__header,
+.web-ui-filter-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.web-ui-filter-toolbar {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--app-space-3);
+}
+
+.web-ui-filter-toolbar__query,
+.web-ui-filter-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.web-ui-filter-toolbar__query {
+  flex: 1 1 520px;
+}
+
+.web-ui-filter-toolbar__actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.web-ui-filter-toolbar__search {
+  width: 320px;
+  flex: 0 0 320px;
+}
+
+.web-ui-filter-toolbar__select {
+  flex: 0 0 156px;
+  width: 156px;
+}
+
+.web-ui-filter-toolbar__ai {
+  margin-left: 0;
+}
+
+.web-ui-filter-toolbar :deep(.app-button) {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 900px) {
+  .web-ui-filter-toolbar__search {
+    flex: 1 1 240px;
+    width: auto;
+  }
+
+  .web-ui-filter-toolbar__actions {
+    justify-content: flex-start;
+  }
+}
+</style>

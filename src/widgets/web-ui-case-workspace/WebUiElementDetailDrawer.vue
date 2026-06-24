@@ -6,6 +6,10 @@ import {
   formatWebUiDateTime,
   type WebUiElementItem,
 } from '@/entities/web-ui-automation'
+import {
+  getCollectCandidateSourceMeta,
+  getCollectCandidateValidationMeta,
+} from '@/entities/web-ui-automation/lib/collectTask'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 
 defineProps<{
@@ -28,29 +32,6 @@ function isAiCollectedElement(item?: WebUiElementItem | null) {
   return Boolean(item?.collectTaskId || item?.description?.includes('来源：智能采集'))
 }
 
-function formatCollectSource(source?: string | null) {
-  if (source === 'AI_SUPPLEMENT') return 'AI 补充候选'
-  if (source === 'STATIC_RULE') return '静态规则'
-  if (source === 'RULE') return '规则候选'
-  return source || '-'
-}
-
-function formatCollectValidationStatus(status?: string | null) {
-  if (status === 'PASSED') return '验证通过'
-  if (status === 'FAILED') return '未找到'
-  if (status === 'MULTIPLE') return '多匹配'
-  if (status === 'UNVERIFIED') return '未验证'
-  if (status === 'AI_UNVERIFIED') return 'AI 建议未验证'
-  if (status === 'SKIPPED') return '跳过验证'
-  return status || '-'
-}
-
-function getCollectValidationTagType(status?: string | null) {
-  if (status === 'PASSED') return 'success'
-  if (status === 'FAILED') return 'danger'
-  if (status === 'MULTIPLE' || status === 'UNVERIFIED' || status === 'AI_UNVERIFIED') return 'warning'
-  return 'info'
-}
 </script>
 
 <template>
@@ -105,14 +86,22 @@ function getCollectValidationTagType(status?: string | null) {
           </template>
           <span v-else>-</span>
         </el-descriptions-item>
-        <el-descriptions-item label="采集来源">{{ formatCollectSource(target.collectSource) }}</el-descriptions-item>
+        <el-descriptions-item label="采集来源">
+          <el-tooltip :content="getCollectCandidateSourceMeta(target.collectSource).description" placement="top">
+            <el-tag :type="getCollectCandidateSourceMeta(target.collectSource).tagType" effect="light">
+              {{ getCollectCandidateSourceMeta(target.collectSource).label }}
+            </el-tag>
+          </el-tooltip>
+        </el-descriptions-item>
         <el-descriptions-item label="采集稳定性">
           {{ target.collectConfidence === null || target.collectConfidence === undefined ? '-' : `${target.collectConfidence}%` }}
         </el-descriptions-item>
         <el-descriptions-item label="采集验证">
-          <el-tag :type="getCollectValidationTagType(target.collectValidationStatus)" effect="light">
-            {{ formatCollectValidationStatus(target.collectValidationStatus) }}
-          </el-tag>
+          <el-tooltip :content="getCollectCandidateValidationMeta(target.collectValidationStatus).description" placement="top">
+            <el-tag :type="getCollectCandidateValidationMeta(target.collectValidationStatus).tagType" effect="light">
+              {{ getCollectCandidateValidationMeta(target.collectValidationStatus).label }}
+            </el-tag>
+          </el-tooltip>
           <span v-if="target.collectMatchCount !== null && target.collectMatchCount !== undefined" class="web-ui-element-detail__inline-note">
             匹配 {{ target.collectMatchCount }} 个
           </span>

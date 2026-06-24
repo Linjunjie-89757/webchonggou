@@ -4,8 +4,10 @@ import {
   type WebUiElementCollectCandidate,
 } from '@/entities/web-ui-automation'
 import {
+  getCollectCandidateSourceMeta,
   getCollectCandidateReviewLevel,
   getCollectCandidateReviewMessage,
+  getCollectCandidateValidationMeta,
   isCollectCandidateSaveable,
 } from '@/entities/web-ui-automation/lib/collectTask'
 import type { WebUiElementCollectCandidateView } from './elementCollectTypes'
@@ -18,39 +20,12 @@ const emit = defineEmits<{
   'preview-screenshot': [candidate: WebUiElementCollectCandidateView]
 }>()
 
-function formatValidationStatus(status?: string | null) {
-  if (status === 'AI_UNVERIFIED') return 'AI 建议未验证'
-  if (status === 'UNVERIFIED') return '未真机验证'
-  if (status === 'PASSED') return '验证通过'
-  if (status === 'FAILED') return '未找到'
-  if (status === 'MULTIPLE') return '多匹配'
-  if (status === 'SKIPPED') return '未验证'
-  return status || '未验证'
-}
-
-function getValidationTagType(status?: string | null) {
-  if (status === 'PASSED') return 'success'
-  if (status === 'FAILED') return 'danger'
-  if (status === 'MULTIPLE' || status === 'AI_UNVERIFIED' || status === 'UNVERIFIED') return 'warning'
-  return 'info'
-}
-
 function formatElementType(type?: string | null) {
   if (type === 'FORM') return '表单'
   if (type === 'BUTTON') return '按钮'
   if (type === 'TABLE') return '表格'
   if (type === 'DIALOG') return '弹窗'
   return type || '-'
-}
-
-function formatCandidateSource(source?: string | null) {
-  if (source === 'AI_SUPPLEMENT') return 'AI 补充'
-  if (source === 'STATIC_RULE') return '静态规则'
-  return '规则候选'
-}
-
-function getCandidateSourceTagType(source?: string | null) {
-  return source === 'AI_SUPPLEMENT' ? 'warning' : 'info'
 }
 
 function isAiMetadataEnhanced(row: WebUiElementCollectCandidate) {
@@ -89,9 +64,11 @@ function hasValidationEvidenceState(row: WebUiElementCollectCandidateView) {
     <el-table-column label="来源" width="122">
       <template #default="{ row }">
         <div class="web-ui-collect-candidate-table__tags">
-          <el-tag :type="getCandidateSourceTagType(row.candidateSource)" effect="light">
-            {{ formatCandidateSource(row.candidateSource) }}
-          </el-tag>
+          <el-tooltip :content="getCollectCandidateSourceMeta(row.candidateSource).description" placement="top">
+            <el-tag :type="getCollectCandidateSourceMeta(row.candidateSource).tagType" effect="light">
+              {{ getCollectCandidateSourceMeta(row.candidateSource).label }}
+            </el-tag>
+          </el-tooltip>
           <el-tag v-if="isAiMetadataEnhanced(row)" type="success" effect="light">
             AI 增强
           </el-tag>
@@ -135,9 +112,11 @@ function hasValidationEvidenceState(row: WebUiElementCollectCandidateView) {
     </el-table-column>
     <el-table-column label="验证" min-width="176">
       <template #default="{ row }">
-        <el-tag :type="getValidationTagType(row.validationStatus)" effect="light">
-          {{ formatValidationStatus(row.validationStatus) }}
-        </el-tag>
+        <el-tooltip :content="getCollectCandidateValidationMeta(row.validationStatus).description" placement="top">
+          <el-tag :type="getCollectCandidateValidationMeta(row.validationStatus).tagType" effect="light">
+            {{ getCollectCandidateValidationMeta(row.validationStatus).label }}
+          </el-tag>
+        </el-tooltip>
         <small
           class="web-ui-collect-candidate-table__hint"
           :class="`web-ui-collect-candidate-table__hint--${getCollectCandidateReviewLevel(row)}`"
@@ -169,8 +148,16 @@ function hasValidationEvidenceState(row: WebUiElementCollectCandidateView) {
     </el-table-column>
     <el-table-column label="稳定性" width="112">
       <template #default="{ row }">
-        <el-progress :percentage="row.confidence" :stroke-width="8" :show-text="false" />
+        <el-progress
+          :percentage="row.confidence"
+          :status="row.confidence < 60 ? 'exception' : row.confidence < 80 ? 'warning' : 'success'"
+          :stroke-width="8"
+          :show-text="false"
+        />
         <small class="web-ui-collect-candidate-table__score">{{ row.confidence }}%</small>
+        <small v-if="row.confidence < 60" class="web-ui-collect-candidate-table__hint web-ui-collect-candidate-table__hint--warning">
+          低稳定性
+        </small>
       </template>
     </el-table-column>
     <el-table-column label="业务含义" min-width="180" show-overflow-tooltip>
