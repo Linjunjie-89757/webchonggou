@@ -1,6 +1,6 @@
-# 自动化测试平台前端 2.0
+# 自动化测试平台 2.0
 
-本项目用于重建 `D:\Project\auto\web`，当前阶段只完成初始化、基础目录、路由、样式 token、请求封装和通用 UI 薄封装，不迁移具体业务页面。
+本项目用于重建自动化测试平台前端，并收口配套后端服务，方便前后端在同一仓库内联调、构建和迁移。
 
 ## 技术栈
 
@@ -19,6 +19,13 @@ npm install
 npm run dev
 ```
 
+后端服务：
+
+```powershell
+cd server
+.\run-local-server.cmd
+```
+
 默认后端接口地址：
 
 ```text
@@ -30,14 +37,14 @@ VITE_API_BASE_URL=http://localhost:8080/api
 ## 本地联调约定
 
 - 前端仓库：`D:\perfectproject\newautoweb\perfectprojectwebchonggou-main`
-- 后端仍使用旧项目：`D:\Project\auto\server`
+- 后端项目：`D:\perfectproject\newautoweb\perfectprojectwebchonggou-main\server`
 - 前端本地新建 `.env.local`：
 
 ```text
 VITE_API_BASE_URL=http://localhost:8080/api
 ```
 
-- 启动顺序：先启动旧后端，再在当前前端仓库执行 `npm run dev`
+- 启动顺序：先启动 `server` 后端，再在当前仓库执行 `npm run dev`
 - 联调时统一使用 `localhost`，不要混用 `127.0.0.1`
 
 开发登录联调时，推荐使用 `http://localhost:5174` 访问前端，并保持后端地址为

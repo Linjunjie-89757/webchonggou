@@ -1,0 +1,12 @@
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS module_id BIGINT;
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS module_name VARCHAR(255);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS priority VARCHAR(16);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS run_mode VARCHAR(32);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS run_on VARCHAR(32);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS continue_on_failure TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS global_timeout_ms INT NOT NULL DEFAULT 300000;
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS step_failure_retry_count INT NOT NULL DEFAULT 0;
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS default_step_wait_ms INT NOT NULL DEFAULT 0;
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS branch_name VARCHAR(255);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS trigger_source VARCHAR(255);
+ALTER TABLE tb_api_execution_suite_run_history ADD COLUMN IF NOT EXISTS item_snapshot_json LONGTEXT;

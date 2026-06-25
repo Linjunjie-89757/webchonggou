@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# Backend local artifacts
+server/target/
+server/logs/
+server/run-logs/
+server/.runlogs/
+server/.tmp/
+server/data/
+server/*.log
+server/*.out.log
+server/*.err.log
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

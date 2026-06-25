@@ -1,0 +1,1 @@
+-- execution_note already exists in V1__init_schema.sql; keep this as a version placeholder
