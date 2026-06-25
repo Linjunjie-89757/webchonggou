@@ -1757,6 +1757,7 @@ function emptyRequestConfig(method = 'GET'): ApiRequestConfigInput {
       basicAuth: { userName: '', password: '' },
       digestAuth: { userName: '', password: '' },
     },
+    schemaFields: [],
   }
 }
 
@@ -1837,14 +1838,29 @@ function schemaFieldDepth(field: ApiSchemaFieldInput) {
 }
 
 function schemaFieldType(field: ApiSchemaFieldInput) {
-  return [field.type, field.format ? `(${field.format})` : ''].filter(Boolean).join(' ') || '-'
+  const rawType = String(field.type || '').trim()
+  const inferredType = rawType || inferSchemaFieldType(field)
+  return [inferredType, field.format ? `(${field.format})` : ''].filter(Boolean).join(' ') || '-'
 }
 
-function schemaFieldExample(field: ApiSchemaFieldInput) {
+function inferSchemaFieldType(field: ApiSchemaFieldInput) {
+  if (field.fieldPath?.includes('[]')) return 'array'
   const value = field.example ?? field.defaultValue
-  if (value == null || value === '') return '-'
-  if (typeof value === 'string') return value
-  return JSON.stringify(value)
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number'
+  if (Array.isArray(value)) return 'array'
+  if (value && typeof value === 'object') return 'object'
+  if (Array.isArray(field.enumValues) && field.enumValues.length) return 'string'
+  return ''
+}
+
+function schemaFieldTypeClass(field: ApiSchemaFieldInput) {
+  const type = schemaFieldType(field).toLowerCase()
+  if (type.includes('array')) return 'is-array'
+  if (type.includes('object')) return 'is-object'
+  if (type.includes('integer') || type.includes('number')) return 'is-number'
+  if (type.includes('boolean')) return 'is-boolean'
+  return 'is-string'
 }
 
 function schemaFieldEnum(field: ApiSchemaFieldInput) {
@@ -1857,6 +1873,216 @@ function schemaFieldLimit(field: ApiSchemaFieldInput) {
     field.minimum != null || field.maximum != null ? `范围 ${field.minimum ?? '-'} ~ ${field.maximum ?? '-'}` : '',
   ].filter(Boolean)
   return limits.join('；') || '-'
+}
+
+function schemaEditableValue(value: unknown) {
+  if (value == null) return ''
+  return typeof value === 'string' ? value : JSON.stringify(value)
+}
+
+function updateSchemaFieldValue(field: ApiSchemaFieldInput, key: 'description' | 'example' | 'defaultValue', value: string) {
+  if (key === 'description') {
+    field.description = value
+  } else {
+    field[key] = value
+  }
+  markDirty()
+}
+
+function updateSchemaRequired(field: ApiSchemaFieldInput, value: unknown) {
+  field.required = Boolean(value)
+  markDirty()
+}
+
+function schemaFieldHasChildren(field: ApiSchemaFieldInput, fields: ApiSchemaFieldInput[]) {
+  const path = field.fieldPath || field.name || ''
+  if (!path) return false
+  return fields.some(item => {
+    const itemPath = item.fieldPath || item.name || ''
+    return itemPath.startsWith(`${path}.`) || itemPath.startsWith(`${path}[].`)
+  })
+}
+
+function schemaGeneratedValue(field: ApiSchemaFieldInput, fields: ApiSchemaFieldInput[]) {
+  const type = schemaFieldType(field).toLowerCase()
+  if (schemaFieldHasChildren(field, fields)) {
+    return type.includes('array') || (field.fieldPath || '').endsWith('[]') ? [] : {}
+  }
+  const source = field.example ?? field.defaultValue ?? (Array.isArray(field.enumValues) && field.enumValues.length ? field.enumValues[0] : null)
+  if (source != null && source !== '') {
+    if (type.includes('integer') || type.includes('number')) {
+      const numberValue = Number(source)
+      return Number.isNaN(numberValue) ? 0 : numberValue
+    }
+    if (type.includes('boolean')) {
+      return typeof source === 'boolean' ? source : String(source).toLowerCase() === 'true'
+    }
+    return source
+  }
+  if (type.includes('integer') || type.includes('number')) return 0
+  if (type.includes('boolean')) return false
+  if (type.includes('array')) return []
+  if (type.includes('object')) return {}
+  return ''
+}
+
+function setSchemaPathValue(root: Record<string, unknown>, fieldPath: string, value: unknown) {
+  if (!fieldPath) return
+  const parts = fieldPath.split('.').filter(Boolean)
+  let cursor: Record<string, unknown> = root
+  parts.forEach((part, index) => {
+    const isLast = index === parts.length - 1
+    const isArray = part.endsWith('[]')
+    const key = isArray ? part.slice(0, -2) : part
+    if (!key) return
+    if (isLast) {
+      if (isArray) {
+        cursor[key] = Array.isArray(value) ? value : [value]
+      } else {
+        cursor[key] = value
+      }
+      return
+    }
+    if (isArray) {
+      if (!Array.isArray(cursor[key])) cursor[key] = [{}]
+      const list = cursor[key] as unknown[]
+      if (!list[0] || typeof list[0] !== 'object' || Array.isArray(list[0])) list[0] = {}
+      cursor = list[0] as Record<string, unknown>
+      return
+    }
+    if (!cursor[key] || typeof cursor[key] !== 'object' || Array.isArray(cursor[key])) cursor[key] = {}
+    cursor = cursor[key] as Record<string, unknown>
+  })
+}
+
+async function generateJsonFromBodySchema() {
+  if (!activeDetail.value) return
+  const fields = bodySchemaFields.value
+  if (!fields.length) {
+    ElMessage.info('当前请求体暂无 Schema 字段')
+    return
+  }
+  const currentText = getModeBodyText(activeDetail.value.requestConfig.body).trim()
+  if (currentText) {
+    const confirmed = await confirmApiAction('当前请求体已有内容，是否用 Schema 示例 JSON 覆盖？', '生成示例 JSON')
+    if (!confirmed) return
+  }
+  const root: Record<string, unknown> = {}
+  fields
+    .slice()
+    .sort((left, right) => schemaFieldDepth(left) - schemaFieldDepth(right))
+    .forEach(field => setSchemaPathValue(root, field.fieldPath || field.name || '', schemaGeneratedValue(field, fields)))
+  setBodyMode('RAW_JSON')
+  setModeBodyText(activeDetail.value.requestConfig.body, toPrettyJson(root), 'RAW_JSON')
+  bodyJsonViewMode.value = 'json'
+  markDirty()
+  ElMessage.success('已根据 Schema 生成示例 JSON')
+}
+
+function schemaTypeFromJsonValue(value: unknown) {
+  if (Array.isArray(value)) return 'array'
+  if (value === null) return 'string'
+  if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number'
+  if (typeof value === 'boolean') return 'boolean'
+  if (typeof value === 'object') return 'object'
+  return 'string'
+}
+
+function schemaNameFromPath(path: string) {
+  const last = path.split('.').filter(Boolean).pop() || path
+  return last.replace(/\[\]$/, '')
+}
+
+function collectSchemaFieldsFromJson(value: unknown, parentPath = ''): ApiSchemaFieldInput[] {
+  if (Array.isArray(value)) {
+    const arrayPath = parentPath.endsWith('[]') ? parentPath : `${parentPath}[]`
+    const first = value[0]
+    if (first && typeof first === 'object') {
+      return collectSchemaFieldsFromJson(first, arrayPath)
+    }
+    return [{
+      location: 'body',
+      fieldPath: arrayPath,
+      name: schemaNameFromPath(arrayPath),
+      type: first == null ? 'array' : schemaTypeFromJsonValue(first),
+      format: null,
+      required: false,
+      description: '',
+      example: first ?? '',
+      defaultValue: null,
+      enumValues: [],
+      minLength: null,
+      maxLength: null,
+      minimum: null,
+      maximum: null,
+    }]
+  }
+  if (value && typeof value === 'object') {
+    const fields: ApiSchemaFieldInput[] = []
+    Object.entries(value as Record<string, unknown>).forEach(([key, childValue]) => {
+      const fieldPath = parentPath ? `${parentPath}.${key}` : key
+      const type = schemaTypeFromJsonValue(childValue)
+      fields.push({
+        location: 'body',
+        fieldPath,
+        name: key,
+        type,
+        format: null,
+        required: false,
+        description: '',
+        example: type === 'object' || type === 'array' ? null : childValue,
+        defaultValue: null,
+        enumValues: [],
+        minLength: null,
+        maxLength: null,
+        minimum: null,
+        maximum: null,
+      })
+      if ((childValue && typeof childValue === 'object') || Array.isArray(childValue)) {
+        fields.push(...collectSchemaFieldsFromJson(childValue, fieldPath))
+      }
+    })
+    return fields
+  }
+  return []
+}
+
+function replaceBodySchemaFields(fields: ApiSchemaFieldInput[]) {
+  if (!activeDetail.value) return
+  const current = activeDetail.value.requestConfig.schemaFields || []
+  activeDetail.value.requestConfig.schemaFields = [
+    ...current.filter(field => String(field.location || '').toLowerCase() !== 'body'),
+    ...fields,
+  ]
+  markDirty()
+}
+
+async function generateBodySchemaFromJson() {
+  if (!activeDetail.value) return
+  const currentText = getModeBodyText(activeDetail.value.requestConfig.body).trim()
+  if (!currentText) {
+    ElMessage.info('当前 JSON 请求体为空')
+    return
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(currentText)
+  } catch {
+    ElMessage.warning('当前请求体不是合法 JSON，无法生成 Schema')
+    return
+  }
+  const fields = collectSchemaFieldsFromJson(parsed)
+  if (!fields.length) {
+    ElMessage.info('当前 JSON 未解析出可用字段')
+    return
+  }
+  if (bodySchemaFields.value.length) {
+    const confirmed = await confirmApiAction('当前请求体已有 Schema，是否用当前 JSON 重新生成？', '生成 Schema')
+    if (!confirmed) return
+  }
+  replaceBodySchemaFields(fields)
+  bodyJsonViewMode.value = 'schema'
+  ElMessage.success('已根据 JSON 生成请求体 Schema')
 }
 
 function setModeBodyText(body: ApiRequestBodyInput, value: string, type = body.type) {
@@ -3066,6 +3292,31 @@ function currentRunPayload() {
   }
 }
 
+function isAbsoluteRequestPath(path: string) {
+  return /^https?:\/\//i.test(path.trim())
+}
+
+function startsWithVariable(path: string) {
+  return /^(\{\{\s*[\w.-]+\s*}}|\$\{\s*[\w.-]+\s*})/.test(path.trim())
+}
+
+function selectedEnvironmentHasBaseUrl() {
+  const environment = environments.value.find(item => item.id === selectedEnvironmentId.value)
+  return Boolean(environment?.baseUrl?.trim())
+}
+
+function guardRunEnvironmentForPath(path: string) {
+  const normalizedPath = path.trim()
+  if (!normalizedPath || isAbsoluteRequestPath(normalizedPath) || startsWithVariable(normalizedPath)) {
+    return true
+  }
+  if (selectedEnvironmentHasBaseUrl()) {
+    return true
+  }
+  ElMessage.warning('相对路径请求需要先选择带 Base URL 的运行环境，或直接填写完整 URL')
+  return false
+}
+
 function isAllWorkspaceSelected() {
   return props.workspaceCode === 'ALL'
 }
@@ -3221,14 +3472,26 @@ async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
   try {
     const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, item.id)
     hydrateBodyModeText(detail.requestConfig.body)
-    tab.detail = clone(detail)
-    tab.title = editorTitle(detail)
-    tab.method = detail.requestConfig.method || detail.method
-    tab.loading = false
+    const tabIndex = tabs.value.findIndex(editor => editor.key === tab.key)
+    if (tabIndex >= 0) {
+      tabs.value[tabIndex] = {
+        ...tabs.value[tabIndex],
+        detail: clone(detail),
+        title: editorTitle(detail),
+        method: detail.requestConfig.method || detail.method,
+        loading: false,
+      }
+    }
     void loadCasesForDefinition(item.id)
   } catch (error) {
-    tab.loading = false
-    tab.runError = getRequestErrorMessage(error)
+    const tabIndex = tabs.value.findIndex(editor => editor.key === tab.key)
+    if (tabIndex >= 0) {
+      tabs.value[tabIndex] = {
+        ...tabs.value[tabIndex],
+        loading: false,
+        runError: getRequestErrorMessage(error),
+      }
+    }
   }
 }
 
@@ -3577,6 +3840,9 @@ async function sendActiveEditor() {
   if (!guardAllWorkspaceAction(editor, '发送请求')) return
   if (!detail.requestConfig.path.trim()) {
     ElMessage.warning('请输入请求 URL 或接口路径')
+    return
+  }
+  if (!guardRunEnvironmentForPath(detail.requestConfig.path)) {
     return
   }
 
@@ -4292,6 +4558,9 @@ async function debugCaseDialog(payload: SaveApiDefinitionCasePayload) {
     ElMessage.warning(caseDialogDebugError.value)
     return
   }
+  if (!guardRunEnvironmentForPath(payload.requestConfig.path)) {
+    return
+  }
   caseDialogDebugRunning.value = true
   caseDialogDebugResult.value = null
   caseDialogDebugError.value = ''
@@ -4649,20 +4918,20 @@ onBeforeUnmount(() => {
             </el-dropdown>
           </div>
 
-          <div class="api-editor-scroll">
-            <div class="api-content-tabs">
-              <button
-                v-for="tab in contentTabs"
-                :key="tab.value"
-                :class="['api-content-tab', { 'is-active': activeEditor.activeTab === tab.value }]"
-                type="button"
-                @click="activeEditor.activeTab = tab.value"
-              >
-                {{ tab.label }}
-                <span v-if="tab.count" class="api-tab-badge">{{ tab.count }}</span>
-              </button>
-            </div>
+          <div class="api-content-tabs">
+            <button
+              v-for="tab in contentTabs"
+              :key="tab.value"
+              :class="['api-content-tab', { 'is-active': activeEditor.activeTab === tab.value }]"
+              type="button"
+              @click="activeEditor.activeTab = tab.value"
+            >
+              {{ tab.label }}
+              <span v-if="tab.count" class="api-tab-badge">{{ tab.count }}</span>
+            </button>
+          </div>
 
+          <div class="api-editor-scroll">
             <div :class="['api-request-body', `is-${activeEditor.activeTab}`]">
               <template v-if="activeEditor.activeTab === 'params'">
                 <div class="api-param-table is-query">
@@ -4793,6 +5062,9 @@ onBeforeUnmount(() => {
                         </button>
                       </div>
                       <div v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON' && bodyJsonViewMode === 'schema'" class="api-schema-panel is-body-schema">
+                        <div class="api-schema-actions">
+                          <button type="button" class="api-schema-action" @click="generateBodySchemaFromJson">从 JSON 生成 Schema</button>
+                        </div>
                         <div v-if="!bodySchemaFields.length" class="api-empty-body">当前请求体暂无 Schema 定义</div>
                         <div v-else class="api-schema-table">
                           <div class="api-schema-header">
@@ -4801,14 +5073,16 @@ onBeforeUnmount(() => {
                             <span>必填</span>
                             <span>描述</span>
                             <span>示例</span>
+                            <span>默认值</span>
                             <span>枚举/限制</span>
                           </div>
                           <div v-for="field in bodySchemaFields" :key="`body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
                             <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                            <span>{{ schemaFieldType(field) }}</span>
-                            <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
-                            <span class="api-schema-muted">{{ field.description || '-' }}</span>
-                            <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                            <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                            <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
+                            <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
+                            <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
+                            <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
                             <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
                           </div>
                         </div>
@@ -4818,9 +5092,25 @@ onBeforeUnmount(() => {
                         v-model="activeBodyRawText"
                         :language="activeBodyLanguage"
                         height="300px"
+                        fit-content
+                        :min-fit-content-height="300"
+                        :max-fit-content-height="1000"
                         placeholder="请输入请求体"
                         @change="markDirty"
-                      />
+                      >
+                        <template v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON' && bodyJsonViewMode === 'json'" #toolbar>
+                          <button
+                            type="button"
+                            class="api-body-editor-action"
+                            :disabled="!bodySchemaFields.length"
+                            :title="bodySchemaFields.length ? '根据 Schema 自动生成示例 JSON' : '当前请求体暂无 Schema 字段'"
+                            @click="generateJsonFromBodySchema"
+                          >
+                            <el-icon><MagicStick /></el-icon>
+                            <span>自动生成</span>
+                          </button>
+                        </template>
+                      </ApiCodeEditor>
                     </div>
                     <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeEditor.detail.requestConfig.body.type)" class="api-param-table is-body-form">
                       <div class="api-param-header">
@@ -5114,8 +5404,13 @@ onBeforeUnmount(() => {
 
                   <section class="api-definition-section">
                     <div class="api-definition-section__title">
-                      <strong>Request Body Schema</strong>
-                      <span>{{ bodySchemaFields.length }} 个字段</span>
+                      <div>
+                        <strong>Request Body Schema</strong>
+                        <span>{{ bodySchemaFields.length }} 个字段</span>
+                      </div>
+                      <div class="api-schema-actions is-inline">
+                        <button type="button" class="api-schema-action" @click="generateBodySchemaFromJson">从 JSON 生成 Schema</button>
+                      </div>
                     </div>
                     <div v-if="!bodySchemaFields.length" class="api-definition-empty is-panel">暂无请求体 Schema。导入 OpenAPI 后，如果文档中包含 requestBody schema，会显示在这里。</div>
                     <div v-else class="api-schema-table">
@@ -5125,14 +5420,16 @@ onBeforeUnmount(() => {
                         <span>必填</span>
                         <span>描述</span>
                         <span>示例</span>
+                        <span>默认值</span>
                         <span>枚举/限制</span>
                       </div>
                       <div v-for="field in bodySchemaFields" :key="`definition-body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
                         <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                        <span>{{ schemaFieldType(field) }}</span>
-                        <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
-                        <span class="api-schema-muted">{{ field.description || '-' }}</span>
-                        <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                        <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                        <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
+                        <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
+                        <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
+                        <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
                         <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
                       </div>
                     </div>
@@ -5151,14 +5448,16 @@ onBeforeUnmount(() => {
                         <span>必填</span>
                         <span>描述</span>
                         <span>示例</span>
+                        <span>默认值</span>
                         <span>枚举/限制</span>
                       </div>
                       <div v-for="field in responseSchemaFields" :key="`response-schema-${field.fieldPath || field.name}`" class="api-schema-row">
                         <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                        <span>{{ schemaFieldType(field) }}</span>
-                        <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
-                        <span class="api-schema-muted">{{ field.description || '-' }}</span>
-                        <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                        <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                        <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
+                        <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
+                        <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
+                        <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
                         <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
                       </div>
                     </div>
@@ -8843,9 +9142,9 @@ onBeforeUnmount(() => {
 }
 
 .api-request-body {
-  min-height: 362px;
-  flex: 0 0 362px;
-  overflow: auto;
+  min-height: 0;
+  flex: 0 0 auto;
+  overflow: visible;
   padding: 8px 16px 16px;
   border-bottom: 0;
   background: #fff;
@@ -8986,22 +9285,23 @@ onBeforeUnmount(() => {
   display: inline-flex;
   width: max-content;
   align-items: center;
-  padding: 2px;
+  padding: 1px;
   border: 1px solid var(--app-border);
-  border-radius: 6px;
+  border-radius: 5px;
   background: #f9fafb;
 }
 
 .api-body-view-switch__item {
-  height: 24px;
-  padding: 0 10px;
+  height: 20px;
+  padding: 0 7px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
   color: var(--app-text-muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 20px;
 }
 
 .api-body-view-switch__item:hover {
@@ -9012,6 +9312,37 @@ onBeforeUnmount(() => {
   background: #fff;
   color: var(--app-primary);
   box-shadow: 0 1px 2px rgb(15 23 42 / 8%);
+}
+
+.api-body-editor-action {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.api-body-editor-action :deep(.el-icon) {
+  font-size: 14px;
+}
+
+.api-body-editor-action:hover:not(:disabled) {
+  background: var(--app-primary-soft);
+  color: var(--app-primary-hover);
+}
+
+.api-body-editor-action:disabled {
+  color: var(--app-text-placeholder);
+  cursor: not-allowed;
 }
 
 .api-schema-panel {
@@ -9028,10 +9359,10 @@ onBeforeUnmount(() => {
 .api-schema-header,
 .api-schema-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 130px 72px minmax(220px, 1.5fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  grid-template-columns: minmax(220px, 1.35fr) 130px 72px minmax(180px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr);
   align-items: center;
   column-gap: 12px;
-  min-width: 980px;
+  min-width: 1180px;
   padding: 0 12px;
 }
 
@@ -9081,6 +9412,51 @@ onBeforeUnmount(() => {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.api-schema-type {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-schema-type.is-string {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.api-schema-type.is-number {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.api-schema-type.is-boolean {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.api-schema-type.is-object,
+.api-schema-type.is-array {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.api-schema-row :deep(.el-input__wrapper) {
+  min-height: 28px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--app-border-soft) inset;
+}
+
+.api-schema-row :deep(.el-input__inner) {
+  height: 28px;
+  font-size: 12px;
 }
 
 .api-definition-doc {
@@ -9142,6 +9518,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   color: var(--app-text-primary);
   font-size: 13px;
 }
@@ -9149,6 +9526,36 @@ onBeforeUnmount(() => {
 .api-definition-section__title span {
   color: var(--app-text-muted);
   font-size: 12px;
+}
+
+.api-schema-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.api-schema-actions.is-inline {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+}
+
+.api-schema-action {
+  min-height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-schema-action:hover {
+  background: var(--app-primary-soft);
+  color: var(--app-primary-hover);
 }
 
 .api-definition-grid {
@@ -9428,7 +9835,7 @@ onBeforeUnmount(() => {
 
 .api-body-section {
   display: flex;
-  min-height: 300px;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -9459,8 +9866,8 @@ onBeforeUnmount(() => {
 }
 
 .api-body-editor {
-  min-height: 300px;
-  flex: 1;
+  min-height: 0;
+  flex: 0 0 auto;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
@@ -9471,6 +9878,10 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+.api-body-editor:not(.is-code) {
+  min-height: 300px;
 }
 
 .api-body-editor.is-empty {
@@ -9844,7 +10255,7 @@ onBeforeUnmount(() => {
 
 .api-binary-panel {
   display: block;
-  min-height: 0;
+  min-height: 300px;
   overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);

@@ -18,16 +18,19 @@ const VALIDATION_LOCATOR_LIMIT = 200;
 const VALIDATION_SCREENSHOT_LIMIT = 8;
 const AUTH_STALE_MINUTES = 24 * 60;
 const DEFAULT_SESSION_TTL_MINUTES = 15;
+const START_COMMAND = 'npm.cmd run runner';
+const INSTALL_CHROMIUM_COMMAND = 'npx playwright install chromium';
 
 let browser;
 let context;
 let page;
 let activeSession;
 let playwrightModule;
+let platformPoller;
 
 const port = Number.parseInt(process.env.WEB_UI_RUNNER_PORT || '', 10) || DEFAULT_PORT;
 const allowedOrigins = parseAllowedOrigins(process.env.WEB_UI_RUNNER_ORIGINS);
-const sessionTtlMinutes = normalizePositiveInteger(process.env.WEB_UI_RUNNER_SESSION_TTL_MINUTES, DEFAULT_SESSION_TTL_MINUTES);
+const sessionTtlMinutes = normalizePositiveNumber(process.env.WEB_UI_RUNNER_SESSION_TTL_MINUTES, DEFAULT_SESSION_TTL_MINUTES);
 
 const server = createServer(async (request, response) => {
   try {
@@ -39,6 +42,10 @@ const server = createServer(async (request, response) => {
 
     if (route === 'GET /health') {
       return sendJson(response, 200, await getHealth());
+    }
+
+    if (route === 'GET /session/heartbeat') {
+      return sendJson(response, 200, await getSessionHeartbeat());
     }
 
     if (route === 'POST /collect/open') {
@@ -62,6 +69,27 @@ const server = createServer(async (request, response) => {
     if (route === 'POST /session/release') {
       const result = await releaseCurrentSession('manual');
       return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /session/bind') {
+      const payload = await readJson(request);
+      const result = await bindCurrentSession(payload);
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /platform/poll/start') {
+      const payload = await readJson(request);
+      const result = await startPlatformValidationPolling(payload);
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /platform/poll/stop') {
+      const result = stopPlatformValidationPolling('manual');
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'GET /platform/poll/status') {
+      return sendJson(response, 200, getPlatformPollStatus());
     }
 
     if (route === 'POST /auth/save') {
@@ -115,6 +143,7 @@ async function getHealth() {
   }
 
   clearClosedSession();
+  await refreshActiveSessionPageSnapshot();
 
   return {
     success: true,
@@ -134,7 +163,67 @@ async function getHealth() {
         error: chromiumError,
       },
     },
+    capabilities: buildRunnerCapabilities({
+      playwrightAvailable: playwright.available,
+      chromiumInstalled,
+    }),
+    diagnostics: {
+      startCommand: START_COMMAND,
+      installChromiumCommand: INSTALL_CHROMIUM_COMMAND,
+      sessionTtlMinutes,
+      validationLocatorLimit: VALIDATION_LOCATOR_LIMIT,
+      validationScreenshotLimit: VALIDATION_SCREENSHOT_LIMIT,
+    },
     session: buildSessionView(),
+  };
+}
+
+function buildRunnerCapabilities(input) {
+  const browserReady = Boolean(input.playwrightAvailable && input.chromiumInstalled);
+  return [
+    {
+      key: 'HEADED_BROWSER',
+      label: '有头浏览器',
+      enabled: browserReady,
+      description: '使用本机 Chromium 打开业务页面，支持人工登录、验证码和 SSO。',
+    },
+    {
+      key: 'AUTH_STATE',
+      label: '登录态快照',
+      enabled: browserReady,
+      description: '保存 Cookie、LocalStorage 和 SessionStorage，后续采集可复用。',
+    },
+    {
+      key: 'STATIC_COLLECT',
+      label: '静态采集',
+      enabled: browserReady,
+      description: '采集当前页面 DOM、可见文本、定位器候选和全局截图。',
+    },
+    {
+      key: 'LOCAL_VALIDATE',
+      label: '真机验证',
+      enabled: browserReady,
+      description: '在当前页面上下文批量校验 locator，并返回匹配数和截图证据。',
+    },
+    {
+      key: 'PLATFORM_POLLING',
+      label: '后台轮询',
+      enabled: browserReady,
+      description: 'Runner 可拉取平台下发的验证指令并回传验证结果。',
+    },
+    {
+      key: 'SESSION_TTL',
+      label: '会话 TTL',
+      enabled: true,
+      description: `页面会话默认 ${sessionTtlMinutes} 分钟后过期，避免长期占用本地浏览器。`,
+    },
+  ];
+}
+
+async function getSessionHeartbeat() {
+  return {
+    ...(await getHealth()),
+    heartbeatAt: new Date().toISOString(),
   };
 }
 
@@ -161,6 +250,8 @@ async function openCollectPage(payload) {
       openedAt: activeSession?.openedAt || new Date().toISOString(),
       authStateExists: activeSession?.authStateExists || false,
       expiresAt: activeSession?.expiresAt || buildSessionExpiresAt(),
+      boundTaskId: activeSession?.boundTaskId || null,
+      boundAt: activeSession?.boundAt || null,
     };
 
     return {
@@ -192,9 +283,12 @@ async function openCollectPage(payload) {
     environmentId,
     originalUrl: target.url,
     currentUrl: page.url(),
+    pageTitle: '',
     openedAt: new Date().toISOString(),
     authStateExists: existsSync(storageStatePath),
     expiresAt: buildSessionExpiresAt(),
+    boundTaskId: null,
+    boundAt: null,
   };
 
   return {
@@ -206,7 +300,7 @@ async function openCollectPage(payload) {
 
 async function captureCurrentPage(payload) {
   ensurePage();
-  ensureSessionFresh();
+  await ensureSessionFresh();
 
   if (payload.waitMs) {
     await page.waitForTimeout(Math.min(Number(payload.waitMs), 10_000));
@@ -231,7 +325,7 @@ async function captureCurrentPage(payload) {
 
 async function validateCurrentPageLocators(payload) {
   ensurePage();
-  ensureSessionFresh();
+  await ensureSessionFresh();
   const locators = Array.isArray(payload.locators) ? payload.locators : [];
   const results = [];
   let screenshotCount = 0;
@@ -434,6 +528,167 @@ async function releaseCurrentSession(reason = 'manual') {
   };
 }
 
+async function bindCurrentSession(payload) {
+  ensurePage();
+  await ensureSessionFresh();
+  const taskId = normalizeTaskId(payload.taskId);
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+  const expectedSessionId = optionalString(payload.sessionId);
+  if (expectedSessionId && activeSession?.sessionId && expectedSessionId !== activeSession.sessionId) {
+    throw new Error('sessionId does not match active runner session');
+  }
+  activeSession = {
+    ...(activeSession || {}),
+    boundTaskId: taskId,
+    boundAt: new Date().toISOString(),
+    currentUrl: getActivePageUrl() || activeSession?.currentUrl || '',
+  };
+  await refreshActiveSessionPageSnapshot();
+  return {
+    success: true,
+    session: buildSessionView(),
+  };
+}
+
+async function startPlatformValidationPolling(payload) {
+  ensurePage();
+  await ensureSessionFresh();
+  const taskId = normalizeTaskId(payload.taskId || activeSession?.boundTaskId);
+  if (!taskId) {
+    throw new Error('taskId is required');
+  }
+  const apiBaseUrl = normalizeApiBaseUrl(payload.apiBaseUrl);
+  if (!apiBaseUrl) {
+    throw new Error('apiBaseUrl is required');
+  }
+  const workspaceCode = optionalString(payload.workspaceCode) || 'ALL';
+  const sessionId = optionalString(payload.sessionId) || activeSession?.sessionId || '';
+  if (payload.sessionId && activeSession?.sessionId && sessionId !== activeSession.sessionId) {
+    throw new Error('sessionId does not match active runner session');
+  }
+  const runnerId = optionalString(payload.runnerId) || 'local-runner';
+  const requestedLocators = Array.isArray(payload.locators) ? payload.locators : [];
+  const intervalMs = Math.max(1000, Math.min(Number(payload.intervalMs || 2000), 15000));
+  const headers = normalizePlatformHeaders(payload);
+
+  stopPlatformValidationPolling('replaced');
+  activeSession = {
+    ...(activeSession || {}),
+    boundTaskId: taskId,
+    boundAt: activeSession?.boundAt || new Date().toISOString(),
+    currentUrl: getActivePageUrl() || activeSession?.currentUrl || '',
+  };
+
+  platformPoller = {
+    taskId,
+    apiBaseUrl,
+    workspaceCode,
+    runnerId,
+    sessionId,
+    locators: requestedLocators,
+    intervalMs,
+    headers,
+    running: true,
+    tickRunning: false,
+    startedAt: new Date().toISOString(),
+    lastTickAt: null,
+    lastSuccessAt: null,
+    lastError: null,
+    lastMessage: '后台轮询已启动',
+    validatedCount: 0,
+    timer: null,
+  };
+  schedulePlatformPollTick(0);
+  return getPlatformPollStatus();
+}
+
+function stopPlatformValidationPolling(reason = 'manual') {
+  if (platformPoller?.timer) {
+    clearTimeout(platformPoller.timer);
+  }
+  const previous = platformPoller ? sanitizePlatformPoller(platformPoller) : null;
+  platformPoller = undefined;
+  return {
+    success: true,
+    stopped: Boolean(previous),
+    reason,
+    poller: previous,
+  };
+}
+
+function getPlatformPollStatus() {
+  return {
+    success: true,
+    poller: platformPoller ? sanitizePlatformPoller(platformPoller) : null,
+  };
+}
+
+function schedulePlatformPollTick(delayMs) {
+  if (!platformPoller?.running) {
+    return;
+  }
+  platformPoller.timer = setTimeout(() => {
+    void runPlatformPollTick();
+  }, delayMs);
+}
+
+async function runPlatformPollTick() {
+  const poller = platformPoller;
+  if (!poller?.running || poller.tickRunning) {
+    return;
+  }
+  poller.tickRunning = true;
+  poller.lastTickAt = new Date().toISOString();
+  try {
+    ensurePage();
+    await ensureSessionFresh();
+    const command = await fetchPlatformJson(poller, `/public/automation/web/element-collect-tasks/${encodeURIComponent(poller.taskId)}/local-validation-command`, {
+      runnerId: poller.runnerId,
+      sessionId: poller.sessionId || activeSession?.sessionId || null,
+      locators: poller.locators,
+    });
+    if (isTerminalCollectStatus(command.status)) {
+      poller.lastSuccessAt = new Date().toISOString();
+      poller.lastMessage = `任务已结束：${command.status}`;
+      stopPlatformValidationPolling('task-terminal');
+      return;
+    }
+    if (!command.runnable || !Array.isArray(command.locators) || command.locators.length === 0) {
+      poller.lastMessage = command.reason || '平台暂未下发可验证定位器';
+      schedulePlatformPollTick(poller.intervalMs);
+      return;
+    }
+    const validation = await validateCurrentPageLocators({
+      locators: command.locators,
+    });
+    const resultTask = await fetchPlatformJson(poller, `/public/automation/web/element-collect-tasks/${encodeURIComponent(poller.taskId)}/local-validation-results`, {
+      runnerId: poller.runnerId,
+      sessionId: poller.sessionId || activeSession?.sessionId || null,
+      results: validation.results || [],
+    });
+    poller.validatedCount += validation.results?.length || 0;
+    poller.lastSuccessAt = new Date().toISOString();
+    poller.lastMessage = `已回传 ${validation.results?.length || 0} 个验证结果`;
+    if (isTerminalCollectStatus(resultTask.status)) {
+      stopPlatformValidationPolling('validation-complete');
+      return;
+    }
+    schedulePlatformPollTick(poller.intervalMs);
+  } catch (error) {
+    if (platformPoller === poller) {
+      poller.lastError = error instanceof Error ? error.message : String(error);
+      poller.lastMessage = poller.lastError;
+      schedulePlatformPollTick(poller.intervalMs);
+    }
+  } finally {
+    if (platformPoller === poller) {
+      poller.tickRunning = false;
+    }
+  }
+}
+
 async function getPageInfo(targetPage) {
   const info = await targetPage.evaluate(() => {
     const visibleText = document.body?.innerText || '';
@@ -600,17 +855,97 @@ function ensurePage() {
   }
 }
 
-function ensureSessionFresh() {
+async function ensureSessionFresh() {
   if (!activeSession || !isSessionExpired(activeSession)) {
     return;
   }
   const expiredAt = activeSession.expiresAt || '';
-  void releaseCurrentSession('expired');
+  await releaseCurrentSession('expired');
   throw new Error(`Local Runner page session has expired${expiredAt ? ` at ${expiredAt}` : ''}. Please open the target page again.`);
 }
 
 function getStorageStatePath(workspaceId, environmentId) {
   return join(AUTH_DIR, `${safeName(workspaceId)}__${safeName(environmentId)}.json`);
+}
+
+async function fetchPlatformJson(poller, path, body) {
+  const response = await fetch(`${poller.apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: {
+      ...poller.headers,
+      'Content-Type': 'application/json',
+      'X-Workspace-Code': poller.workspaceCode,
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const message = payload?.message || payload?.error || text || `HTTP ${response.status}`;
+    throw new Error(`平台接口请求失败：${message}`);
+  }
+  if (payload && typeof payload === 'object' && 'data' in payload) {
+    return payload.data;
+  }
+  return payload;
+}
+
+function normalizeApiBaseUrl(value) {
+  const url = optionalString(value);
+  if (!url) {
+    return '';
+  }
+  return url.replace(/\/+$/, '');
+}
+
+function normalizePlatformHeaders(payload) {
+  const headers = {};
+  const cookie = optionalString(payload.cookie);
+  if (cookie) {
+    headers.Cookie = cookie;
+  }
+  if (payload.headers && typeof payload.headers === 'object') {
+    for (const [key, value] of Object.entries(payload.headers)) {
+      const normalizedKey = optionalString(key);
+      const normalizedValue = optionalString(value);
+      if (!normalizedKey || !normalizedValue) {
+        continue;
+      }
+      if (/^(host|connection|content-length)$/i.test(normalizedKey)) {
+        continue;
+      }
+      headers[normalizedKey] = normalizedValue;
+    }
+  }
+  return headers;
+}
+
+function sanitizePlatformPoller(poller) {
+  return {
+    taskId: poller.taskId,
+    apiBaseUrl: poller.apiBaseUrl,
+    workspaceCode: poller.workspaceCode,
+    runnerId: poller.runnerId,
+    sessionId: poller.sessionId || null,
+    running: Boolean(poller.running),
+    tickRunning: Boolean(poller.tickRunning),
+    startedAt: poller.startedAt,
+    lastTickAt: poller.lastTickAt,
+    lastSuccessAt: poller.lastSuccessAt,
+    lastError: poller.lastError,
+    lastMessage: poller.lastMessage,
+    validatedCount: poller.validatedCount || 0,
+    locatorCount: Array.isArray(poller.locators) ? poller.locators.length : 0,
+  };
+}
+
+function isTerminalCollectStatus(status) {
+  return ['COMPLETED', 'FAILED', 'DEGRADED', 'CANCELED'].includes(optionalString(status).toUpperCase());
 }
 
 async function readJsonFile(filePath) {
@@ -690,6 +1025,9 @@ function buildSessionView() {
   return {
     ...activeSession,
     currentUrl: getActivePageUrl() || activeSession.currentUrl || '',
+    pageAlive: hasUsablePage(),
+    pageTitle: activeSession.pageTitle || '',
+    lastActiveAt: new Date().toISOString(),
     expiresAt,
     ttlMinutes: sessionTtlMinutes,
     remainingSeconds: typeof remainingMs === 'number' ? Math.ceil(remainingMs / 1000) : null,
@@ -714,12 +1052,28 @@ function clearClosedSession() {
   }
 }
 
+async function refreshActiveSessionPageSnapshot() {
+  if (!activeSession || !hasUsablePage()) {
+    return;
+  }
+  activeSession.currentUrl = getActivePageUrl() || activeSession.currentUrl || '';
+  activeSession.pageTitle = await page.title().catch(() => activeSession.pageTitle || '');
+}
+
 function optionalString(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function normalizePositiveInteger(value, fallback) {
-  const numeric = Number.parseInt(String(value || ''), 10);
+function normalizeTaskId(value) {
+  const text = String(value ?? '').trim();
+  if (!text) {
+    return '';
+  }
+  return text;
+}
+
+function normalizePositiveNumber(value, fallback) {
+  const numeric = Number.parseFloat(String(value || ''));
   return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 

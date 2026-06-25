@@ -28,6 +28,7 @@ import {
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
 import {
+  bindLocalRunnerSession,
   buildLocalRunnerStatusView,
   captureLocalRunnerPage,
   checkLocalRunnerHealth,
@@ -1287,6 +1288,27 @@ function openCollectTaskFromList(task: WebUiElementCollectTaskListItem) {
   })
 }
 
+function openBoundLocalRunnerTask() {
+  const boundTaskId = localRunnerHealth.value?.boundTaskId
+  if (!boundTaskId) {
+    ElMessage.warning('Runner 当前没有绑定采集任务')
+    return
+  }
+  aiCollectLaunchVisible.value = false
+  void router.push({
+    path: `/automation/web/elements/collect-tasks/${boundTaskId}`,
+    query: {
+      workspaceCode: props.workspaceCode || 'ALL',
+      moduleId: aiCollectForm.moduleId ? String(aiCollectForm.moduleId) : undefined,
+      pageId: aiCollectForm.pageId ? String(aiCollectForm.pageId) : undefined,
+      pageName: aiCollectForm.pageName || undefined,
+      pageUrl: localRunnerHealth.value?.currentUrl || aiCollectForm.pageUrl || undefined,
+      groupStrategy: aiCollectForm.groupStrategy,
+      groupName: getAiCustomGroupName() || aiCollectForm.groupName || undefined,
+    },
+  })
+}
+
 function removeRecentCollectTask(task: WebUiElementCollectRecentTask | WebUiElementCollectTaskListItem) {
   recentCollectTasks.value = recentCollectTasks.value.filter(item => !(
     item.taskId === task.taskId
@@ -1477,14 +1499,27 @@ async function validateCurrentCollectTaskWithLocalRunner(
   customGroupName: string,
   candidates: AiCandidateLocatorInput[] = taskDetail.candidates,
 ) {
-  const locators = buildCollectCandidateValidationLocators(candidates)
-  if (!locators.length) {
+  const requestedLocators = buildCollectCandidateValidationLocators(candidates)
+  if (!requestedLocators.length) {
     return taskDetail
   }
 
   try {
     localRunnerValidating.value = true
-    const results = await validateLocalRunnerLocators(locators)
+    await refreshLocalRunnerHealth({ silent: true })
+    const command = await webUiAutomationApi.getLocalRunnerCollectValidationCommand(
+      workspaceCode,
+      taskDetail.taskId,
+      {
+        runnerId: taskDetail.runnerId || 'local-runner',
+        sessionId: localRunnerHealth.value?.sessionId || taskDetail.sessionId || null,
+        locators: requestedLocators,
+      },
+    )
+    if (!command.runnable || !command.locators.length) {
+      throw new Error(command.reason || '后端未下发可验证定位器')
+    }
+    const results = await validateLocalRunnerLocators(command.locators)
     if (!results.length) {
       return taskDetail
     }
@@ -1881,6 +1916,9 @@ async function openLocalRunnerCollectPage() {
     ElMessage.warning('请选择所属模块')
     return
   }
+  if (!await confirmLocalRunnerTaskAvailable()) {
+    return
+  }
 
   localRunnerOpening.value = true
   try {
@@ -2064,6 +2102,30 @@ async function confirmLocalRunnerSessionFreshness() {
   }
 }
 
+async function confirmLocalRunnerTaskAvailable() {
+  await refreshLocalRunnerHealth({ silent: true })
+  const boundTaskId = localRunnerHealth.value?.boundTaskId
+  if (!boundTaskId) {
+    return true
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `Runner 当前页面已经绑定采集任务 #${boundTaskId}。为避免新采集覆盖页面上下文，请先打开当前任务继续处理，或释放页面会话后重新打开目标页。`,
+      'Runner 页面会话已被占用',
+      {
+        confirmButtonText: '打开当前任务',
+        cancelButtonText: '返回处理',
+        type: 'warning',
+      },
+    )
+    openBoundLocalRunnerTask()
+  } catch {
+    // user cancelled
+  }
+  return false
+}
+
 async function confirmLocalRunnerAuthReadiness() {
   await refreshLocalRunnerAuthStatus()
   if (!aiCollectForm.environmentId || !localRunnerHealth.value?.online) {
@@ -2117,9 +2179,12 @@ async function startCollectTaskWorkbench() {
     return
   }
 
-  resetAiCollectResults()
   localRunnerCapturing.value = true
   try {
+    if (!await confirmLocalRunnerTaskAvailable()) {
+      return
+    }
+    resetAiCollectResults()
     if (!await confirmLocalRunnerPageMismatch()) {
       return
     }
@@ -2155,7 +2220,7 @@ async function startCollectTaskWorkbench() {
       screenshotBase64: result.screenshotBase64 || null,
       candidates: collectCandidates,
     })
-    localRunnerHealth.value = await checkLocalRunnerHealth()
+    await bindCurrentRunnerSessionToTask(task.taskId, result.session?.sessionId || null)
     addRecentCollectTask({
       taskId: task.taskId,
       workspaceCode: moduleItem.workspaceCode,
@@ -2215,7 +2280,6 @@ async function captureLocalRunnerCandidates() {
     return
   }
 
-  resetAiCollectResults()
   localRunnerCapturing.value = true
   try {
     const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
@@ -2223,6 +2287,10 @@ async function captureLocalRunnerCandidates() {
       ElMessage.warning('请选择有效的所属模块')
       return
     }
+    if (!await confirmLocalRunnerTaskAvailable()) {
+      return
+    }
+    resetAiCollectResults()
     if (!await confirmLocalRunnerPageMismatch()) {
       return
     }
@@ -2258,6 +2326,7 @@ async function captureLocalRunnerCandidates() {
       screenshotBase64: result.screenshotBase64 || null,
       candidates: collectCandidates,
     })
+    await bindCurrentRunnerSessionToTask(task.taskId, result.session?.sessionId || null)
     const taskDetail = await webUiAutomationApi.getLocalRunnerCollectTask(moduleItem.workspaceCode, task.taskId)
     const validatedTaskDetail = taskDetail.status === 'WAITING_LOCAL_VALIDATION'
       ? await validateCurrentCollectTaskWithLocalRunner(moduleItem.workspaceCode, taskDetail, customGroupName)
@@ -2286,6 +2355,18 @@ async function captureLocalRunnerCandidates() {
     ElMessage.error(`本地采集失败：${getRequestErrorMessage(error)}`)
   } finally {
     localRunnerCapturing.value = false
+  }
+}
+
+async function bindCurrentRunnerSessionToTask(taskId: number, sessionId: string | null) {
+  try {
+    await bindLocalRunnerSession({
+      taskId,
+      sessionId,
+    })
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+  } catch (error) {
+    ElMessage.warning(`采集任务已创建，但 Runner 会话绑定失败：${getRequestErrorMessage(error)}`)
   }
 }
 
@@ -3789,6 +3870,7 @@ onBeforeUnmount(() => {
       @save-local-runner-auth="saveCurrentLocalRunnerAuth"
       @clear-local-runner-auth="clearCurrentLocalRunnerAuth"
       @release-local-runner-session="releaseCurrentLocalRunnerSession"
+      @open-bound-task="openBoundLocalRunnerTask"
       @start="startCollectTaskWorkbench"
       @offline="openOfflineAiCollectDrawer"
     />

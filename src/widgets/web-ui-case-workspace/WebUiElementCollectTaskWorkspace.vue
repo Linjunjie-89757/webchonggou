@@ -29,8 +29,14 @@ import {
 import {
   buildLocalRunnerStatusView,
   checkLocalRunnerHealth,
+  getLocalRunnerHeartbeat,
+  getLocalRunnerPlatformPollingStatus,
+  releaseLocalRunnerSession,
+  startLocalRunnerPlatformPolling,
+  stopLocalRunnerPlatformPolling,
   validateLocalRunnerLocators,
   type LocalRunnerHealthView,
+  type LocalRunnerPlatformPollStatus,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -44,6 +50,8 @@ import {
   mapCollectCandidatesToViews,
   type WebUiElementCollectCandidateView,
 } from './elementCollectTypes'
+
+type LocalRunnerPlatformPoller = NonNullable<LocalRunnerPlatformPollStatus['poller']>
 
 const props = defineProps<{
   workspaceCode: string
@@ -69,6 +77,9 @@ const localRunnerChecking = ref(false)
 const localRunnerValidating = ref(false)
 const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
 const localRunnerErrorMessage = ref('')
+const localRunnerPlatformPoller = ref<LocalRunnerPlatformPoller | null>(null)
+const localRunnerLastPlatformPoller = ref<LocalRunnerPlatformPoller | null>(null)
+const localRunnerPlatformPollRefreshing = ref(false)
 const localRunnerValidationProgress = ref({
   done: 0,
   total: 0,
@@ -77,7 +88,9 @@ const localRunnerValidationProgress = ref({
 const saving = ref(false)
 const candidateFilter = ref<WebUiCollectCandidateFilter>('ALL')
 const autoValidationTaskIds = new Set<number>()
+const canceledTaskIds = new Set<number>()
 let pollingTimer: ReturnType<typeof window.setTimeout> | null = null
+let platformPollStatusTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const taskId = computed(() => Number(route.params.taskId || 0))
 const queryWorkspaceCode = computed(() => {
@@ -139,6 +152,15 @@ const pageContextNotice = computed(() => {
   }
 })
 const validationProgressText = computed(() => {
+  const poller = localRunnerPlatformPoller.value
+  if (poller?.running || poller?.tickRunning) {
+    const total = poller.locatorCount || localRunnerValidationProgress.value.total
+    const done = poller.validatedCount || 0
+    if (total) {
+      return `后台验证 ${done}/${total}`
+    }
+    return '后台轮询验证中'
+  }
   const progress = localRunnerValidationProgress.value
   if (!localRunnerValidating.value || !progress.total) {
     return ''
@@ -148,6 +170,19 @@ const validationProgressText = computed(() => {
     : `验证中 ${progress.done}/${progress.total}`
 })
 const localValidationNotice = computed(() => {
+  const poller = localRunnerPlatformPoller.value
+  if (poller?.running || poller?.tickRunning || poller?.lastError) {
+    const total = poller.locatorCount || localRunnerValidationProgress.value.total || candidates.value.length
+    const done = poller.validatedCount || 0
+    const progressText = total ? `已回传 ${done} / ${total} 个定位器` : '正在等待平台下发验证指令'
+    return {
+      type: poller.lastError ? 'warning' as const : 'info' as const,
+      title: poller.lastError ? 'Runner 后台轮询异常' : 'Runner 后台轮询已接管真机验证',
+      description: poller.lastError
+        ? `最近错误：${poller.lastError}。Runner 会继续重试；如果长时间无变化，请检测 Runner 或重新进入目标页面。`
+        : `${progressText}。可以离开工作台，但请保持本地 Runner 和目标业务页面打开。`,
+    }
+  }
   if (localRunnerValidating.value) {
     const progress = localRunnerValidationProgress.value
     const progressText = progress.total
@@ -192,6 +227,70 @@ const runnerStatusView = computed(() => buildLocalRunnerStatusView({
   errorMessage: localRunnerErrorMessage.value,
   expectedUrl: task.value?.actualUrl || routePageUrl.value,
 }))
+const runnerPlatformPollTag = computed(() => {
+  const poller = localRunnerPlatformPoller.value
+  if (!poller) {
+    const lastPoller = localRunnerLastPlatformPoller.value
+    if (lastPoller?.lastError) {
+      return {
+        type: 'warning' as const,
+        text: '最近轮询异常',
+      }
+    }
+    if (lastPoller?.lastSuccessAt || lastPoller?.validatedCount) {
+      return {
+        type: 'success' as const,
+        text: '最近验证完成',
+      }
+    }
+    return {
+      type: 'info' as const,
+      text: '后台轮询未启动',
+    }
+  }
+  if (poller.lastError) {
+    return {
+      type: 'warning' as const,
+      text: '后台轮询异常',
+    }
+  }
+  if (poller.tickRunning) {
+    return {
+      type: 'primary' as const,
+      text: '后台验证中',
+    }
+  }
+  if (poller.running) {
+    return {
+      type: 'success' as const,
+      text: '后台轮询中',
+    }
+  }
+  return {
+    type: 'info' as const,
+    text: '后台轮询已停止',
+  }
+})
+const runnerPlatformPollDescription = computed(() => {
+  const poller = localRunnerPlatformPoller.value || localRunnerLastPlatformPoller.value
+  if (!poller) {
+    return 'Runner 后台轮询启动后，会自动领取平台验证指令并回传结果。'
+  }
+  const parts = [
+    poller.lastMessage || '',
+    `任务 #${poller.taskId}`,
+    poller.locatorCount ? `待验证 ${poller.locatorCount} 个` : '',
+    poller.locatorCount ? `已回传 ${poller.validatedCount || 0} 个` : '',
+    poller.lastSuccessAt ? `最近成功 ${formatWebUiDateTime(poller.lastSuccessAt)}` : '',
+    poller.lastError ? `错误：${poller.lastError}` : '',
+  ]
+  return parts.filter(Boolean).join(' / ')
+})
+const canStopRunnerPlatformPolling = computed(() => Boolean(localRunnerPlatformPoller.value))
+const canRetryRunnerPlatformValidation = computed(() => Boolean(
+  candidates.value.length
+  && (!localRunnerPlatformPoller.value || localRunnerPlatformPoller.value.lastError),
+))
 
 const stats = computed(() => [
   { label: '候选总数', value: candidateSummary.value.total, type: 'info' },
@@ -224,6 +323,33 @@ function applyTaskDetail(nextTask: WebUiElementCollectTaskResponse) {
     groupStrategy: groupStrategy.value,
     customGroupName: getCustomGroupName(),
   })
+  updateLastRunnerPlatformPollerFromTask(nextTask)
+  if (isCollectTaskTerminalStatus(nextTask.status)) {
+    localRunnerValidating.value = false
+  }
+}
+
+function updateLastRunnerPlatformPollerFromTask(nextTask: WebUiElementCollectTaskResponse) {
+  const lastPoller = localRunnerLastPlatformPoller.value
+  if (!lastPoller || lastPoller.taskId !== String(nextTask.taskId) || !isCollectTaskTerminalStatus(nextTask.status)) {
+    return
+  }
+  const validatedCount = nextTask.candidates.filter(item => (
+    item.validationStatus === 'PASSED'
+    || item.validationStatus === 'FAILED'
+    || item.validationStatus === 'MULTIPLE'
+  )).length
+  localRunnerLastPlatformPoller.value = {
+    ...lastPoller,
+    running: false,
+    tickRunning: false,
+    lastSuccessAt: lastPoller.lastSuccessAt || nextTask.completedAt || new Date().toISOString(),
+    lastMessage: nextTask.status === 'COMPLETED'
+      ? '后台真机验证已完成'
+      : nextTask.message || lastPoller.lastMessage,
+    validatedCount: Math.max(lastPoller.validatedCount || 0, validatedCount),
+    locatorCount: Math.max(lastPoller.locatorCount || 0, nextTask.finalCount || nextTask.candidates.length),
+  }
 }
 
 async function loadAssets() {
@@ -248,9 +374,11 @@ async function loadTask(options: { silent?: boolean } = {}) {
   }
   try {
     const nextTask = await webUiAutomationApi.getLocalRunnerCollectTask(queryWorkspaceCode.value, taskId.value)
-    applyTaskDetail(nextTask)
-    await loadFilterDetails(nextTask, true)
-    await loadSavedElements(nextTask, true)
+    const effectiveTask = await degradeTaskByRunnerHeartbeatIfNeeded(nextTask, options)
+    applyTaskDetail(effectiveTask)
+    void refreshRunnerPlatformPollStatus({ silent: true, syncTaskWhenStopped: false })
+    await loadFilterDetails(effectiveTask, true)
+    await loadSavedElements(effectiveTask, true)
     maybeAutoValidateCurrentTask()
   } catch (error) {
     if (!options.silent) {
@@ -260,6 +388,83 @@ async function loadTask(options: { silent?: boolean } = {}) {
     loading.value = false
     refreshing.value = false
   }
+}
+
+async function degradeTaskByRunnerHeartbeatIfNeeded(
+  nextTask: WebUiElementCollectTaskResponse,
+  options: { silent?: boolean } = {},
+) {
+  if (!shouldGuardTaskByHeartbeat(nextTask)) {
+    return nextTask
+  }
+  try {
+    const health = await getLocalRunnerHeartbeat()
+    localRunnerHealth.value = health
+    const reason = resolveHeartbeatDegradeReason(nextTask, health)
+    if (!reason) {
+      return nextTask
+    }
+    const degradedTask = await webUiAutomationApi.degradeLocalRunnerCollectTask(
+      queryWorkspaceCode.value,
+      nextTask.taskId,
+      { reason },
+    )
+    if (!options.silent) {
+      ElMessage.warning(reason)
+    }
+    return degradedTask
+  } catch (error) {
+    const reason = `Runner 心跳不可用，已降级为未验证候选：${getRequestErrorMessage(error)}`
+    try {
+      const degradedTask = await webUiAutomationApi.degradeLocalRunnerCollectTask(
+        queryWorkspaceCode.value,
+        nextTask.taskId,
+        { reason },
+      )
+      if (!options.silent) {
+        ElMessage.warning(reason)
+      }
+      return degradedTask
+    } catch (degradeError) {
+      if (!options.silent) {
+        ElMessage.warning(`Runner 心跳异常，但任务降级失败：${getRequestErrorMessage(degradeError)}`)
+      }
+      return nextTask
+    }
+  }
+}
+
+function shouldGuardTaskByHeartbeat(nextTask: WebUiElementCollectTaskResponse) {
+  return nextTask.status === 'WAITING_LOCAL_VALIDATION' || nextTask.status === 'VALIDATING'
+}
+
+function resolveHeartbeatDegradeReason(
+  nextTask: WebUiElementCollectTaskResponse,
+  health: LocalRunnerHealthView,
+) {
+  if (!health.online || !health.sessionId || !health.currentUrl) {
+    return 'Runner 当前没有可用页面会话，已降级为未验证候选'
+  }
+  if (nextTask.sessionId && health.sessionId !== nextTask.sessionId) {
+    return 'Runner 当前会话与采集任务不一致，已降级为未验证候选'
+  }
+  if (health.boundTaskId && health.boundTaskId !== String(nextTask.taskId)) {
+    return `Runner 当前页面已绑定任务 #${health.boundTaskId}，当前任务已降级为未验证候选`
+  }
+  if (health.expired) {
+    return 'Runner 页面会话已过期，已降级为未验证候选'
+  }
+  if (!health.pageAlive) {
+    return 'Runner 页面已关闭，已降级为未验证候选'
+  }
+  const status = buildLocalRunnerStatusView({
+    health,
+    expectedUrl: nextTask.actualUrl || routePageUrl.value,
+  })
+  if (status.kind === 'LOGIN_PAGE') {
+    return 'Runner 当前页面疑似登录页，已降级为未验证候选'
+  }
+  return ''
 }
 
 async function loadSavedElements(nextTask = task.value, silent = true) {
@@ -315,6 +520,34 @@ function stopPolling() {
   }
 }
 
+function stopRunnerPlatformPollStatusPolling() {
+  if (platformPollStatusTimer) {
+    window.clearTimeout(platformPollStatusTimer)
+    platformPollStatusTimer = null
+  }
+}
+
+function shouldKeepRunnerPlatformPollStatusPolling() {
+  const status = task.value?.status
+  return Boolean(localRunnerPlatformPoller.value)
+    || status === 'WAITING_LOCAL_VALIDATION'
+    || status === 'VALIDATING'
+}
+
+function scheduleRunnerPlatformPollStatusPolling(delayMs = 1500) {
+  stopRunnerPlatformPollStatusPolling()
+  if (!shouldKeepRunnerPlatformPollStatusPolling()) {
+    return
+  }
+  platformPollStatusTimer = window.setTimeout(async () => {
+    platformPollStatusTimer = null
+    await refreshRunnerPlatformPollStatus({ silent: true })
+    if (shouldKeepRunnerPlatformPollStatusPolling()) {
+      scheduleRunnerPlatformPollStatusPolling()
+    }
+  }, delayMs)
+}
+
 function schedulePolling() {
   stopPolling()
   if (!task.value || isCollectTaskTerminalStatus(task.value.status)) {
@@ -334,8 +567,10 @@ function schedulePolling() {
 
 async function refreshTask() {
   await loadTask({ silent: true })
+  await refreshRunnerPlatformPollStatus({ silent: true })
   ElMessage.success('采集任务已刷新')
   schedulePolling()
+  scheduleRunnerPlatformPollStatusPolling()
 }
 
 async function checkRunnerStatus(options: { silent?: boolean } = {}) {
@@ -343,6 +578,7 @@ async function checkRunnerStatus(options: { silent?: boolean } = {}) {
   localRunnerErrorMessage.value = ''
   try {
     localRunnerHealth.value = await checkLocalRunnerHealth()
+    void refreshRunnerPlatformPollStatus({ silent: true })
     if (!options.silent) {
       const status = buildLocalRunnerStatusView({
         health: localRunnerHealth.value,
@@ -365,13 +601,70 @@ async function checkRunnerStatus(options: { silent?: boolean } = {}) {
   }
 }
 
+async function refreshRunnerPlatformPollStatus(options: { silent?: boolean; syncTaskWhenStopped?: boolean } = {}) {
+  const previousPoller = localRunnerPlatformPoller.value
+  if (!options.silent) {
+    localRunnerPlatformPollRefreshing.value = true
+  }
+  try {
+    const status = await getLocalRunnerPlatformPollingStatus()
+    applyRunnerPlatformPoller(status.poller)
+    if (previousPoller && !status.poller && options.syncTaskWhenStopped !== false) {
+      void loadTask({ silent: true })
+    }
+  } catch (error) {
+    localRunnerPlatformPoller.value = null
+    if (!options.silent) {
+      ElMessage.warning(`Runner 后台轮询状态读取失败：${getRequestErrorMessage(error)}`)
+    }
+  } finally {
+    if (!options.silent) {
+      localRunnerPlatformPollRefreshing.value = false
+    }
+  }
+}
+
+function applyRunnerPlatformPoller(poller: LocalRunnerPlatformPoller | null) {
+  localRunnerPlatformPoller.value = poller
+  if (poller) {
+    localRunnerLastPlatformPoller.value = poller
+    localRunnerValidating.value = true
+    localRunnerValidationProgress.value = {
+      done: poller.validatedCount || 0,
+      total: poller.locatorCount || localRunnerValidationProgress.value.total || candidates.value.length,
+      batchFailed: poller.lastError ? 1 : 0,
+    }
+    return
+  }
+  if (task.value && isCollectTaskTerminalStatus(task.value.status)) {
+    localRunnerValidating.value = false
+  }
+}
+
+async function stopRunnerPlatformPollingManually() {
+  try {
+    const stopped = await stopLocalRunnerPlatformPolling()
+    if (stopped.poller) {
+      localRunnerLastPlatformPoller.value = stopped.poller
+    }
+    localRunnerPlatformPoller.value = null
+    localRunnerValidating.value = false
+    stopRunnerPlatformPollStatusPolling()
+    ElMessage.success(stopped.poller ? 'Runner 后台轮询已停止' : '当前没有正在运行的后台轮询')
+    await loadTask({ silent: true })
+  } catch (error) {
+    ElMessage.error(`停止 Runner 后台轮询失败：${getRequestErrorMessage(error)}`)
+  }
+}
+
 async function cancelTask() {
   if (!task.value) {
     return
   }
+  const taskIdToCancel = task.value.taskId
   try {
     await ElMessageBox.confirm(
-      '取消后当前采集任务会停止刷新，已生成的候选仍可查看。是否继续？',
+      '取消后会停止任务刷新，并尝试释放本地 Runner 当前页面会话。已生成的候选仍可查看。是否继续？',
       '取消采集任务',
       {
         confirmButtonText: '取消任务',
@@ -381,12 +674,15 @@ async function cancelTask() {
     )
     const canceled = await webUiAutomationApi.cancelLocalRunnerCollectTask(
       queryWorkspaceCode.value,
-      task.value.taskId,
+      taskIdToCancel,
       { reason: '用户取消采集任务' },
     )
+    canceledTaskIds.add(taskIdToCancel)
     stopPolling()
     applyTaskDetail(canceled)
     await loadFilterDetails(canceled)
+    await stopRunnerPlatformPollingForCanceledTask()
+    await releaseRunnerSessionForCanceledTask(canceled)
     ElMessage.success('采集任务已取消')
   } catch (error) {
     if (error !== 'cancel') {
@@ -395,13 +691,58 @@ async function cancelTask() {
   }
 }
 
+async function stopRunnerPlatformPollingForCanceledTask() {
+  try {
+    const stopped = await stopLocalRunnerPlatformPolling()
+    if (stopped.poller) {
+      localRunnerLastPlatformPoller.value = stopped.poller
+    }
+    localRunnerPlatformPoller.value = null
+    stopRunnerPlatformPollStatusPolling()
+  } catch (error) {
+    ElMessage.warning(`任务已取消，但 Runner 后台轮询停止失败：${getRequestErrorMessage(error)}`)
+  }
+}
+
+async function releaseRunnerSessionForCanceledTask(canceledTask: WebUiElementCollectTaskResponse) {
+  try {
+    await checkRunnerStatus({ silent: true })
+    const health = localRunnerHealth.value
+    if (!shouldReleaseRunnerSession(canceledTask, health)) {
+      return
+    }
+    await releaseLocalRunnerSession()
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+  } catch (error) {
+    ElMessage.warning(`任务已取消，但 Runner 页面会话释放失败：${getRequestErrorMessage(error)}`)
+  }
+}
+
+function shouldReleaseRunnerSession(
+  canceledTask: WebUiElementCollectTaskResponse,
+  health: LocalRunnerHealthView | null,
+) {
+  if (!health?.online || !health.currentUrl) {
+    return false
+  }
+  if (canceledTask.sessionId && health.sessionId) {
+    return canceledTask.sessionId === health.sessionId
+  }
+  if (!canceledTask.actualUrl) {
+    return false
+  }
+  return normalizeCollectUrl(canceledTask.actualUrl) === normalizeCollectUrl(health.currentUrl)
+}
+
 async function validateCandidates(targetCandidates: Pick<WebUiElementCollectCandidateView, 'locatorType' | 'locatorValue'>[]) {
   if (!task.value) {
     ElMessage.warning('暂无可验证的采集任务')
     return null
   }
-  const locators = buildCollectCandidateValidationLocators(targetCandidates)
-  if (!locators.length) {
+  const validatingTaskId = task.value.taskId
+  canceledTaskIds.delete(validatingTaskId)
+  const requestedLocators = buildCollectCandidateValidationLocators(targetCandidates)
+  if (!requestedLocators.length) {
     ElMessage.warning('当前筛选下没有可验证的候选定位器')
     return null
   }
@@ -413,40 +754,86 @@ async function validateCandidates(targetCandidates: Pick<WebUiElementCollectCand
     return null
   }
 
-  localRunnerValidating.value = true
-  localRunnerValidationProgress.value = {
-    done: 0,
-    total: locators.length,
-    batchFailed: 0,
-  }
   try {
-    const results = await validateLocalRunnerLocators(locators, {
+    const pollStatus = await startLocalRunnerPlatformPolling({
+      workspaceCode: queryWorkspaceCode.value,
+      taskId: validatingTaskId,
+      runnerId: task.value.runnerId || 'local-runner',
+      sessionId: localRunnerHealth.value?.sessionId || task.value.sessionId || null,
+      locators: requestedLocators,
+    })
+    applyRunnerPlatformPoller(pollStatus.poller)
+    localRunnerValidating.value = true
+    localRunnerValidationProgress.value = {
+      done: 0,
+      total: requestedLocators.length,
+      batchFailed: 0,
+    }
+    schedulePolling()
+    scheduleRunnerPlatformPollStatusPolling(500)
+    ElMessage.success(pollStatus.poller?.lastMessage || '已启动 Runner 后台真机验证')
+    return task.value
+  } catch (startError) {
+    ElMessage.warning(`Runner 后台轮询启动失败，已切换为前端直连验证：${getRequestErrorMessage(startError)}`)
+  }
+
+  try {
+    const command = await webUiAutomationApi.getLocalRunnerCollectValidationCommand(
+      queryWorkspaceCode.value,
+      validatingTaskId,
+      {
+        runnerId: task.value.runnerId || 'local-runner',
+        sessionId: localRunnerHealth.value?.sessionId || task.value.sessionId || null,
+        locators: requestedLocators,
+      },
+    )
+    if (!command.runnable || !command.locators.length) {
+      ElMessage.warning(command.reason || '后端未下发可验证定位器')
+      return null
+    }
+    localRunnerValidating.value = true
+    localRunnerValidationProgress.value = {
+      done: 0,
+      total: command.locators.length,
+      batchFailed: 0,
+    }
+    const results = await validateLocalRunnerLocators(command.locators, {
       onProgress: (progress) => {
         localRunnerValidationProgress.value = progress
       },
     })
+    if (canceledTaskIds.has(validatingTaskId)) {
+      return null
+    }
     const validatedTask = await webUiAutomationApi.submitLocalRunnerCollectValidationResults(
       queryWorkspaceCode.value,
-      task.value.taskId,
+      validatingTaskId,
       { results },
     )
     applyTaskDetail(validatedTask)
     await loadFilterDetails(validatedTask)
-    ElMessage.success(`已重新验证 ${locators.length} 个候选定位器`)
+    await refreshRunnerPlatformPollStatus({ silent: true })
+    ElMessage.success(`已重新验证 ${command.locators.length} 个候选定位器`)
     return validatedTask
   } catch (error) {
+    if (canceledTaskIds.has(validatingTaskId)) {
+      return null
+    }
     const errorMessage = getRequestErrorMessage(error)
     const timedOut = errorMessage.includes('超时') || errorMessage.includes('timeout')
+    const contextChanged = errorMessage.includes('页面') || errorMessage.includes('Target page') || errorMessage.includes('closed')
     const reason = timedOut
       ? 'Runner 真机验证超时，已降级为未验证候选'
-      : `Runner 真机验证失败：${errorMessage}`
+      : contextChanged
+        ? 'Runner 页面上下文已变化或页面已关闭，已降级为未验证候选'
+        : `Runner 真机验证失败：${errorMessage}`
     try {
       const degradedTask = timedOut
-        ? await webUiAutomationApi.timeoutLocalRunnerCollectValidation(queryWorkspaceCode.value, task.value.taskId, { reason })
-        : await webUiAutomationApi.degradeLocalRunnerCollectTask(queryWorkspaceCode.value, task.value.taskId, { reason })
+        ? await webUiAutomationApi.timeoutLocalRunnerCollectValidation(queryWorkspaceCode.value, validatingTaskId, { reason })
+        : await webUiAutomationApi.degradeLocalRunnerCollectTask(queryWorkspaceCode.value, validatingTaskId, { reason })
       applyTaskDetail(degradedTask)
       await loadFilterDetails(degradedTask)
-      ElMessage.warning('采集成功，但本地真机验证失败，当前任务已降级')
+      ElMessage.warning(timedOut ? 'Runner 真机验证超时，当前任务已降级' : '采集成功，但本地真机验证失败，当前任务已降级')
       return degradedTask
     } catch (degradeError) {
       ElMessage.error(`重新验证失败：${reason}；降级同步失败：${getRequestErrorMessage(degradeError)}`)
@@ -459,6 +846,10 @@ async function validateCandidates(targetCandidates: Pick<WebUiElementCollectCand
 
 function revalidateVisibleCandidates() {
   void validateCandidates(visibleCandidates.value)
+}
+
+function revalidateAllCandidates() {
+  void validateCandidates(candidates.value)
 }
 
 function maybeAutoValidateCurrentTask() {
@@ -814,7 +1205,9 @@ onMounted(async () => {
   try {
     await loadAssets()
     await loadTask()
+    void checkRunnerStatus({ silent: true })
     schedulePolling()
+    scheduleRunnerPlatformPollStatusPolling()
   } finally {
     loading.value = false
   }
@@ -831,6 +1224,7 @@ watch(
       await loadTask()
       void checkRunnerStatus({ silent: true })
       schedulePolling()
+      scheduleRunnerPlatformPollStatusPolling()
     })()
   },
 )
@@ -840,14 +1234,18 @@ watch(
   (status) => {
     if (isCollectTaskTerminalStatus(status)) {
       stopPolling()
+      void refreshRunnerPlatformPollStatus({ silent: true, syncTaskWhenStopped: false })
+      stopRunnerPlatformPollStatusPolling()
       return
     }
     maybeAutoValidateCurrentTask()
+    scheduleRunnerPlatformPollStatusPolling()
   },
 )
 
 onBeforeUnmount(() => {
   stopPolling()
+  stopRunnerPlatformPollStatusPolling()
 })
 </script>
 
@@ -904,14 +1302,51 @@ onBeforeUnmount(() => {
           <div v-if="runnerStatusView.currentUrl" class="web-ui-collect-workspace__runner-url">
             当前页面：{{ runnerStatusView.currentUrl }}
           </div>
+          <div v-if="localRunnerHealth?.boundTaskId" class="web-ui-collect-workspace__runner-url">
+            绑定任务：#{{ localRunnerHealth.boundTaskId }}
+            <span v-if="localRunnerHealth.boundAt"> / 绑定时间：{{ formatWebUiDateTime(localRunnerHealth.boundAt) }}</span>
+          </div>
+          <div v-if="localRunnerHealth?.online && localRunnerHealth.currentUrl && localRunnerHealth.pageAlive === false" class="web-ui-collect-workspace__runner-warning">
+            Runner 页面已关闭，当前任务后续真机验证会降级为未验证候选。
+          </div>
+          <div class="web-ui-collect-workspace__runner-poll">
+            <el-tag :type="runnerPlatformPollTag.type" effect="plain">
+              {{ runnerPlatformPollTag.text }}
+            </el-tag>
+            <span>{{ runnerPlatformPollDescription }}</span>
+          </div>
           <div v-if="runnerStatusView.commands.length" class="web-ui-collect-workspace__runner-commands">
             <span>处理命令：</span>
             <code v-for="command in runnerStatusView.commands" :key="command">{{ command }}</code>
           </div>
         </div>
-        <AppButton size="small" :loading="localRunnerChecking" @click="checkRunnerStatus()">
-          检测 Runner
-        </AppButton>
+        <div class="web-ui-collect-workspace__runner-actions">
+          <AppButton size="small" :loading="localRunnerChecking" @click="checkRunnerStatus()">
+            检测 Runner
+          </AppButton>
+          <AppButton
+            size="small"
+            :loading="localRunnerPlatformPollRefreshing"
+            @click="refreshRunnerPlatformPollStatus()"
+          >
+            轮询状态
+          </AppButton>
+          <AppButton
+            v-if="canStopRunnerPlatformPolling"
+            size="small"
+            @click="stopRunnerPlatformPollingManually"
+          >
+            停止轮询
+          </AppButton>
+          <AppButton
+            v-if="canRetryRunnerPlatformValidation"
+            size="small"
+            type="primary"
+            @click="revalidateAllCandidates"
+          >
+            重新验证
+          </AppButton>
+        </div>
       </section>
 
       <div class="web-ui-collect-workspace__stats">
@@ -1088,10 +1523,28 @@ onBeforeUnmount(() => {
 
 .web-ui-collect-workspace__runner-main small,
 .web-ui-collect-workspace__runner-url,
+.web-ui-collect-workspace__runner-warning,
+.web-ui-collect-workspace__runner-poll,
 .web-ui-collect-workspace__runner-commands {
   flex-basis: 100%;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-sm);
+}
+
+.web-ui-collect-workspace__runner-actions,
+.web-ui-collect-workspace__runner-poll {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  flex-wrap: wrap;
+}
+
+.web-ui-collect-workspace__runner-actions {
+  justify-content: flex-end;
+}
+
+.web-ui-collect-workspace__runner-warning {
+  color: var(--el-color-warning-dark-2);
 }
 
 .web-ui-collect-workspace__runner-url {

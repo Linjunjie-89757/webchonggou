@@ -1,14 +1,17 @@
 <template>
   <div class="api-code-editor" :class="{ 'is-fit-content': fitContent }" :style="editorShellStyle">
     <div v-if="showToolbar" class="api-code-editor__toolbar">
-      <button type="button" class="api-code-editor__format" @click="formatDocument">格式化</button>
+      <div class="api-code-editor__toolbar-left">
+        <slot name="toolbar"></slot>
+      </div>
+      <button v-if="showFormatButton" type="button" class="api-code-editor__format" @click="formatDocument">格式化</button>
     </div>
     <div ref="containerRef" class="api-code-editor__body" :style="editorBodyStyle"></div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/language/json/monaco.contribution'
 import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution'
@@ -31,6 +34,7 @@ const props = withDefaults(defineProps<{
   showFormatButton?: boolean
   placeholder?: string
   fitContent?: boolean
+  minFitContentHeight?: number
   maxFitContentHeight?: number
 }>(), {
   language: 'javascript',
@@ -39,6 +43,7 @@ const props = withDefaults(defineProps<{
   showFormatButton: true,
   placeholder: '',
   fitContent: false,
+  minFitContentHeight: 120,
   maxFitContentHeight: 1000,
 })
 
@@ -47,12 +52,13 @@ const emit = defineEmits<{
   change: [value: string]
 }>()
 
+const slots = useSlots()
 const containerRef = ref<HTMLDivElement | null>(null)
 const bodyHeight = ref(props.height)
 let editor: monaco.editor.IStandaloneCodeEditor | null = null
 let suppressModelSync = false
 
-const showToolbar = computed(() => props.showFormatButton && !props.readOnly)
+const showToolbar = computed(() => !props.readOnly && (props.showFormatButton || Boolean(slots.toolbar)))
 const editorShellStyle = computed(() => (props.fitContent ? { height: 'auto' } : { height: props.height }))
 const editorBodyStyle = computed(() => (props.fitContent ? { height: bodyHeight.value } : {}))
 
@@ -127,7 +133,7 @@ function syncEditorHeight() {
   if (!props.fitContent || !editor) {
     return
   }
-  const nextHeight = Math.max(120, Math.min(editor.getContentHeight(), props.maxFitContentHeight))
+  const nextHeight = Math.max(props.minFitContentHeight, Math.min(editor.getContentHeight(), props.maxFitContentHeight))
   bodyHeight.value = `${nextHeight}px`
   editor.layout()
 }
@@ -258,9 +264,18 @@ onBeforeUnmount(() => {
 
 .api-code-editor__toolbar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
   padding: 0 0 8px;
   background: #fff;
+}
+
+.api-code-editor__toolbar-left {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .api-code-editor__format {

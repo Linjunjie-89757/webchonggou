@@ -129,6 +129,7 @@ function normalizeRequestConfig(config: ApiDefinitionDetail['requestConfig']): A
       basicAuth: config?.authConfig?.basicAuth || null,
       digestAuth: config?.authConfig?.digestAuth || null,
     },
+    schemaFields: Array.isArray(config?.schemaFields) ? config.schemaFields : [],
   }
 }
 

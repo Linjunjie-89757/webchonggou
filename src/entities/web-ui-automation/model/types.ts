@@ -326,7 +326,30 @@ export interface WebUiElementCollectValidationResult {
 }
 
 export interface LocalRunnerCollectValidationResultPayload {
+  runnerId?: string | null
+  sessionId?: string | null
   results: WebUiElementCollectValidationResult[]
+}
+
+export interface LocalRunnerCollectValidationCommandPayload {
+  runnerId?: string | null
+  sessionId?: string | null
+  locators?: WebUiElementCollectValidationTarget[]
+}
+
+export interface WebUiElementCollectValidationTarget {
+  locatorType: WebUiLocatorType
+  locatorValue: string
+}
+
+export interface LocalRunnerCollectValidationCommandResponse {
+  taskId: number
+  status: string
+  runnable: boolean
+  reason: string | null
+  runnerId: string | null
+  sessionId: string | null
+  locators: WebUiElementCollectValidationTarget[]
 }
 
 export interface LocalRunnerCollectTaskDegradePayload {
@@ -405,6 +428,11 @@ export interface WebUiElementCollectTaskListItem {
   aiModelName?: string | null
   rawCount: number
   finalCount: number
+  validationPassedCount: number
+  validationFailedCount: number
+  validationMultipleCount: number
+  validationUnverifiedCount: number
+  screenshotEvidenceCount: number
   message: string | null
   createdAt: string | null
   completedAt: string | null

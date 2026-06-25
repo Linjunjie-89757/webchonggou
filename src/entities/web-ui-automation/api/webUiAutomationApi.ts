@@ -14,6 +14,8 @@ import type {
   LocalRunnerCollectTaskCancelPayload,
   LocalRunnerCollectTaskDegradePayload,
   LocalRunnerCollectTaskValidationTimeoutPayload,
+  LocalRunnerCollectValidationCommandPayload,
+  LocalRunnerCollectValidationCommandResponse,
   LocalRunnerCollectValidationResultPayload,
   LocalRunnerCollectTaskPayload,
   PageResponse,
@@ -46,6 +48,7 @@ import type {
   WebUiElementBatchValidateResult,
   WebUiElementCollectResponse,
   WebUiElementCollectFilterDetailsResponse,
+  WebUiElementCollectValidationTarget,
   WebUiElementCollectTaskResponse,
   WebUiElementCollectTaskListItem,
   WebUiElementCollectTaskListQuery,
@@ -355,6 +358,27 @@ function normalizeElementCollectResponse(item: WebUiElementCollectResponse): Web
   }
 }
 
+function normalizeElementCollectValidationTarget(item: WebUiElementCollectValidationTarget): WebUiElementCollectValidationTarget {
+  return {
+    locatorType: item.locatorType || 'CSS',
+    locatorValue: item.locatorValue || '',
+  }
+}
+
+function normalizeLocalRunnerCollectValidationCommand(
+  item: LocalRunnerCollectValidationCommandResponse,
+): LocalRunnerCollectValidationCommandResponse {
+  return {
+    taskId: Number(item.taskId),
+    status: item.status || 'PROCESSING',
+    runnable: Boolean(item.runnable),
+    reason: item.reason || null,
+    runnerId: item.runnerId || null,
+    sessionId: item.sessionId || null,
+    locators: Array.isArray(item.locators) ? item.locators.map(normalizeElementCollectValidationTarget) : [],
+  }
+}
+
 function normalizeElementCollectTaskListItem(item: WebUiElementCollectTaskListItem): WebUiElementCollectTaskListItem {
   return {
     ...item,
@@ -374,6 +398,11 @@ function normalizeElementCollectTaskListItem(item: WebUiElementCollectTaskListIt
     aiModelName: item.aiModelName || null,
     rawCount: Number(item.rawCount || 0),
     finalCount: Number(item.finalCount || 0),
+    validationPassedCount: Number(item.validationPassedCount || 0),
+    validationFailedCount: Number(item.validationFailedCount || 0),
+    validationMultipleCount: Number(item.validationMultipleCount || 0),
+    validationUnverifiedCount: Number(item.validationUnverifiedCount || 0),
+    screenshotEvidenceCount: Number(item.screenshotEvidenceCount || 0),
     message: item.message || null,
     createdAt: item.createdAt || null,
     completedAt: item.completedAt || null,
@@ -943,6 +972,19 @@ export const webUiAutomationApi = {
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async getLocalRunnerCollectValidationCommand(
+    workspaceCode = 'ALL',
+    taskId: number,
+    data: LocalRunnerCollectValidationCommandPayload = {},
+  ) {
+    const payload = await httpPost<ApiResponse<LocalRunnerCollectValidationCommandResponse>, LocalRunnerCollectValidationCommandPayload>(
+      `/automation/web/elements/collect-tasks/${taskId}/local-validation-command`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeLocalRunnerCollectValidationCommand(unwrapApiResponse(payload))
   },
 
   async degradeLocalRunnerCollectTask(

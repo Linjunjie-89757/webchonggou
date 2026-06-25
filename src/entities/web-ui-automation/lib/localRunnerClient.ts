@@ -1,8 +1,10 @@
 import type {
   WebUiElementCollectCandidate,
+  WebUiElementCollectValidationTarget,
   WebUiElementCollectValidationResult,
   WebUiLocatorType,
 } from '../model/types'
+import { env } from '@/shared/config/env'
 
 export const LOCAL_RUNNER_BASE_URL = 'http://127.0.0.1:39118'
 export const LOCAL_RUNNER_VALIDATION_TIMEOUT_MS = 30000
@@ -10,14 +12,36 @@ export const LOCAL_RUNNER_START_COMMAND = 'cd D:\\perfectproject\\newautoweb\\pe
 export const LOCAL_RUNNER_INSTALL_CHROMIUM_COMMAND = 'npx playwright install chromium'
 const LOCAL_RUNNER_VALIDATION_BATCH_SIZE = 10
 
+export interface LocalRunnerCapabilityView {
+  key: string
+  label: string
+  enabled: boolean
+  description: string | null
+}
+
+export interface LocalRunnerDiagnosticsView {
+  startCommand: string
+  installChromiumCommand: string
+  sessionTtlMinutes: number | null
+  validationLocatorLimit: number | null
+  validationScreenshotLimit: number | null
+}
+
 export interface LocalRunnerHealthView {
   online: boolean
   runnerVersion: string
   playwrightAvailable: boolean
   chromiumInstalled: boolean
+  capabilities: LocalRunnerCapabilityView[]
+  diagnostics: LocalRunnerDiagnosticsView
   currentUrl: string | null
+  pageTitle: string | null
+  pageAlive: boolean
   sessionId: string | null
   openedAt: string | null
+  boundTaskId: string | null
+  boundAt: string | null
+  lastActiveAt: string | null
   authStateExists: boolean
   authSavedAt: string | null
   expiresAt: string | null
@@ -56,6 +80,39 @@ export interface LocalRunnerOpenPayload {
   environmentId?: string | number | null
 }
 
+export interface LocalRunnerBindPayload {
+  taskId: number | string
+  sessionId?: string | null
+}
+
+export interface LocalRunnerPlatformPollPayload {
+  taskId: number | string
+  workspaceCode: string
+  runnerId?: string | null
+  sessionId?: string | null
+  locators?: WebUiElementCollectValidationTarget[]
+}
+
+export interface LocalRunnerPlatformPollStatus {
+  success: boolean
+  poller: {
+    taskId: string
+    apiBaseUrl: string
+    workspaceCode: string
+    runnerId: string
+    sessionId: string | null
+    running: boolean
+    tickRunning: boolean
+    startedAt: string | null
+    lastTickAt: string | null
+    lastSuccessAt: string | null
+    lastError: string | null
+    lastMessage: string | null
+    validatedCount: number
+    locatorCount: number
+  } | null
+}
+
 export interface LocalRunnerAuthStatus {
   success: boolean
   workspaceId: string
@@ -69,9 +126,12 @@ export interface LocalRunnerAuthStatus {
   activeSession: {
     sessionId: string
     currentUrl: string
+    pageTitle?: string | null
     openedAt: string | null
     expiresAt: string | null
     authStateExists: boolean
+    boundTaskId?: string | null
+    boundAt?: string | null
   } | null
 }
 
@@ -137,15 +197,49 @@ export function normalizeRunnerHealth(payload: any): LocalRunnerHealthView {
     runnerVersion: String(payload?.runner?.version || '-'),
     playwrightAvailable: Boolean(payload?.playwright?.available),
     chromiumInstalled: Boolean(payload?.browsers?.chromium?.installed),
+    capabilities: normalizeRunnerCapabilities(payload?.capabilities),
+    diagnostics: normalizeRunnerDiagnostics(payload?.diagnostics),
     currentUrl: payload?.session?.currentUrl || null,
+    pageTitle: payload?.session?.pageTitle || null,
+    pageAlive: Boolean(payload?.session?.pageAlive),
     sessionId: payload?.session?.sessionId || null,
     openedAt: payload?.session?.openedAt || null,
+    boundTaskId: payload?.session?.boundTaskId === null || payload?.session?.boundTaskId === undefined
+      ? null
+      : String(payload.session.boundTaskId),
+    boundAt: payload?.session?.boundAt || null,
+    lastActiveAt: payload?.session?.lastActiveAt || null,
     authStateExists: Boolean(payload?.session?.authStateExists),
     authSavedAt: payload?.session?.authSavedAt || null,
     expiresAt: payload?.session?.expiresAt || null,
     ttlMinutes: Number.isFinite(Number(payload?.session?.ttlMinutes)) ? Number(payload.session.ttlMinutes) : null,
     remainingSeconds: Number.isFinite(Number(payload?.session?.remainingSeconds)) ? Number(payload.session.remainingSeconds) : null,
     expired: Boolean(payload?.session?.expired),
+  }
+}
+
+function normalizeRunnerCapabilities(value: unknown): LocalRunnerCapabilityView[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .filter(item => item && typeof item === 'object')
+    .map((item: any) => ({
+      key: String(item.key || ''),
+      label: String(item.label || item.key || '能力'),
+      enabled: item.enabled !== false,
+      description: item.description || null,
+    }))
+    .filter(item => item.key)
+}
+
+function normalizeRunnerDiagnostics(value: any): LocalRunnerDiagnosticsView {
+  return {
+    startCommand: value?.startCommand || LOCAL_RUNNER_START_COMMAND,
+    installChromiumCommand: value?.installChromiumCommand || LOCAL_RUNNER_INSTALL_CHROMIUM_COMMAND,
+    sessionTtlMinutes: Number.isFinite(Number(value?.sessionTtlMinutes)) ? Number(value.sessionTtlMinutes) : null,
+    validationLocatorLimit: Number.isFinite(Number(value?.validationLocatorLimit)) ? Number(value.validationLocatorLimit) : null,
+    validationScreenshotLimit: Number.isFinite(Number(value?.validationScreenshotLimit)) ? Number(value.validationScreenshotLimit) : null,
   }
 }
 
@@ -370,6 +464,43 @@ export async function releaseLocalRunnerSession() {
   return requestLocalRunner('/session/release', {
     method: 'POST',
   })
+}
+
+export async function bindLocalRunnerSession(payload: LocalRunnerBindPayload) {
+  return requestLocalRunner('/session/bind', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function getLocalRunnerHeartbeat() {
+  const payload = await requestLocalRunner('/session/heartbeat')
+  return normalizeRunnerHealth(payload)
+}
+
+export async function startLocalRunnerPlatformPolling(payload: LocalRunnerPlatformPollPayload) {
+  return requestLocalRunner<LocalRunnerPlatformPollStatus>('/platform/poll/start', {
+    method: 'POST',
+    body: {
+      apiBaseUrl: env.apiBaseUrl,
+      workspaceCode: payload.workspaceCode,
+      taskId: payload.taskId,
+      runnerId: payload.runnerId || 'local-runner',
+      sessionId: payload.sessionId || null,
+      locators: payload.locators || [],
+      intervalMs: 2000,
+    },
+  })
+}
+
+export async function stopLocalRunnerPlatformPolling() {
+  return requestLocalRunner<LocalRunnerPlatformPollStatus>('/platform/poll/stop', {
+    method: 'POST',
+  })
+}
+
+export async function getLocalRunnerPlatformPollingStatus() {
+  return requestLocalRunner<LocalRunnerPlatformPollStatus>('/platform/poll/status')
 }
 
 export function mapRunnerCandidateToCollectCandidate(input: {
