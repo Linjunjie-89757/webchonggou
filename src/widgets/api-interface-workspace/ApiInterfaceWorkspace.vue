@@ -1292,19 +1292,6 @@ function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   return keys
 }
 
-function collectInitialDirectoryKeys(nodes: DirectoryNode[]) {
-  const keys: string[] = []
-  function walk(node: DirectoryNode, depth: number) {
-    if (!node.children.length) return
-    if (node.type === 'root' || node.type === 'workspace' || depth <= 1) {
-      keys.push(node.key)
-      node.children.forEach(child => walk(child, depth + 1))
-    }
-  }
-  nodes.forEach(node => walk(node, 0))
-  return keys
-}
-
 function collectCollapsedDirectoryKeys(nodes: DirectoryNode[]) {
   const keys: string[] = []
   function walk(node: DirectoryNode) {
@@ -1320,10 +1307,6 @@ function collectCollapsedDirectoryKeys(nodes: DirectoryNode[]) {
 
 function collapseDirectoryTree() {
   expandedKeys.value = collectCollapsedDirectoryKeys(directoryTree.value)
-}
-
-function shouldRenderDirectoryActions(data: DirectoryNode) {
-  return data.key === activeDirectoryNodeKey.value || data.key === selectedDirectoryKey.value
 }
 
 function reportArchivedQueryValue() {
@@ -1533,12 +1516,7 @@ watch(
   directoryTree,
   (tree) => {
     const available = new Set(collectExpandableDirectoryKeys(tree))
-    const nextKeys = expandedKeys.value.filter(key => available.has(key))
-    if (!nextKeys.length && tree.length) {
-      expandedKeys.value = collectInitialDirectoryKeys(tree)
-      return
-    }
-    expandedKeys.value = nextKeys
+    expandedKeys.value = expandedKeys.value.filter(key => available.has(key))
   },
   { immediate: true },
 )
@@ -3366,13 +3344,10 @@ async function loadWorkspaceData(options?: { openDefaultTab?: boolean }) {
     await nextTick()
     expandedKeys.value = directoryKeyword.value.trim()
       ? collectExpandableDirectoryKeys(directoryTree.value)
-      : collectInitialDirectoryKeys(directoryTree.value)
+      : []
     restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
-    if (openDefaultTab && !tabs.value.length && props.workspaceCode === 'ALL') {
-      openNewRequestTab()
-    }
-    if (openDefaultTab && !tabs.value.length && !definitions.value.length) {
+    if (openDefaultTab && !tabs.value.length) {
       openNewRequestTab()
     }
   } catch (error) {
@@ -4686,7 +4661,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section v-loading="loading" class="api-interface-workspace">
+  <section class="api-interface-workspace">
     <div v-if="activeTopTab === 'definitions'" class="api-interface-shell">
       <aside class="api-interface-sidebar">
         <div class="api-interface-sidebar__actions">
@@ -4718,7 +4693,7 @@ onBeforeUnmount(() => {
           仅展示前 {{ DIRECTORY_SEARCH_RESULT_LIMIT }} 条结果，请输入更精确关键词
         </div>
 
-        <div class="api-directory-body">
+        <div v-loading="moduleLoading || definitionLoading" class="api-directory-body">
           <div v-if="moduleErrorMessage || definitionErrorMessage" class="api-directory-error">
             {{ moduleErrorMessage || definitionErrorMessage }}
           </div>
@@ -4768,7 +4743,7 @@ onBeforeUnmount(() => {
                   </template>
                 </div>
 
-                <div v-if="shouldRenderDirectoryActions(data)" class="api-directory-node__actions" @click.stop>
+                <div class="api-directory-node__actions" @click.stop>
                   <button
                     v-if="data.type === 'workspace' || data.type === 'module'"
                     type="button"
@@ -4932,6 +4907,13 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="api-editor-scroll">
+            <div v-if="activeEditor.loading" class="api-editor-loading">
+              <div class="api-editor-loading__title">正在加载接口详情</div>
+              <div class="api-editor-loading__line is-long"></div>
+              <div class="api-editor-loading__line"></div>
+              <div class="api-editor-loading__block"></div>
+            </div>
+            <template v-else>
             <div :class="['api-request-body', `is-${activeEditor.activeTab}`]">
               <template v-if="activeEditor.activeTab === 'params'">
                 <div class="api-param-table is-query">
@@ -6158,6 +6140,7 @@ onBeforeUnmount(() => {
                 </template>
               </div>
             </div>
+            </template>
           </div>
         </template>
       </section>
@@ -8528,6 +8511,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.15s ease;
 }
 
@@ -8555,6 +8539,7 @@ onBeforeUnmount(() => {
 .api-directory-node:focus-within .api-directory-node__actions,
 .api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .api-directory-node__action:hover {
@@ -9066,6 +9051,49 @@ onBeforeUnmount(() => {
   overflow-x: hidden;
   overflow-y: auto;
   background: #fff;
+}
+
+.api-editor-loading {
+  display: grid;
+  gap: 12px;
+  padding: 20px 16px;
+}
+
+.api-editor-loading__title {
+  color: var(--app-text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.api-editor-loading__line,
+.api-editor-loading__block {
+  border-radius: 4px;
+  background: linear-gradient(90deg, #f2f3f5 0%, #e5e7eb 50%, #f2f3f5 100%);
+  background-size: 200% 100%;
+  animation: api-loading-shimmer 1.2s ease-in-out infinite;
+}
+
+.api-editor-loading__line {
+  width: 52%;
+  height: 16px;
+}
+
+.api-editor-loading__line.is-long {
+  width: 76%;
+}
+
+.api-editor-loading__block {
+  height: 260px;
+}
+
+@keyframes api-loading-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
 }
 
 .api-content-tabs,
