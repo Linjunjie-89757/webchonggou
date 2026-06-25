@@ -9,7 +9,11 @@ import type {
   WebUiElementPageItem,
   WebUiEnvironmentItem,
 } from '@/entities/web-ui-automation'
-import type { LocalRunnerHealthView } from '@/entities/web-ui-automation/lib/localRunnerClient'
+import {
+  buildLocalRunnerStatusView,
+  type LocalRunnerAuthStatus,
+  type LocalRunnerHealthView,
+} from '@/entities/web-ui-automation/lib/localRunnerClient'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import type { WebUiElementCollectLaunchForm } from './elementCollectTypes'
 
@@ -25,7 +29,11 @@ const props = defineProps<{
   localRunnerChecking: boolean
   localRunnerOpening: boolean
   localRunnerCapturing: boolean
+  localRunnerAuthSaving: boolean
+  localRunnerAuthClearing: boolean
+  localRunnerSessionReleasing: boolean
   localRunnerHealth: LocalRunnerHealthView | null
+  localRunnerAuthStatus: LocalRunnerAuthStatus | null
 }>()
 
 const emit = defineEmits<{
@@ -35,93 +43,150 @@ const emit = defineEmits<{
   'group-change': [value: number | null]
   'check-local-runner': []
   'open-local-runner-page': []
+  'save-local-runner-auth': []
+  'clear-local-runner-auth': []
+  'release-local-runner-session': []
   start: []
   offline: []
 }>()
 
-const runnerState = computed(() => {
-  const health = props.localRunnerHealth
-  if (props.localRunnerChecking) {
-    return {
-      tagType: 'info' as const,
-      label: '检测中',
-      title: '正在检测本地执行器',
-      description: '正在读取 Runner、Playwright 和浏览器页面状态。',
-    }
-  }
-  if (!health?.online) {
-    return {
-      tagType: 'info' as const,
-      label: '未连接',
-      title: '本地执行器未连接',
-      description: '请先在前端项目目录启动 npm run runner，或点击检测刷新状态。',
-    }
-  }
-  if (!health.playwrightAvailable || !health.chromiumInstalled) {
-    return {
-      tagType: 'warning' as const,
-      label: '依赖不可用',
-      title: 'Runner 已连接，但 Playwright 或 Chromium 不可用',
-      description: '请检查本地 Runner 依赖安装后再采集。',
-    }
-  }
-  if (!health.currentUrl) {
-    return {
-      tagType: 'warning' as const,
-      label: '未打开页面',
-      title: 'Runner 已连接，尚未绑定可采集页面',
-      description: '可以填写目标页地址后点击“打开目标页”，也可以在 Runner 浏览器里手动进入目标业务页面。',
-    }
-  }
-  return {
-    tagType: 'success' as const,
-    label: '页面就绪',
-    title: 'Runner 页面已就绪',
-    description: `将采集当前页面：${health.currentUrl}`,
-  }
-})
+const runnerState = computed(() => buildLocalRunnerStatusView({
+  checking: props.localRunnerChecking,
+  health: props.localRunnerHealth,
+  expectedUrl: props.form.pageUrl,
+}))
 
-const runnerContextNotice = computed(() => {
-  const currentUrl = props.localRunnerHealth?.currentUrl || ''
-  if (!currentUrl) {
+const canStartCollect = computed(() => runnerState.value.canCollect && !props.localRunnerCapturing)
+const canManageAuth = computed(() => Boolean(props.localRunnerHealth?.online))
+const canReleaseSession = computed(() => Boolean(props.localRunnerHealth?.online && props.localRunnerHealth.currentUrl))
+
+const authStateTag = computed(() => {
+  if (!props.localRunnerHealth?.online) {
     return null
   }
-  if (isProbablyLoginUrl(currentUrl)) {
+  if (!props.localRunnerAuthStatus) {
     return {
-      type: 'warning' as const,
-      title: 'Runner 当前页面可能是登录页',
-      description: '请先在 Runner 浏览器里完成登录并进入目标业务页面，再开始采集。',
-    }
+      type: props.localRunnerHealth.authStateExists ? 'success' : 'info',
+      text: props.localRunnerHealth.authStateExists ? '已保存登录态' : '未保存登录态',
+    } as const
   }
-  const expectedUrl = props.form.pageUrl.trim()
-  if (expectedUrl && normalizeCollectUrl(currentUrl) !== normalizeCollectUrl(expectedUrl)) {
+  if (!props.localRunnerAuthStatus.exists) {
     return {
-      type: 'warning' as const,
-      title: 'Runner 当前页和目标页地址不一致',
-      description: '采集会以 Runner 当前浏览器页面为准。如果不是目标业务页，请点击“打开目标页”或手动切回目标页。',
-    }
+      type: 'info',
+      text: '未保存登录态',
+    } as const
   }
-  return null
+  return {
+    type: props.localRunnerAuthStatus.stale ? 'warning' : 'success',
+    text: props.localRunnerAuthStatus.stale ? '登录态建议刷新' : '已保存登录态',
+  } as const
 })
 
-function normalizeCollectUrl(url: string) {
-  try {
-    const parsed = new URL(url)
-    return `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
-  } catch {
-    return url.trim().replace(/\/+$/, '')
+const authStatusDescription = computed(() => {
+  const status = props.localRunnerAuthStatus
+  if (!props.localRunnerHealth?.online) {
+    return ''
   }
+  if (!props.form.environmentId) {
+    return '未选择运行环境时，会使用 Runner 默认环境保存或复用登录态。'
+  }
+  if (!status) {
+    return '检测 Runner 后会显示当前环境的登录态快照状态。'
+  }
+  if (!status.exists) {
+    return '当前环境还没有保存登录态。需要登录的页面，请先打开目标页并手动登录，再点击“保存登录态”。'
+  }
+  const savedAt = formatDateTime(status.savedAt)
+  const age = formatAge(status.ageMinutes)
+  const staleText = status.stale ? '，保存时间较久，建议重新登录后保存一次' : ''
+  return `保存于 ${savedAt}${age ? `，约 ${age}` : ''}${staleText}。`
+})
+
+const authSavedUrl = computed(() => props.localRunnerAuthStatus?.savedUrl || '')
+
+const sessionStateTag = computed(() => {
+  if (!props.localRunnerHealth?.online || !props.localRunnerHealth.currentUrl) {
+    return null
+  }
+  if (props.localRunnerHealth.expired) {
+    return {
+      type: 'danger',
+      text: '页面会话已过期',
+    } as const
+  }
+  const remainingSeconds = props.localRunnerHealth.remainingSeconds
+  if (typeof remainingSeconds === 'number' && remainingSeconds <= 120) {
+    return {
+      type: 'warning',
+      text: '页面会话即将过期',
+    } as const
+  }
+  return {
+    type: 'success',
+    text: '页面会话有效',
+  } as const
+})
+
+const sessionStatusDescription = computed(() => {
+  const health = props.localRunnerHealth
+  if (!health?.online || !health.currentUrl) {
+    return ''
+  }
+  if (health.expired) {
+    return '当前 Runner 页面会话已过期，请释放后重新打开目标页。'
+  }
+  const remaining = formatRemaining(health.remainingSeconds)
+  const ttlText = health.ttlMinutes ? `，TTL ${health.ttlMinutes} 分钟` : ''
+  return remaining ? `当前页面会话剩余 ${remaining}${ttlText}。` : `当前页面会话已创建${ttlText}。`
+})
+
+function formatDateTime(value?: string | null) {
+  if (!value) {
+    return '-'
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return value
+  }
+  return date.toLocaleString('zh-CN', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
-function isProbablyLoginUrl(url: string) {
-  return /login|signin|auth|passport|sso/i.test(url)
+function formatAge(value?: number | null) {
+  if (typeof value !== 'number') {
+    return ''
+  }
+  if (value < 60) {
+    return `${value} 分钟前`
+  }
+  if (value < 24 * 60) {
+    return `${Math.floor(value / 60)} 小时前`
+  }
+  return `${Math.floor(value / 1440)} 天前`
+}
+
+function formatRemaining(value?: number | null) {
+  if (typeof value !== 'number') {
+    return ''
+  }
+  if (value <= 0) {
+    return '0 分钟'
+  }
+  if (value < 60) {
+    return `${value} 秒`
+  }
+  return `${Math.ceil(value / 60)} 分钟`
 }
 </script>
 
 <template>
   <el-dialog
     :model-value="modelValue"
-    width="760px"
+    width="780px"
     class="web-ui-collect-launch"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -170,37 +235,94 @@ function isProbablyLoginUrl(url: string) {
         <el-input v-model="form.pageUrl" clearable placeholder="可选：用于让本地 Runner 打开页面，例如 https://example.com/orders" />
       </el-form-item>
 
-      <el-form-item label="本地执行器">
+      <el-form-item label="本地 Runner">
         <div class="web-ui-collect-launch__runner">
-            <div class="web-ui-collect-launch__runner-status">
+          <div class="web-ui-collect-launch__runner-status">
             <el-tag :type="runnerState.tagType" effect="light">
               {{ runnerState.label }}
             </el-tag>
             <strong>{{ runnerState.title }}</strong>
-            <span v-if="localRunnerHealth?.runnerVersion">Runner {{ localRunnerHealth.runnerVersion }}</span>
+            <span v-if="runnerState.runnerVersion">Runner {{ runnerState.runnerVersion }}</span>
             <span v-if="localRunnerHealth?.online">
               Playwright {{ localRunnerHealth.playwrightAvailable ? '可用' : '不可用' }} /
               Chromium {{ localRunnerHealth.chromiumInstalled ? '已安装' : '未安装' }}
             </span>
+            <el-tag
+              v-if="authStateTag"
+              :type="authStateTag.type"
+              effect="plain"
+            >
+              {{ authStateTag.text }}
+            </el-tag>
+            <el-tag
+              v-if="sessionStateTag"
+              :type="sessionStateTag.type"
+              effect="plain"
+            >
+              {{ sessionStateTag.text }}
+            </el-tag>
             <small>{{ runnerState.description }}</small>
+            <div v-if="runnerState.currentUrl" class="web-ui-collect-launch__current-url">
+              当前页面：{{ runnerState.currentUrl }}
+            </div>
+            <div v-if="sessionStatusDescription" class="web-ui-collect-launch__session-status">
+              {{ sessionStatusDescription }}
+            </div>
+            <div v-if="localRunnerHealth?.online" class="web-ui-collect-launch__auth-status">
+              <span>{{ authStatusDescription }}</span>
+              <span v-if="authSavedUrl">保存页面：{{ authSavedUrl }}</span>
+            </div>
+            <div v-if="runnerState.commands.length" class="web-ui-collect-launch__commands">
+              <span>处理命令：</span>
+              <code v-for="command in runnerState.commands" :key="command">{{ command }}</code>
+            </div>
           </div>
           <div class="web-ui-collect-launch__runner-actions">
             <AppButton size="small" :loading="localRunnerChecking" @click="emit('check-local-runner')">
               检测
             </AppButton>
-            <AppButton size="small" :loading="localRunnerOpening" @click="emit('open-local-runner-page')">
+            <AppButton
+              size="small"
+              :loading="localRunnerOpening"
+              :disabled="!runnerState.canOpenPage && runnerState.kind !== 'OFFLINE'"
+              @click="emit('open-local-runner-page')"
+            >
               打开目标页
+            </AppButton>
+            <AppButton
+              size="small"
+              :loading="localRunnerAuthSaving"
+              :disabled="!canManageAuth"
+              @click="emit('save-local-runner-auth')"
+            >
+              保存登录态
+            </AppButton>
+            <AppButton
+              size="small"
+              :loading="localRunnerAuthClearing"
+              :disabled="!canManageAuth"
+              @click="emit('clear-local-runner-auth')"
+            >
+              清空登录态
+            </AppButton>
+            <AppButton
+              size="small"
+              :loading="localRunnerSessionReleasing"
+              :disabled="!canReleaseSession"
+              @click="emit('release-local-runner-session')"
+            >
+              释放页面会话
             </AppButton>
           </div>
         </div>
       </el-form-item>
 
       <el-alert
-        v-if="runnerContextNotice"
+        v-if="runnerState.kind !== 'READY'"
         class="web-ui-collect-launch__context"
-        :type="runnerContextNotice.type"
-        :title="runnerContextNotice.title"
-        :description="runnerContextNotice.description"
+        :type="runnerState.alertType"
+        :title="runnerState.title"
+        :description="runnerState.description"
         show-icon
         :closable="false"
       />
@@ -271,9 +393,23 @@ function isProbablyLoginUrl(url: string) {
         <AppButton @click="emit('offline')">离线 HTML 导入</AppButton>
         <span class="web-ui-collect-launch__hint">候选审核会在采集工作台中完成</span>
         <AppButton @click="emit('update:modelValue', false)">取消</AppButton>
-        <AppButton type="primary" :icon="Cpu" :loading="localRunnerCapturing" @click="emit('start')">
-          开始采集
-        </AppButton>
+        <el-tooltip
+          :disabled="canStartCollect"
+          content="请先启动 Runner，并在 Runner 浏览器中进入可采集的目标业务页面。"
+          placement="top"
+        >
+          <span>
+            <AppButton
+              type="primary"
+              :icon="Cpu"
+              :loading="localRunnerCapturing"
+              :disabled="!canStartCollect"
+              @click="emit('start')"
+            >
+              开始采集
+            </AppButton>
+          </span>
+        </el-tooltip>
       </div>
     </template>
   </el-dialog>
@@ -329,8 +465,44 @@ function isProbablyLoginUrl(url: string) {
   background: var(--app-bg-soft);
 }
 
-.web-ui-collect-launch__runner-status small {
+.web-ui-collect-launch__runner-status small,
+.web-ui-collect-launch__current-url,
+.web-ui-collect-launch__session-status,
+.web-ui-collect-launch__auth-status,
+.web-ui-collect-launch__commands {
   flex-basis: 100%;
+}
+
+.web-ui-collect-launch__current-url,
+.web-ui-collect-launch__session-status,
+.web-ui-collect-launch__auth-status {
+  overflow: hidden;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ui-collect-launch__auth-status {
+  display: grid;
+  gap: 2px;
+}
+
+.web-ui-collect-launch__commands {
+  display: grid;
+  gap: var(--app-space-1);
+}
+
+.web-ui-collect-launch__commands code {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-card);
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-xs);
+  white-space: normal;
+  word-break: break-all;
 }
 
 .web-ui-collect-launch__page-target,

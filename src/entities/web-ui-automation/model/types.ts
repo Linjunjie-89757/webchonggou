@@ -388,6 +388,35 @@ export interface WebUiElementCollectTaskResponse {
   completedAt: string | null
 }
 
+export interface WebUiElementCollectTaskListItem {
+  taskId: number
+  status: string
+  currentStage: string
+  progressPercent: number
+  source: string
+  runnerId?: string | null
+  sessionId?: string | null
+  actualUrl: string | null
+  pageTitle: string | null
+  moduleId?: number | null
+  pageId?: number | null
+  pageName?: string | null
+  aiModelConfigId?: number | null
+  aiModelName?: string | null
+  rawCount: number
+  finalCount: number
+  message: string | null
+  createdAt: string | null
+  completedAt: string | null
+}
+
+export interface WebUiElementCollectTaskListQuery {
+  keyword?: string
+  status?: string
+  pageNo?: number
+  pageSize?: number
+}
+
 export interface WebUiElementCollectFilterSummary {
   originalCount: number
   emptyLocatorCount: number

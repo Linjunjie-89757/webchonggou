@@ -17,6 +17,7 @@ import {
 } from '@/entities/web-ui-automation'
 import {
   buildCollectCandidateSaveSummary,
+  buildCollectSaveResultNavigationQuery,
   buildCollectCandidateValidationLocators,
   buildCollectCandidateValidationSummary,
   isCollectCandidateSaveable,
@@ -26,7 +27,10 @@ import {
   type WebUiCollectCandidateFilter,
 } from '@/entities/web-ui-automation/lib/collectTask'
 import {
+  buildLocalRunnerStatusView,
+  checkLocalRunnerHealth,
   validateLocalRunnerLocators,
+  type LocalRunnerHealthView,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -61,7 +65,10 @@ const refreshing = ref(false)
 const polling = ref(false)
 const filterDetailsLoading = ref(false)
 const savedElementsLoading = ref(false)
+const localRunnerChecking = ref(false)
 const localRunnerValidating = ref(false)
+const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
+const localRunnerErrorMessage = ref('')
 const localRunnerValidationProgress = ref({
   done: 0,
   total: 0,
@@ -179,6 +186,12 @@ const localValidationNotice = computed(() => {
   }
   return null
 })
+const runnerStatusView = computed(() => buildLocalRunnerStatusView({
+  checking: localRunnerChecking.value,
+  health: localRunnerHealth.value,
+  errorMessage: localRunnerErrorMessage.value,
+  expectedUrl: task.value?.actualUrl || routePageUrl.value,
+}))
 
 const stats = computed(() => [
   { label: '候选总数', value: candidateSummary.value.total, type: 'info' },
@@ -325,6 +338,33 @@ async function refreshTask() {
   schedulePolling()
 }
 
+async function checkRunnerStatus(options: { silent?: boolean } = {}) {
+  localRunnerChecking.value = true
+  localRunnerErrorMessage.value = ''
+  try {
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    if (!options.silent) {
+      const status = buildLocalRunnerStatusView({
+        health: localRunnerHealth.value,
+        expectedUrl: task.value?.actualUrl || routePageUrl.value,
+      })
+      if (status.canCollect) {
+        ElMessage.success(status.title)
+      } else {
+        ElMessage.warning(status.title)
+      }
+    }
+  } catch (error) {
+    localRunnerHealth.value = null
+    localRunnerErrorMessage.value = getRequestErrorMessage(error)
+    if (!options.silent) {
+      ElMessage.error(`Runner 检测失败：${localRunnerErrorMessage.value}`)
+    }
+  } finally {
+    localRunnerChecking.value = false
+  }
+}
+
 async function cancelTask() {
   if (!task.value) {
     return
@@ -363,6 +403,13 @@ async function validateCandidates(targetCandidates: Pick<WebUiElementCollectCand
   const locators = buildCollectCandidateValidationLocators(targetCandidates)
   if (!locators.length) {
     ElMessage.warning('当前筛选下没有可验证的候选定位器')
+    return null
+  }
+
+  await checkRunnerStatus({ silent: true })
+  const runnerStatus = runnerStatusView.value
+  if (!runnerStatus.canCollect) {
+    ElMessage.warning(runnerStatus.title)
     return null
   }
 
@@ -659,6 +706,7 @@ async function saveSelectedCandidates() {
 
     let savedCount = 0
     let skippedCount = 0
+    let firstSavedGroupId: number | null = null
     for (const candidate of selectedCandidates.value) {
       const groupName = candidate.groupName.trim()
       let group = groupMap.get(groupName)
@@ -700,6 +748,7 @@ async function saveSelectedCandidates() {
         collectScreenshotBase64: candidate.screenshotBase64 || null,
       })
       existingElements.push(createdElement)
+      firstSavedGroupId = firstSavedGroupId || group.id
       savedCount += 1
     }
 
@@ -714,10 +763,14 @@ async function saveSelectedCandidates() {
 
     await router.push({
       path: '/automation/web/elements',
-      query: {
-        workspace: page.workspaceCode,
-        pageId: String(page.id),
-      },
+      query: buildCollectSaveResultNavigationQuery({
+        workspaceCode: page.workspaceCode,
+        pageId: page.id,
+        groupId: firstSavedGroupId,
+        collectTaskId: task.value?.taskId || null,
+        savedCount,
+        skippedCount,
+      }),
     })
   } catch (error) {
     if (error !== 'cancel') {
@@ -729,7 +782,14 @@ async function saveSelectedCandidates() {
 }
 
 function goBackToElements() {
-  void router.push('/automation/web/elements')
+  void router.push({
+    path: '/automation/web/elements',
+    query: {
+      workspace: queryWorkspaceCode.value,
+      pageId: pageId.value ? String(pageId.value) : undefined,
+      collectTaskId: task.value?.taskId ? String(task.value.taskId) : undefined,
+    },
+  })
 }
 
 function openSavedElement(element: WebUiElementItem) {
@@ -739,6 +799,8 @@ function openSavedElement(element: WebUiElementItem) {
       workspace: element.workspaceCode,
       elementId: String(element.id),
       pageId: element.pageId ? String(element.pageId) : undefined,
+      groupId: element.groupId ? String(element.groupId) : undefined,
+      collectTaskId: task.value?.taskId ? String(task.value.taskId) : undefined,
       keyword: element.elementName,
     },
   })
@@ -767,6 +829,7 @@ watch(
     void (async () => {
       await loadAssets()
       await loadTask()
+      void checkRunnerStatus({ silent: true })
       schedulePolling()
     })()
   },
@@ -829,6 +892,27 @@ onBeforeUnmount(() => {
         @refresh="refreshTask"
         @cancel="cancelTask"
       />
+
+      <section class="web-ui-collect-workspace__runner">
+        <div class="web-ui-collect-workspace__runner-main">
+          <el-tag :type="runnerStatusView.tagType" effect="light">
+            {{ runnerStatusView.label }}
+          </el-tag>
+          <strong>{{ runnerStatusView.title }}</strong>
+          <span v-if="runnerStatusView.runnerVersion">Runner {{ runnerStatusView.runnerVersion }}</span>
+          <small>{{ runnerStatusView.description }}</small>
+          <div v-if="runnerStatusView.currentUrl" class="web-ui-collect-workspace__runner-url">
+            当前页面：{{ runnerStatusView.currentUrl }}
+          </div>
+          <div v-if="runnerStatusView.commands.length" class="web-ui-collect-workspace__runner-commands">
+            <span>处理命令：</span>
+            <code v-for="command in runnerStatusView.commands" :key="command">{{ command }}</code>
+          </div>
+        </div>
+        <AppButton size="small" :loading="localRunnerChecking" @click="checkRunnerStatus()">
+          检测 Runner
+        </AppButton>
+      </section>
 
       <div class="web-ui-collect-workspace__stats">
         <el-tag
@@ -980,6 +1064,57 @@ onBeforeUnmount(() => {
 .web-ui-collect-workspace__toolbar {
   display: grid;
   gap: var(--app-space-3);
+}
+
+.web-ui-collect-workspace__runner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-soft);
+}
+
+.web-ui-collect-workspace__runner-main {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.web-ui-collect-workspace__runner-main small,
+.web-ui-collect-workspace__runner-url,
+.web-ui-collect-workspace__runner-commands {
+  flex-basis: 100%;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-sm);
+}
+
+.web-ui-collect-workspace__runner-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ui-collect-workspace__runner-commands {
+  display: grid;
+  gap: var(--app-space-1);
+}
+
+.web-ui-collect-workspace__runner-commands code {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-card);
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-xs);
+  white-space: normal;
+  word-break: break-all;
 }
 
 .web-ui-collect-workspace__tabs {

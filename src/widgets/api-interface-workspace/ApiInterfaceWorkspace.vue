@@ -52,6 +52,7 @@ import {
   type ApiRunHistoryItem,
   type ApiRunResult,
   type ApiRunStepResult,
+  type ApiSchemaFieldInput,
   type SaveApiDefinitionCasePayload,
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
@@ -66,9 +67,9 @@ import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
 import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
 import type { FastExtractionConfig, FastExtractionMode, FastExtractionResponseFormat } from './fastExtraction'
 
-type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases'
+type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases' | 'definition'
 type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
-type DirectoryNodeType = 'root' | 'workspace' | 'module' | 'request' | 'unassigned'
+type DirectoryNodeType = 'root' | 'workspace' | 'module' | 'request' | 'unassigned' | 'placeholder'
 type BodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT' | 'BINARY'
 type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
@@ -85,6 +86,7 @@ type ApiSoftPromptInputType = 'text' | 'textarea'
 type ApiReportArchiveFilter = 'active' | 'archived' | 'all'
 type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
 type ApiBodyLanguage = 'json' | 'xml' | 'text'
+type BodyJsonViewMode = 'json' | 'schema'
 type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
 type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
@@ -93,6 +95,9 @@ type FastExtractionTarget =
 const CASE_RUN_HISTORY_LIMIT = 10
 const CASE_RUN_HISTORY_TABLE_HEADER_HEIGHT = 40
 const CASE_RUN_HISTORY_TABLE_ROW_HEIGHT = 54
+const DIRECTORY_SEARCH_DEBOUNCE_MS = 260
+const DIRECTORY_SEARCH_RESULT_LIMIT = 150
+const DIRECTORY_MODULE_REQUEST_PAGE_SIZE = 200
 const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
 
@@ -245,6 +250,7 @@ interface EditorTab {
 }
 
 const props = defineProps<{
+  activeSection?: ApiTopTab
   workspaceCode: string
   workspaceReady?: boolean
   workspaces?: WorkspaceItem[]
@@ -254,7 +260,7 @@ const emit = defineEmits<{
   loaded: [payload: { definitions: ApiDefinitionItem[]; modules: ApiDefinitionModuleItem[]; cases: ApiDefinitionCaseItem[] }]
 }>()
 
-const activeTopTab = ref<ApiTopTab>('definitions')
+const activeTopTab = computed<ApiTopTab>(() => props.activeSection || 'definitions')
 const loading = ref(false)
 const moduleLoading = ref(false)
 const definitionLoading = ref(false)
@@ -262,6 +268,11 @@ const moduleErrorMessage = ref('')
 const definitionErrorMessage = ref('')
 const modules = ref<ApiDefinitionModuleItem[]>([])
 const definitions = ref<ApiDefinitionItem[]>([])
+const directorySearchDefinitions = ref<ApiDefinitionItem[]>([])
+const directorySearchTotal = ref(0)
+const directorySearchLoading = ref(false)
+const loadedDefinitionModuleKeys = ref<Set<string>>(new Set())
+const loadingDefinitionModuleKeys = ref<Set<string>>(new Set())
 const cases = ref<ApiDefinitionCaseItem[]>([])
 const environments = ref<ApiAutomationEnvironmentItem[]>([])
 const variableSets = ref<ApiAutomationVariableSetItem[]>([])
@@ -270,10 +281,13 @@ const runOptionsErrorMessage = ref('')
 const selectedEnvironmentId = ref<number | null>(null)
 const selectedVariableSetId = ref<number | null>(null)
 const directoryKeyword = ref('')
+const debouncedDirectoryKeyword = ref('')
 const selectedDirectoryKey = ref('definition-root')
 const expandedKeys = ref<string[]>(['definition-root'])
+const activeDirectoryNodeKey = ref('')
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
+const bodyJsonViewMode = ref<BodyJsonViewMode>('json')
 const editorTabNavRef = ref<HTMLElement | null>(null)
 const editorTabOverflow = ref({
   overflow: false,
@@ -388,6 +402,8 @@ const responsePanelHeightStorageKey = 'api-interface-response-panel-height'
 let responseResizeStartY = 0
 let responseResizeStartHeight = 0
 let softPromptResolve: ((value: string | null) => void) | null = null
+let directorySearchTimer: number | undefined
+let directorySearchRequestSeq = 0
 
 const bodyModes: Array<{ label: string; value: BodyType }> = [
   { label: 'none', value: 'NONE' },
@@ -776,6 +792,7 @@ const contentTabs = computed<Array<{ label: string; value: RequestContentTab; co
   { label: '断言', value: 'tests', count: activeEditor.value?.detail.assertions.length || undefined },
   { label: '设置', value: 'settings' },
   { label: '用例', value: 'cases', count: activeDefinitionCases.value.length || undefined },
+  { label: '定义', value: 'definition', count: activeSchemaFields.value.length || undefined },
 ])
 
 const activeEditor = computed(() => tabs.value.find(item => item.key === activeEditorKey.value) || null)
@@ -789,6 +806,12 @@ const activeBodyRawText = computed({
   },
 })
 const activeBodyLanguage = computed<ApiBodyLanguage>(() => bodyLanguage(activeDetail.value?.requestConfig.body.type))
+const activeSchemaFields = computed(() => activeDetail.value?.requestConfig.schemaFields || [])
+const bodySchemaFields = computed(() => schemaFieldsByLocation('body'))
+const querySchemaFields = computed(() => schemaFieldsByLocation('query'))
+const headerSchemaFields = computed(() => schemaFieldsByLocation('header'))
+const pathSchemaFields = computed(() => schemaFieldsByLocation('path'))
+const responseSchemaFields = computed(() => schemaFieldsByLocation('response'))
 const activeDefinitionCases = computed(() => {
   const id = activeEditor.value?.definitionId
   return id ? cases.value.filter(item => item.definitionId === id) : []
@@ -925,21 +948,89 @@ const currentDefinitionWorkspaceLabel = computed(() => {
 })
 
 const filteredDefinitions = computed(() => {
-  const keyword = directoryKeyword.value.trim().toLowerCase()
+  const keyword = debouncedDirectoryKeyword.value.trim().toLowerCase()
   if (!keyword) {
     return definitions.value
   }
 
-  return definitions.value.filter((item) => {
-    return [
-      item.name,
-      item.path,
-      item.method,
-      item.directoryName || '',
-      ...(item.tags || []),
-    ].some(value => String(value).toLowerCase().includes(keyword))
-  })
+  return directorySearchDefinitions.value
 })
+
+const directorySearchMatchedCount = computed(() => {
+  return debouncedDirectoryKeyword.value.trim()
+    ? directorySearchTotal.value
+    : definitions.value.length
+})
+
+const directorySearchLimited = computed(() =>
+  Boolean(debouncedDirectoryKeyword.value.trim())
+    && directorySearchMatchedCount.value > DIRECTORY_SEARCH_RESULT_LIMIT,
+)
+
+function definitionModuleLoadKey(workspaceCode: string, moduleId: number | null, fullPath: string | null) {
+  return moduleId != null ? `${workspaceCode}:module:${moduleId}` : `${workspaceCode}:path:${fullPath || ''}`
+}
+
+function isDefinitionModuleLoading(workspaceCode: string, moduleId: number | null, fullPath: string | null) {
+  return loadingDefinitionModuleKeys.value.has(definitionModuleLoadKey(workspaceCode, moduleId, fullPath))
+}
+
+function markDefinitionModuleLoading(key: string, loadingState: boolean) {
+  const next = new Set(loadingDefinitionModuleKeys.value)
+  if (loadingState) {
+    next.add(key)
+  } else {
+    next.delete(key)
+  }
+  loadingDefinitionModuleKeys.value = next
+}
+
+function markDefinitionModuleLoaded(key: string) {
+  loadedDefinitionModuleKeys.value = new Set([...loadedDefinitionModuleKeys.value, key])
+}
+
+function mergeDefinitions(items: ApiDefinitionItem[]) {
+  if (!items.length) return
+  const merged = new Map(definitions.value.map(item => [item.id, item]))
+  items.forEach(item => merged.set(item.id, item))
+  definitions.value = Array.from(merged.values())
+}
+
+async function searchDirectoryDefinitions(keyword: string) {
+  const trimmedKeyword = keyword.trim()
+  const requestSeq = ++directorySearchRequestSeq
+  if (!trimmedKeyword) {
+    directorySearchDefinitions.value = []
+    directorySearchTotal.value = 0
+    directorySearchLoading.value = false
+    return
+  }
+
+  directorySearchLoading.value = true
+  try {
+    const page = await apiAutomationApi.getDefinitions(props.workspaceCode, {
+      keyword: trimmedKeyword,
+      pageNo: 1,
+      pageSize: DIRECTORY_SEARCH_RESULT_LIMIT,
+    })
+    if (requestSeq !== directorySearchRequestSeq) return
+    directorySearchDefinitions.value = page.items
+    directorySearchTotal.value = page.total
+  } catch (error) {
+    if (requestSeq !== directorySearchRequestSeq) return
+    directorySearchDefinitions.value = []
+    directorySearchTotal.value = 0
+    ElMessage.warning(getRequestErrorMessage(error))
+  } finally {
+    if (requestSeq === directorySearchRequestSeq) {
+      directorySearchLoading.value = false
+    }
+  }
+}
+
+function isDirectDefinitionInPath(item: ApiDefinitionItem, fullPath: string | null) {
+  return (item.directoryName || '').trim() === (fullPath || '').trim()
+}
 
 const directoryTree = computed<DirectoryNode[]>(() => {
   type MutableNode = DirectoryNode & { childMap?: Map<string, MutableNode> }
@@ -974,6 +1065,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
   })
   const workspaceMap = new Map(workspaceNodes.map(item => [item.workspaceCode, item]))
   const unassignedRequestMap = new Map<string, MutableNode[]>()
+  const requestNodesByPath = new Map<string, MutableNode[]>()
 
   const ensureNode = (
     parentChildren: MutableNode[],
@@ -982,6 +1074,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     label: string,
     fullPath: string,
     moduleId: number | null,
+    count?: number,
   ) => {
     let node = parentMap.get(fullPath)
     if (!node) {
@@ -1002,6 +1095,9 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     }
     if (moduleId != null) {
       node.moduleId = moduleId
+    }
+    if (count != null) {
+      node.count = count
     }
     return node
   }
@@ -1036,6 +1132,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
         segment,
         assembled,
         index === segments.length - 1 ? item.id : null,
+        index === segments.length - 1 ? item.definitionCount : undefined,
       )
       currentChildren = node.children as MutableNode[]
       currentMap = node.childMap ?? new Map<string, MutableNode>()
@@ -1067,19 +1164,30 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       return
     }
 
+    const requestPathKey = `${item.workspaceCode}:${path}`
+    const requestNodes = requestNodesByPath.get(requestPathKey) ?? []
+    requestNodes.push(requestNode)
+    requestNodesByPath.set(requestPathKey, requestNodes)
+  })
+
+  requestNodesByPath.forEach((requestNodes, key) => {
+    const separatorIndex = key.indexOf(':')
+    const workspaceCode = key.slice(0, separatorIndex)
+    const path = key.slice(separatorIndex + 1)
+    const workspaceNode = workspaceMap.get(workspaceCode)
+    if (!workspaceNode) return
+
     const segments = path.split('/').map(part => part.trim()).filter(Boolean)
     let currentChildren = workspaceNode.children as MutableNode[]
     let currentMap = workspaceNode.childMap ?? new Map<string, MutableNode>()
     let assembled = ''
     segments.forEach((segment) => {
       assembled = assembled ? `${assembled}/${segment}` : segment
-      const node = ensureNode(currentChildren, currentMap, item.workspaceCode, segment, assembled, null)
-      node.count += 1
+      const node = ensureNode(currentChildren, currentMap, workspaceCode, segment, assembled, null)
       currentChildren = node.children as MutableNode[]
       currentMap = node.childMap ?? new Map<string, MutableNode>()
     })
-    workspaceNode.count += 1
-    currentChildren.push(requestNode)
+    currentChildren.push(...requestNodes)
   })
 
   const stripChildMap = (nodes: MutableNode[]): DirectoryNode[] => {
@@ -1091,19 +1199,41 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       }
       return left.label.localeCompare(right.label, 'zh-CN')
     })
-    return nodes.map((node) => ({
-      key: node.key,
-      type: node.type,
-      label: node.label,
-      count: node.count,
-      moduleId: node.moduleId,
-      workspaceCode: node.workspaceCode,
-      definitionId: node.definitionId,
-      fullPath: node.fullPath,
-      method: node.method,
-      definition: node.definition,
-      children: stripChildMap(node.children as MutableNode[]),
-    }))
+    return nodes.map((node) => {
+      const children = stripChildMap(node.children as MutableNode[])
+      const hasRequestChild = children.some(child => child.type === 'request')
+      const shouldAddLazyPlaceholder = node.type === 'module'
+        && node.count > 0
+        && !hasRequestChild
+        && !isDefinitionModuleLoading(node.workspaceCode, node.moduleId, node.fullPath ?? null)
+        && !loadedDefinitionModuleKeys.value.has(definitionModuleLoadKey(node.workspaceCode, node.moduleId, node.fullPath ?? null))
+      if (shouldAddLazyPlaceholder) {
+        children.push({
+          key: `${node.key}:lazy-placeholder`,
+          type: 'placeholder',
+          label: '展开加载接口',
+          count: 0,
+          moduleId: null,
+          workspaceCode: node.workspaceCode,
+          definitionId: null,
+          fullPath: node.fullPath,
+          children: [],
+        })
+      }
+      return {
+        key: node.key,
+        type: node.type,
+        label: node.label,
+        count: node.count,
+        moduleId: node.moduleId,
+        workspaceCode: node.workspaceCode,
+        definitionId: node.definitionId,
+        fullPath: node.fullPath,
+        method: node.method,
+        definition: node.definition,
+        children,
+      }
+    })
   }
   const workspaceTrees = workspaceNodes.map((workspaceNode) => {
     const children = stripChildMap(workspaceNode.children as MutableNode[])
@@ -1148,7 +1278,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
 })
 
 const visibleDirectoryTree = computed<DirectoryNode[]>(() => directoryTree.value[0]?.children ?? [])
-const directoryTreeRenderKey = computed(() => `${props.workspaceCode}:${expandedKeys.value.join('|')}`)
+const directoryTreeRenderKey = computed(() => props.workspaceCode)
 
 function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   const keys: string[] = []
@@ -1160,6 +1290,40 @@ function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   }
   nodes.forEach(walk)
   return keys
+}
+
+function collectInitialDirectoryKeys(nodes: DirectoryNode[]) {
+  const keys: string[] = []
+  function walk(node: DirectoryNode, depth: number) {
+    if (!node.children.length) return
+    if (node.type === 'root' || node.type === 'workspace' || depth <= 1) {
+      keys.push(node.key)
+      node.children.forEach(child => walk(child, depth + 1))
+    }
+  }
+  nodes.forEach(node => walk(node, 0))
+  return keys
+}
+
+function collectCollapsedDirectoryKeys(nodes: DirectoryNode[]) {
+  const keys: string[] = []
+  function walk(node: DirectoryNode) {
+    if (!node.children.length) return
+    if (node.type === 'root' || node.type === 'workspace') {
+      keys.push(node.key)
+      node.children.forEach(walk)
+    }
+  }
+  nodes.forEach(walk)
+  return keys
+}
+
+function collapseDirectoryTree() {
+  expandedKeys.value = collectCollapsedDirectoryKeys(directoryTree.value)
+}
+
+function shouldRenderDirectoryActions(data: DirectoryNode) {
+  return data.key === activeDirectoryNodeKey.value || data.key === selectedDirectoryKey.value
 }
 
 function reportArchivedQueryValue() {
@@ -1340,11 +1504,28 @@ function handleReportPageSizeChange(pageSize: number) {
 }
 
 watch(
-  () => [directoryKeyword.value, directoryTree.value],
+  directoryKeyword,
+  (keyword) => {
+    window.clearTimeout(directorySearchTimer)
+    directorySearchTimer = window.setTimeout(() => {
+      debouncedDirectoryKeyword.value = keyword
+    }, DIRECTORY_SEARCH_DEBOUNCE_MS)
+  },
+)
+
+watch(
+  () => [debouncedDirectoryKeyword.value, directoryTree.value],
   () => {
-    if (directoryKeyword.value.trim()) {
+    if (debouncedDirectoryKeyword.value.trim()) {
       expandedKeys.value = Array.from(new Set(collectExpandableDirectoryKeys(directoryTree.value)))
     }
+  },
+)
+
+watch(
+  debouncedDirectoryKeyword,
+  (keyword) => {
+    void searchDirectoryDefinitions(keyword)
   },
 )
 
@@ -1354,7 +1535,7 @@ watch(
     const available = new Set(collectExpandableDirectoryKeys(tree))
     const nextKeys = expandedKeys.value.filter(key => available.has(key))
     if (!nextKeys.length && tree.length) {
-      expandedKeys.value = collectExpandableDirectoryKeys(tree)
+      expandedKeys.value = collectInitialDirectoryKeys(tree)
       return
     }
     expandedKeys.value = nextKeys
@@ -1640,6 +1821,42 @@ function getModeBodyText(body: ApiRequestBodyInput) {
   if (body.type === 'RAW_XML') return body.xmlText ?? body.rawText ?? ''
   if (body.type === 'RAW_TEXT') return body.plainText ?? body.rawText ?? ''
   return body.rawText ?? ''
+}
+
+function schemaFieldsByLocation(location: string) {
+  return activeSchemaFields.value.filter(field => String(field.location || '').toLowerCase() === location)
+}
+
+function schemaFieldName(field: ApiSchemaFieldInput) {
+  return field.fieldPath || field.name || '-'
+}
+
+function schemaFieldDepth(field: ApiSchemaFieldInput) {
+  const path = field.fieldPath || field.name || ''
+  return Math.max(0, path.replace(/\[\]/g, '').split('.').length - 1)
+}
+
+function schemaFieldType(field: ApiSchemaFieldInput) {
+  return [field.type, field.format ? `(${field.format})` : ''].filter(Boolean).join(' ') || '-'
+}
+
+function schemaFieldExample(field: ApiSchemaFieldInput) {
+  const value = field.example ?? field.defaultValue
+  if (value == null || value === '') return '-'
+  if (typeof value === 'string') return value
+  return JSON.stringify(value)
+}
+
+function schemaFieldEnum(field: ApiSchemaFieldInput) {
+  return Array.isArray(field.enumValues) && field.enumValues.length ? field.enumValues.join(' / ') : '-'
+}
+
+function schemaFieldLimit(field: ApiSchemaFieldInput) {
+  const limits = [
+    field.minLength != null || field.maxLength != null ? `长度 ${field.minLength ?? '-'} ~ ${field.maxLength ?? '-'}` : '',
+    field.minimum != null || field.maximum != null ? `范围 ${field.minimum ?? '-'} ~ ${field.maximum ?? '-'}` : '',
+  ].filter(Boolean)
+  return limits.join('；') || '-'
 }
 
 function setModeBodyText(body: ApiRequestBodyInput, value: string, type = body.type) {
@@ -2881,22 +3098,28 @@ async function loadWorkspaceData(options?: { openDefaultTab?: boolean }) {
   try {
     const [moduleItems, definitionPage, environmentPage, variableSetPage] = await Promise.all([
       apiAutomationApi.getDefinitionModules(props.workspaceCode),
-      apiAutomationApi.getDefinitions(props.workspaceCode, { pageNo: 1, pageSize: 500 }),
+      apiAutomationApi.getDefinitions(props.workspaceCode, { pageNo: 1, pageSize: DIRECTORY_MODULE_REQUEST_PAGE_SIZE }),
       apiAutomationApi.getEnvironments(props.workspaceCode),
       apiAutomationApi.getVariableSets(props.workspaceCode),
     ])
     modules.value = moduleItems
-    definitions.value = definitionPage.items
+    definitions.value = definitionPage.items.filter(item => !(item.directoryName || '').trim())
+    directorySearchDefinitions.value = []
+    directorySearchTotal.value = 0
+    directorySearchLoading.value = false
+    directorySearchRequestSeq += 1
+    loadedDefinitionModuleKeys.value = new Set()
+    loadingDefinitionModuleKeys.value = new Set()
     environments.value = environmentPage.items
     variableSets.value = variableSetPage.items
     await nextTick()
-    expandedKeys.value = collectExpandableDirectoryKeys(directoryTree.value)
+    expandedKeys.value = directoryKeyword.value.trim()
+      ? collectExpandableDirectoryKeys(directoryTree.value)
+      : collectInitialDirectoryKeys(directoryTree.value)
     restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
     if (openDefaultTab && !tabs.value.length && props.workspaceCode === 'ALL') {
       openNewRequestTab()
-    } else if (openDefaultTab && !tabs.value.length && definitions.value.length) {
-      void openDefinition(definitions.value[0], false)
     }
     if (openDefaultTab && !tabs.value.length && !definitions.value.length) {
       openNewRequestTab()
@@ -3096,11 +3319,47 @@ function scrollActiveEditorTabIntoView() {
   updateEditorTabOverflow()
 }
 
+function setDirectoryNodeExpanded(node: DirectoryNode, expanded: boolean) {
+  if (expanded) {
+    expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
+    if (node.type === 'module') {
+      void loadDefinitionsForDirectoryNode(node)
+    }
+    return
+  }
+  expandedKeys.value = expandedKeys.value.filter(key => key !== node.key)
+}
+
+async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
+  if (node.type !== 'module') return
+  const moduleFullPath = node.fullPath ?? null
+  const key = definitionModuleLoadKey(node.workspaceCode, node.moduleId, moduleFullPath)
+  if (loadedDefinitionModuleKeys.value.has(key) || loadingDefinitionModuleKeys.value.has(key)) return
+  markDefinitionModuleLoading(key, true)
+  try {
+    const page = await apiAutomationApi.getDefinitions(node.workspaceCode, {
+      moduleId: node.moduleId,
+      pageNo: 1,
+      pageSize: DIRECTORY_MODULE_REQUEST_PAGE_SIZE,
+    })
+    const directDefinitions = page.items.filter(item => isDirectDefinitionInPath(item, moduleFullPath))
+    mergeDefinitions(directDefinitions)
+    markDefinitionModuleLoaded(key)
+    if (page.total > DIRECTORY_MODULE_REQUEST_PAGE_SIZE) {
+      ElMessage.info(`当前模块接口较多，已加载前 ${DIRECTORY_MODULE_REQUEST_PAGE_SIZE} 条`)
+    }
+  } catch (error) {
+    ElMessage.warning(getRequestErrorMessage(error))
+  } finally {
+    markDefinitionModuleLoading(key, false)
+  }
+}
+
 function handleDirectorySelect(node: DirectoryNode) {
+  if (node.type === 'placeholder') return
+  selectedDirectoryKey.value = node.key
   if (node.type === 'request' && node.definition) {
     void openDefinition(node.definition)
-  } else {
-    selectedDirectoryKey.value = node.key
   }
 }
 
@@ -4152,22 +4411,13 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopResponseResize()
+  window.clearTimeout(directorySearchTimer)
   window.removeEventListener('resize', updateEditorTabOverflow)
 })
 </script>
 
 <template>
   <section v-loading="loading" class="api-interface-workspace">
-    <div class="api-interface-tabs">
-      <div class="api-interface-tab-nav">
-        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'definitions' }]" type="button" @click="activeTopTab = 'definitions'">接口</button>
-        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'scenarios' }]" type="button" @click="activeTopTab = 'scenarios'">场景</button>
-        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'execution' }]" type="button" @click="activeTopTab = 'execution'">执行套件</button>
-        <button :class="['api-interface-tab', { 'is-active': activeTopTab === 'reports' }]" type="button" @click="activeTopTab = 'reports'">报告</button>
-        <button class="api-interface-tab" type="button" disabled>设置</button>
-      </div>
-    </div>
-
     <div v-if="activeTopTab === 'definitions'" class="api-interface-shell">
       <aside class="api-interface-sidebar">
         <div class="api-interface-sidebar__actions">
@@ -4188,11 +4438,15 @@ onBeforeUnmount(() => {
         <div class="api-directory-title">
           <div>
             <span>请求目录</span>
-            <b>{{ filteredDefinitions.length }}</b>
+            <b>{{ directorySearchMatchedCount }}</b>
+            <small v-if="directorySearchLoading">搜索中</small>
           </div>
-          <button type="button" title="收起全部子模块" @click="expandedKeys = ['definition-root']">
+          <button type="button" title="收起全部子模块" @click="collapseDirectoryTree">
             <el-icon><Fold /></el-icon>
           </button>
+        </div>
+        <div v-if="directorySearchLimited" class="api-directory-search-tip">
+          仅展示前 {{ DIRECTORY_SEARCH_RESULT_LIMIT }} 条结果，请输入更精确关键词
         </div>
 
         <div class="api-directory-body">
@@ -4201,6 +4455,7 @@ onBeforeUnmount(() => {
           </div>
           <el-tree
             v-else
+            v-loading="directorySearchLoading"
             :key="directoryTreeRenderKey"
             :data="visibleDirectoryTree"
             node-key="key"
@@ -4210,15 +4465,23 @@ onBeforeUnmount(() => {
             highlight-current
             class="api-directory-tree"
             @node-click="handleDirectorySelect"
-            @node-expand="(node: DirectoryNode) => expandedKeys = Array.from(new Set([...expandedKeys, node.key]))"
-            @node-collapse="(node: DirectoryNode) => expandedKeys = expandedKeys.filter(key => key !== node.key)"
+            @node-expand="(node: DirectoryNode) => setDirectoryNodeExpanded(node, true)"
+            @node-collapse="(node: DirectoryNode) => setDirectoryNodeExpanded(node, false)"
           >
             <template #default="{ data }">
-              <div :class="['api-directory-node', { 'is-request': data.type === 'request' }]">
+              <div
+                :class="['api-directory-node', { 'is-request': data.type === 'request' }]"
+                @mouseenter="activeDirectoryNodeKey = data.key"
+                @mouseleave="activeDirectoryNodeKey = activeDirectoryNodeKey === data.key ? '' : activeDirectoryNodeKey"
+              >
                 <div class="api-directory-node__main">
                   <template v-if="data.type === 'request'">
                     <span :class="['api-method', requestMethodClass(data.method)]">{{ data.method }}</span>
                     <span class="api-directory-node__name">{{ data.label }}</span>
+                  </template>
+                  <template v-else-if="data.type === 'placeholder'">
+                    <span class="api-directory-node__placeholder-dot"></span>
+                    <span class="api-directory-node__placeholder-text">{{ data.label }}</span>
                   </template>
                   <template v-else>
                     <span :class="['api-directory-node__folder', { 'is-open': expandedKeys.includes(data.key) }]">
@@ -4226,11 +4489,17 @@ onBeforeUnmount(() => {
                       <LucideFolder v-else class="api-directory-node__icon" />
                     </span>
                     <span class="api-directory-node__name">{{ data.label }}</span>
+                    <span
+                      v-if="data.type === 'module' && isDefinitionModuleLoading(data.workspaceCode, data.moduleId, data.fullPath)"
+                      class="api-directory-node__loading"
+                    >
+                      加载中
+                    </span>
                     <span class="api-directory-node__count">{{ data.count }}</span>
                   </template>
                 </div>
 
-                <div class="api-directory-node__actions" @click.stop>
+                <div v-if="shouldRenderDirectoryActions(data)" class="api-directory-node__actions" @click.stop>
                   <button
                     v-if="data.type === 'workspace' || data.type === 'module'"
                     type="button"
@@ -4503,17 +4772,56 @@ onBeforeUnmount(() => {
                         'is-empty': activeEditor.detail.requestConfig.body.type === 'NONE',
                         'is-code': isRawBodyType(activeEditor.detail.requestConfig.body.type),
                       },
-                    ]""
+                    ]"
                   >
                     <div v-if="activeEditor.detail.requestConfig.body.type === 'NONE'" class="api-empty-body">请求没有 Body</div>
-                    <ApiCodeEditor
-                      v-else-if="isRawBodyType(activeEditor.detail.requestConfig.body.type)"
-                      v-model="activeBodyRawText"
-                      :language="activeBodyLanguage"
-                      height="300px"
-                      placeholder="请输入请求体"
-                      @change="markDirty"
-                    />
+                    <div v-else-if="isRawBodyType(activeEditor.detail.requestConfig.body.type)" class="api-body-code-wrap">
+                      <div v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON'" class="api-body-view-switch">
+                        <button
+                          type="button"
+                          :class="['api-body-view-switch__item', { active: bodyJsonViewMode === 'json' }]"
+                          @click="bodyJsonViewMode = 'json'"
+                        >
+                          JSON
+                        </button>
+                        <button
+                          type="button"
+                          :class="['api-body-view-switch__item', { active: bodyJsonViewMode === 'schema' }]"
+                          @click="bodyJsonViewMode = 'schema'"
+                        >
+                          Schema
+                        </button>
+                      </div>
+                      <div v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON' && bodyJsonViewMode === 'schema'" class="api-schema-panel is-body-schema">
+                        <div v-if="!bodySchemaFields.length" class="api-empty-body">当前请求体暂无 Schema 定义</div>
+                        <div v-else class="api-schema-table">
+                          <div class="api-schema-header">
+                            <span>字段</span>
+                            <span>类型</span>
+                            <span>必填</span>
+                            <span>描述</span>
+                            <span>示例</span>
+                            <span>枚举/限制</span>
+                          </div>
+                          <div v-for="field in bodySchemaFields" :key="`body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
+                            <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
+                            <span>{{ schemaFieldType(field) }}</span>
+                            <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
+                            <span class="api-schema-muted">{{ field.description || '-' }}</span>
+                            <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                            <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <ApiCodeEditor
+                        v-else
+                        v-model="activeBodyRawText"
+                        :language="activeBodyLanguage"
+                        height="300px"
+                        placeholder="请输入请求体"
+                        @change="markDirty"
+                      />
+                    </div>
                     <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeEditor.detail.requestConfig.body.type)" class="api-param-table is-body-form">
                       <div class="api-param-header">
                         <span class="api-drag-cell"></span>
@@ -4744,6 +5052,117 @@ onBeforeUnmount(() => {
                       </div>
                     </div>
                   </div>
+                </div>
+              </template>
+
+              <template v-else-if="activeEditor.activeTab === 'definition'">
+                <div class="api-definition-doc">
+                  <section class="api-definition-summary">
+                    <div>
+                      <div class="api-definition-title-row">
+                        <span :class="['api-method-badge', requestMethodClass(activeEditor.detail.requestConfig.method)]">
+                          {{ activeEditor.detail.requestConfig.method || 'GET' }}
+                        </span>
+                        <strong>{{ activeEditor.detail.name || '未命名接口' }}</strong>
+                      </div>
+                      <p>{{ activeEditor.detail.description || '暂无接口描述' }}</p>
+                    </div>
+                    <div class="api-definition-path">{{ activeEditor.detail.requestConfig.path || '-' }}</div>
+                  </section>
+
+                  <section class="api-definition-section">
+                    <div class="api-definition-section__title">
+                      <strong>请求参数</strong>
+                      <span>Path / Query / Header</span>
+                    </div>
+                    <div class="api-definition-grid">
+                      <div class="api-definition-card">
+                        <div class="api-definition-card__title">Path</div>
+                        <div v-if="!pathSchemaFields.length" class="api-definition-empty">暂无 Path 参数</div>
+                        <div v-else class="api-schema-mini-list">
+                          <div v-for="field in pathSchemaFields" :key="`path-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
+                            <strong>{{ schemaFieldName(field) }}</strong>
+                            <span>{{ schemaFieldType(field) }}</span>
+                            <small>{{ field.description || '-' }}</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="api-definition-card">
+                        <div class="api-definition-card__title">Query</div>
+                        <div v-if="!querySchemaFields.length" class="api-definition-empty">暂无 Query 参数</div>
+                        <div v-else class="api-schema-mini-list">
+                          <div v-for="field in querySchemaFields" :key="`query-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
+                            <strong>{{ schemaFieldName(field) }}</strong>
+                            <span>{{ schemaFieldType(field) }}</span>
+                            <small>{{ field.description || '-' }}</small>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="api-definition-card">
+                        <div class="api-definition-card__title">Header</div>
+                        <div v-if="!headerSchemaFields.length" class="api-definition-empty">暂无 Header 参数</div>
+                        <div v-else class="api-schema-mini-list">
+                          <div v-for="field in headerSchemaFields" :key="`header-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
+                            <strong>{{ schemaFieldName(field) }}</strong>
+                            <span>{{ schemaFieldType(field) }}</span>
+                            <small>{{ field.description || '-' }}</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="api-definition-section">
+                    <div class="api-definition-section__title">
+                      <strong>Request Body Schema</strong>
+                      <span>{{ bodySchemaFields.length }} 个字段</span>
+                    </div>
+                    <div v-if="!bodySchemaFields.length" class="api-definition-empty is-panel">暂无请求体 Schema。导入 OpenAPI 后，如果文档中包含 requestBody schema，会显示在这里。</div>
+                    <div v-else class="api-schema-table">
+                      <div class="api-schema-header">
+                        <span>字段</span>
+                        <span>类型</span>
+                        <span>必填</span>
+                        <span>描述</span>
+                        <span>示例</span>
+                        <span>枚举/限制</span>
+                      </div>
+                      <div v-for="field in bodySchemaFields" :key="`definition-body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
+                        <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
+                        <span>{{ schemaFieldType(field) }}</span>
+                        <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
+                        <span class="api-schema-muted">{{ field.description || '-' }}</span>
+                        <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                        <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="api-definition-section">
+                    <div class="api-definition-section__title">
+                      <strong>Response Schema</strong>
+                      <span>{{ responseSchemaFields.length }} 个字段</span>
+                    </div>
+                    <div v-if="!responseSchemaFields.length" class="api-definition-empty is-panel">暂无响应 Schema。后续导入解析响应结构后，会在这里展示状态码与响应字段。</div>
+                    <div v-else class="api-schema-table">
+                      <div class="api-schema-header">
+                        <span>字段</span>
+                        <span>类型</span>
+                        <span>必填</span>
+                        <span>描述</span>
+                        <span>示例</span>
+                        <span>枚举/限制</span>
+                      </div>
+                      <div v-for="field in responseSchemaFields" :key="`response-schema-${field.fieldPath || field.name}`" class="api-schema-row">
+                        <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
+                        <span>{{ schemaFieldType(field) }}</span>
+                        <span><el-tag size="small" :type="field.required ? 'danger' : 'info'" effect="plain">{{ field.required ? '是' : '否' }}</el-tag></span>
+                        <span class="api-schema-muted">{{ field.description || '-' }}</span>
+                        <span class="api-schema-code">{{ schemaFieldExample(field) }}</span>
+                        <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
+                      </div>
+                    </div>
+                  </section>
                 </div>
               </template>
 
@@ -5729,6 +6148,34 @@ onBeforeUnmount(() => {
           @size-change="handleReportPageSizeChange"
         />
       </div>
+    </div>
+
+    <div v-else-if="activeTopTab === 'settings'" class="api-automation-settings-workspace">
+      <section class="api-automation-settings-card">
+        <div>
+          <strong>接口自动化设置</strong>
+          <p>这里后续承载请求超时、重试、代理、SSL、通知和远程执行器等全局配置。</p>
+        </div>
+        <el-tag type="info" effect="plain">规划中</el-tag>
+      </section>
+      <section class="api-automation-settings-grid">
+        <div class="api-automation-settings-item">
+          <strong>请求超时与重试</strong>
+          <span>全局请求超时时间、失败重试次数、重试间隔。</span>
+        </div>
+        <div class="api-automation-settings-item">
+          <strong>网络代理与 SSL</strong>
+          <span>全局代理、证书校验策略和测试环境访问配置。</span>
+        </div>
+        <div class="api-automation-settings-item">
+          <strong>通知设置</strong>
+          <span>套件运行完成、失败告警、报告推送等通知规则。</span>
+        </div>
+        <div class="api-automation-settings-item">
+          <strong>远程执行器</strong>
+          <span>后续维护可用执行节点、心跳状态和运行范围。</span>
+        </div>
+      </section>
     </div>
 
     <el-dialog
@@ -6866,58 +7313,67 @@ onBeforeUnmount(() => {
   font-family: Consolas, Monaco, monospace;
 }
 
-.api-interface-tabs {
-  display: flex;
-  height: 48px;
-  min-height: 48px;
-  align-items: center;
-  padding: 6px 24px;
-  border-bottom: 1px solid var(--app-border);
-  border-radius: 12px 12px 0 0;
-  background: var(--app-bg-panel);
-}
-
-.api-interface-tab-nav {
-  display: inline-flex;
-  width: auto;
-  height: 36px;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 3px;
-  border-radius: 10px;
-  background: #f3f4f6;
-}
-
-.api-interface-tab {
-  min-width: 64px;
-  height: 30px;
-  padding: 0 18px;
-  border: 0;
-  border-radius: var(--app-radius-md);
-  background: transparent;
-  color: var(--app-text-secondary);
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 30px;
-}
-
-.api-interface-tab.is-active {
-  background: #fff;
-  color: var(--app-text-primary);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
-}
-
-.api-interface-tab:disabled {
-  cursor: not-allowed;
-  opacity: 0.72;
-}
-
 .api-interface-shell {
   display: grid;
   min-height: 0;
   flex: 1;
   grid-template-columns: 272px minmax(0, 1fr);
+}
+
+.api-automation-settings-workspace {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  flex: 1;
+  padding: 16px;
+  background: #f8fafc;
+}
+
+.api-automation-settings-card,
+.api-automation-settings-item {
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-automation-settings-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+}
+
+.api-automation-settings-card strong,
+.api-automation-settings-item strong {
+  color: var(--app-text-primary);
+  font-size: 15px;
+}
+
+.api-automation-settings-card p {
+  margin: 6px 0 0;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+.api-automation-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.api-automation-settings-item {
+  display: grid;
+  gap: 6px;
+  min-height: 96px;
+  padding: 14px;
+}
+
+.api-automation-settings-item span {
+  color: var(--app-text-muted);
+  font-size: 13px;
+  line-height: 20px;
 }
 
 .api-report-workspace {
@@ -7646,6 +8102,12 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
+.api-directory-title small {
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .api-directory-title button,
 .api-editor-tab-scroll,
 .api-editor-tab-add,
@@ -7668,6 +8130,16 @@ onBeforeUnmount(() => {
 .api-editor-tab-more:hover {
   background: var(--app-bg-page);
   color: var(--app-primary);
+}
+
+.api-directory-search-tip {
+  margin: 8px 16px 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .api-editor-tab-scroll,
@@ -7834,6 +8306,25 @@ onBeforeUnmount(() => {
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
   line-height: 16px;
+}
+
+.api-directory-node__loading {
+  color: var(--app-primary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.api-directory-node__placeholder-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.api-directory-node__placeholder-text {
+  color: var(--app-text-subtle);
+  font-size: 12px;
 }
 
 .api-method {
@@ -8387,6 +8878,13 @@ onBeforeUnmount(() => {
   padding: 14px 16px;
 }
 
+.api-request-body.is-definition {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden auto;
+  padding: 14px 16px 18px;
+}
+
 .api-param-table {
   min-height: 296px;
   overflow: auto;
@@ -8476,6 +8974,258 @@ onBeforeUnmount(() => {
 
 .api-param-row:hover {
   background: #fbfdff;
+}
+
+.api-body-code-wrap {
+  display: grid;
+  min-height: 0;
+  gap: 8px;
+}
+
+.api-body-view-switch {
+  display: inline-flex;
+  width: max-content;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.api-body-view-switch__item {
+  height: 24px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-body-view-switch__item:hover {
+  color: var(--app-primary);
+}
+
+.api-body-view-switch__item.active {
+  background: #fff;
+  color: var(--app-primary);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 8%);
+}
+
+.api-schema-panel {
+  min-height: 300px;
+}
+
+.api-schema-table {
+  overflow: auto;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.api-schema-header,
+.api-schema-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) 130px 72px minmax(220px, 1.5fr) minmax(150px, 1fr) minmax(150px, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  min-width: 980px;
+  padding: 0 12px;
+}
+
+.api-schema-header {
+  height: 38px;
+  border-bottom: 1px solid var(--app-border);
+  background: #f9fafb;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-schema-row {
+  min-height: 42px;
+  border-bottom: 1px solid var(--app-border-soft);
+  color: var(--app-text-primary);
+  font-size: 13px;
+}
+
+.api-schema-row:last-child {
+  border-bottom: 0;
+}
+
+.api-schema-field {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-schema-muted {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-schema-code {
+  min-width: 0;
+  overflow: hidden;
+  color: #374151;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-doc {
+  display: grid;
+  gap: 14px;
+}
+
+.api-definition-summary {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.api-definition-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-definition-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-summary p {
+  margin: 7px 0 0;
+  color: var(--app-text-muted);
+  font-size: 13px;
+}
+
+.api-definition-path {
+  max-width: 48%;
+  overflow: hidden;
+  color: #374151;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-section {
+  display: grid;
+  gap: 8px;
+}
+
+.api-definition-section__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--app-text-primary);
+  font-size: 13px;
+}
+
+.api-definition-section__title span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-definition-card {
+  min-width: 0;
+  min-height: 132px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.api-definition-card__title {
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 36px;
+}
+
+.api-definition-empty {
+  padding: 18px 12px;
+  color: var(--app-text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.api-definition-empty.is-panel {
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.api-schema-mini-list {
+  display: grid;
+}
+
+.api-schema-mini-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  gap: 4px 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+  font-size: 12px;
+}
+
+.api-schema-mini-item:last-child {
+  border-bottom: 0;
+}
+
+.api-schema-mini-item strong,
+.api-schema-mini-item span,
+.api-schema-mini-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-schema-mini-item strong {
+  color: var(--app-text-primary);
+}
+
+.api-schema-mini-item span {
+  color: #374151;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.api-schema-mini-item small {
+  grid-column: 1 / -1;
+  color: var(--app-text-muted);
 }
 
 .api-drag-cell,

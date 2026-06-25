@@ -90,7 +90,18 @@ const navigationItems: NavigationItem[] = [
     ],
   },
   { path: '/bugs', label: '缺陷管理', icon: Warning },
-  { path: '/automation/api', label: '接口自动化', icon: Cpu },
+  {
+    path: '/automation/api',
+    label: '接口自动化',
+    icon: Cpu,
+    children: [
+      { path: '/automation/api/interfaces', label: '接口管理' },
+      { path: '/automation/api/scenarios', label: '接口场景' },
+      { path: '/automation/api/execution-suites', label: '执行套件' },
+      { path: '/automation/api/reports', label: '报告' },
+      { path: '/automation/api/settings', label: '设置' },
+    ],
+  },
   {
     path: '/automation/web',
     label: 'Web UI 自动化',
@@ -218,7 +229,7 @@ async function handleWorkspaceChange(value: string) {
   }
 
   setSelectedWorkspaceCode(value)
-  if (route.path.startsWith('/bugs') || route.path.startsWith('/automation/web')) {
+  if (route.path.startsWith('/bugs') || route.path.startsWith('/automation/web') || route.path.startsWith('/automation/api')) {
     await router.replace({
       path: route.path,
       query: {

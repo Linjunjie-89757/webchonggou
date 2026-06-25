@@ -1,9 +1,11 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
   Close,
+  EditPen,
   Fold,
   MoreFilled,
   Plus as ElPlus,
@@ -134,6 +136,8 @@ const executionBranchNote = ref('')
 const suiteSaving = ref(false)
 const suiteRunning = ref(false)
 const dirtySuiteDraftIds = ref<Set<number>>(new Set())
+const suiteHeaderNameEditing = ref(false)
+const suiteHeaderNameDraft = ref('')
 let draftSuiteSeed = 0
 
 const visibleEnvironmentOptions = computed(() => props.environments || [])
@@ -170,14 +174,19 @@ const activeSuiteName = computed(() => {
   if (activeSuiteDetail.value) return activeSuiteDetail.value.name
   const activeNode = findSuiteNode(executionSuiteTree.value, activeSuiteId.value)
   if (activeNode?.type === 'suite') return activeNode.label
-  return '未选择套件'
+  return '閺堫亪鈧瀚ㄦ總妞炬'
 })
 
 const activeSuiteKey = computed(() => activeSuiteDetail.value ? `suite:${activeSuiteDetail.value.id}` : EXECUTION_SUITE_LIST_KEY)
 
-const activeSuiteDescription = computed(() => (
-  activeSuiteDetail.value?.description || '选择套件后可维护编排、定时、分支和运行结果。'
-))
+
+const activeSuiteDescriptionDraft = computed({
+  get: () => activeSuiteDetail.value?.description || '',
+  set: (value: string) => {
+    if (!activeSuiteDetail.value) return
+    activeSuiteDetail.value.description = value
+  },
+})
 
 const activeSuiteWorkspaceName = computed(() => (
   activeSuiteDetail.value?.workspaceName || activeSuiteDetail.value?.workspaceCode || '--'
@@ -231,7 +240,7 @@ const suiteModuleOptions = computed(() => {
   const append = (items: ApiExecutionSuiteModuleItem[], level = 0) => {
     items.forEach((item) => {
       rows.push({
-        label: `${'　'.repeat(level)}${item.name}`,
+        label: `${'閵嗏偓'.repeat(level)}${item.name}`,
         value: item.id,
       })
       append(item.children || [], level + 1)
@@ -284,16 +293,16 @@ const visibleExecutionSuites = computed(() => {
 
 const executionSuiteListTitle = computed(() => {
   const node = activeSuiteListNode.value
-  if (node?.type === 'workspace') return `${node.label}套件`
+  if (node?.type === 'workspace') return `${node.label}濂椾欢`
   if (node?.type === 'module') return node.label
-  return '全部套件'
+  return '濂椾欢鍒楄〃'
 })
 
 const executionSuiteListSubtitle = computed(() => {
   const node = activeSuiteListNode.value
-  if (node?.type === 'workspace') return '展示当前工作空间下可执行的接口套件。'
-  if (node?.type === 'module') return '展示当前模块及子模块下的执行套件。'
-  return '展示当前范围内可执行的接口套件。'
+  if (node?.type === 'workspace') return '灞曠ず褰撳墠绌洪棿涓嬬殑鎵ц濂椾欢'
+  if (node?.type === 'module') return '灞曠ず褰撳墠妯″潡鍙婂瓙妯″潡涓嬬殑鎵ц濂椾欢'
+  return '灞曠ず鍏ㄩ儴鎵ц濂椾欢锛屾敮鎸佹墦寮€銆佽繍琛屽拰缁存姢缂栨帓'
 })
 
 const filteredSuiteTree = computed(() => {
@@ -414,6 +423,32 @@ function markSuiteDraftDirty() {
   }
 }
 
+function suitePriorityLabel(priority?: string | null) {
+  return priority || 'P1'
+}
+
+function changeSuitePriority(priority: string | number | object) {
+  if (!activeSuiteDetail.value) return
+  activeSuiteDetail.value.priority = String(priority || 'P1')
+  markSuiteDraftDirty()
+}
+
+function startSuiteHeaderNameEdit() {
+  if (!activeSuiteDetail.value) return
+  suiteHeaderNameDraft.value = activeSuiteDetail.value.name || ''
+  suiteHeaderNameEditing.value = true
+}
+
+function finishSuiteHeaderNameEdit() {
+  if (!activeSuiteDetail.value) return
+  const nextName = suiteHeaderNameDraft.value.trim()
+  if (nextName && nextName !== activeSuiteDetail.value.name) {
+    activeSuiteDetail.value.name = nextName
+    markSuiteDraftDirty()
+  }
+  suiteHeaderNameEditing.value = false
+}
+
 function findSuiteModuleById(items: ApiExecutionSuiteModuleItem[], moduleId: number | null): ApiExecutionSuiteModuleItem | null {
   if (moduleId == null) return null
   for (const item of items) {
@@ -475,7 +510,7 @@ async function handleCreateSuiteModule(node: ExecutionSuiteNode) {
   const workspaceCode = node.workspaceCode || resolveActionWorkspaceCode()
   if (!workspaceCode) return
   const parentId = node.type === 'module' ? node.moduleId ?? null : null
-  const name = await promptExecutionText('新建模块', '请输入模块名称', '模块名称')
+  const name = await promptExecutionText('新建子模块', '请输入模块名称', '模块名称')
   if (!name) return
   try {
     await apiExecutionSuiteApi.createSuiteModule(workspaceCode, {
@@ -716,8 +751,8 @@ async function closeOtherSuiteTabs() {
   const hasDirtyDraft = others.some(item => item.id < 0 && dirtySuiteDraftIds.value.has(item.id))
   if (hasDirtyDraft) {
     try {
-      await ElMessageBox.confirm('其他标签中有未保存草稿，关闭后会丢失，确认关闭吗？', '关闭其他标签', {
-        confirmButtonText: '关闭',
+      await ElMessageBox.confirm('其他未保存草稿会被关闭，确认继续？', '关闭其他套件', {
+        confirmButtonText: '确认关闭',
         cancelButtonText: '取消',
         type: 'warning',
         customClass: 'execution-soft-message-box',
@@ -932,8 +967,8 @@ async function addSelectedArrangeItems() {
 async function deleteArrangeItem(row: ExecutionSuiteCase) {
   if (!activeSuiteDetail.value) return
   try {
-    await ElMessageBox.confirm('确认从套件中移除该内容吗？', '移除内容', {
-      confirmButtonText: '移除',
+    await ElMessageBox.confirm('确认删除该编排项吗？', '删除编排项', {
+      confirmButtonText: '删除',
       cancelButtonText: '取消',
       type: 'warning',
       customClass: 'execution-soft-message-box',
@@ -943,7 +978,7 @@ async function deleteArrangeItem(row: ExecutionSuiteCase) {
   }
   try {
     await apiExecutionSuiteApi.deleteSuiteItem(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id, row.arrangeId)
-    ElMessage.success('内容已移除')
+    ElMessage.success('缂栨帓椤瑰凡鍒犻櫎')
     await loadSuiteArrangeItems()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1013,24 +1048,24 @@ function formatRunResult(result: string | null) {
 }
 
 function formatRunMode(value?: string | null) {
-  if (value === 'PARALLEL') return '并行'
-  return '串行'
+  if (value === 'PARALLEL') return '并行运行'
+  return '串行运行'
 }
 
 function formatRunOn(value?: string | null) {
-  if (value === 'REMOTE') return '远程执行机'
-  return '本地执行机'
+  if (value === 'REMOTE') return '远程执行器'
+  return '本地执行器'
 }
 
 function formatSuiteItemType(value?: string | null) {
   if (value === 'SCENARIO') return '场景'
   if (value === 'API_CASE') return '接口用例'
-  return value || '未知'
+  return value || '未知类型'
 }
 
 function formatRowValues(values?: Record<string, string> | null) {
   const entries = Object.entries(values || {})
-  if (!entries.length) return '无行数据'
+  if (!entries.length) return '无数据'
   return entries
     .slice(0, 6)
     .map(([key, value]) => `${key}=${value}`)
@@ -1060,7 +1095,7 @@ function runResultClass(result: string | null) {
 
 function resolveActionWorkspaceCode() {
   if (!props.workspaceCode || props.workspaceCode === 'ALL') {
-    ElMessage.warning('请先切换到具体工作空间后再操作执行套件')
+    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀鎿嶄綔')
     return ''
   }
   return props.workspaceCode
@@ -1124,11 +1159,11 @@ function getRequestErrorMessage(error: unknown) {
 
 async function handleRunSuite() {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('请先切换到具体工作空间后再运行套件')
+    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀杩愯濂椾欢')
     return
   }
   if (!activeSuiteDetail.value) {
-    ElMessage.warning('请先选择执行套件')
+    ElMessage.warning('璇峰厛閫夋嫨鎵ц濂椾欢')
     return
   }
   if (isActiveSuiteDraft.value) {
@@ -1144,7 +1179,7 @@ async function handleRunSuite() {
       branchName: executionBranchName.value.trim() || activeSuiteDetail.value.branchName,
       triggerSource: executionTriggerSource.value.trim() || 'MANUAL',
     })
-    ElMessage.success('套件已开始运行')
+    ElMessage.success('套件运行已触发')
     await loadSuiteDetail(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id)
     if (activeExecutionSubTab.value === 'result') {
       await loadSuiteRunHistories()
@@ -1158,7 +1193,7 @@ async function handleRunSuite() {
 
 async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('请先切换到具体工作空间后再运行套件')
+    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀杩愯濂椾欢')
     return
   }
   suiteRunning.value = true
@@ -1170,7 +1205,7 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
       branchName: suite.branchName,
       triggerSource: suite.triggerSource || 'MANUAL',
     })
-    ElMessage.success('套件已开始运行')
+    ElMessage.success('套件运行已触发')
     await loadExecutionSuiteDirectory()
     if (activeSuiteDetail.value?.id === suite.id) {
       await loadSuiteDetail(suite.workspaceCode, suite.id)
@@ -1184,11 +1219,11 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
 
 async function handleSaveSuite() {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('请先切换到具体工作空间后再保存套件配置')
+    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀淇濆瓨濂椾欢')
     return
   }
   if (!activeSuiteDetail.value) {
-    ElMessage.warning('请先选择执行套件')
+    ElMessage.warning('璇峰厛閫夋嫨鎵ц濂椾欢')
     return
   }
   if (!validateSuiteBeforeSave()) return
@@ -1225,7 +1260,7 @@ async function handleSaveSuite() {
       dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     })
     syncSuiteConfigForm()
-    ElMessage.success('套件配置已保存')
+    ElMessage.success('套件已保存')
     await loadExecutionSuiteDirectory()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1307,7 +1342,7 @@ function showPending(message: string) {
           <Plus class="execution-primary-button-icon" />
           新建套件
         </el-button>
-        <el-input v-model="suiteKeyword" class="execution-search-box" placeholder="搜索模块或套件名称" clearable>
+        <el-input v-model="suiteKeyword" class="execution-search-box" placeholder="搜索模块或套件" clearable>
           <template #prefix>
             <Search class="execution-search-icon" />
           </template>
@@ -1381,8 +1416,8 @@ function showPending(message: string) {
                   <el-button
                     text
                     class="tree-icon-button definition-tree-more-button"
-                    title="更多操作"
-                    aria-label="更多操作"
+                    title="鏇村鎿嶄綔"
+                    aria-label="鏇村鎿嶄綔"
                     @click.stop
                   >
                     <el-icon><MoreFilled /></el-icon>
@@ -1399,7 +1434,7 @@ function showPending(message: string) {
           </template>
         </el-tree>
         <div v-else class="execution-suite-empty">
-          暂无匹配套件
+          鏆傛棤鎵ц濂椾欢
         </div>
       </div>
     </aside>
@@ -1411,7 +1446,7 @@ function showPending(message: string) {
           type="button"
           class="execution-tab-scroll-button"
           :disabled="suiteTabOverflow.arrivedLeft"
-          aria-label="向左滚动标签"
+          aria-label="鍚戝乏婊氬姩濂椾欢鏍囩"
           @click="scrollSuiteTabStrip('left')"
         >
           <el-icon><ArrowLeft /></el-icon>
@@ -1443,12 +1478,12 @@ function showPending(message: string) {
           type="button"
           class="execution-tab-scroll-button"
           :disabled="suiteTabOverflow.arrivedRight"
-          aria-label="向右滚动标签"
+          aria-label="鍚戝彸婊氬姩濂椾欢鏍囩"
           @click="scrollSuiteTabStrip('right')"
         >
           <el-icon><ArrowRight /></el-icon>
         </button>
-        <button type="button" class="execution-tab-icon" aria-label="新建套件" @click="handleCreateSuite">
+        <button type="button" class="execution-tab-icon" aria-label="閺傛澘缂撴總妞炬" @click="handleCreateSuite">
           <el-icon><ElPlus /></el-icon>
         </button>
         <el-dropdown
@@ -1456,7 +1491,7 @@ function showPending(message: string) {
           popper-class="execution-suite-more-menu"
           @command="handleSuiteMoreCommand"
         >
-          <button type="button" class="execution-tab-icon" aria-label="更多标签操作">
+          <button type="button" class="execution-tab-icon" aria-label="鏇村濂椾欢鎿嶄綔">
             <MoreHorizontal />
           </button>
           <template #dropdown>
@@ -1484,13 +1519,53 @@ function showPending(message: string) {
             </button>
           </div>
 
-          <div v-if="activeExecutionSubTab === 'arrange'" class="execution-suite-header">
-            <div class="execution-suite-name-row">
-              <span class="execution-priority-badge">{{ activeSuiteDetail.priority }}</span>
-              <strong>{{ activeSuiteName }}</strong>
+          <div v-if="activeExecutionSubTab === 'arrange'" class="scenario-suite-like-header execution-suite-like-header">
+            <div class="scenario-suite-like-name-row">
+              <el-dropdown trigger="click" @command="changeSuitePriority">
+                <button
+                  type="button"
+                  :class="['scenario-suite-like-priority-badge', `is-${suitePriorityLabel(activeSuiteDetail.priority).toLowerCase()}`]"
+                >
+                  <span>{{ suitePriorityLabel(activeSuiteDetail.priority) }}</span>
+                  <el-icon><ArrowDown /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="P0">P0</el-dropdown-item>
+                    <el-dropdown-item command="P1">P1</el-dropdown-item>
+                    <el-dropdown-item command="P2">P2</el-dropdown-item>
+                    <el-dropdown-item command="P3">P3</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <div class="scenario-suite-like-title">
+                <el-input
+                  v-if="suiteHeaderNameEditing"
+                  v-model="suiteHeaderNameDraft"
+                  class="scenario-suite-like-title-input"
+                  maxlength="80"
+                  @blur="finishSuiteHeaderNameEdit"
+                  @keyup.enter="finishSuiteHeaderNameEdit"
+                />
+                <strong v-else>{{ activeSuiteName }}</strong>
+                <button
+                  v-if="!suiteHeaderNameEditing"
+                  type="button"
+                  class="scenario-suite-like-edit"
+                  title="编辑套件标题"
+                  @click="startSuiteHeaderNameEdit"
+                >
+                  <el-icon><EditPen /></el-icon>
+                </button>
+              </div>
             </div>
-            <p>{{ activeSuiteDescription }}</p>
-            <div class="execution-suite-meta">
+            <el-input
+              v-model="activeSuiteDescriptionDraft"
+              class="scenario-suite-like-description-input"
+              placeholder="输入描述"
+              @input="markSuiteDraftDirty"
+            />
+            <div class="scenario-suite-like-meta">
               <Clock />
               <span>{{ activeSuiteWorkspaceName }}</span>
               <span>更新于 {{ activeSuiteUpdatedAt }}</span>
@@ -1501,15 +1576,15 @@ function showPending(message: string) {
 
           <div v-if="activeExecutionSubTab === 'arrange'" class="execution-case-list">
             <div class="execution-case-toolbar">
-              <span>共 {{ visibleExecutionSuiteCases.length }} 个内容</span>
+              <span>共 {{ visibleExecutionSuiteCases.length }} 个编排项</span>
               <div>
                 <button type="button" @click="openArrangePicker('api')">
                   <Plus />
-                  添加接口用例
+                  娣诲姞鎺ュ彛鐢ㄤ緥
                 </button>
                 <button type="button" @click="openArrangePicker('scene')">
                   <Plus />
-                  添加场景
+                  娣诲姞鍦烘櫙
                 </button>
               </div>
             </div>
@@ -1548,13 +1623,13 @@ function showPending(message: string) {
                 <small>{{ formatDateTime(history.createdAt) }}</small>
                 <span>通过 {{ history.successCount }}/{{ history.totalCount }}</span>
                 <span>失败 {{ history.failedCount }}</span>
-                <span v-if="history.dataDrivenEnabled">{{ history.dataFileName || '数据文件' }} · {{ history.dataRowCount }} 行</span>
+                <span v-if="history.dataDrivenEnabled">{{ history.dataFileName || '未命名数据文件' }} · {{ history.dataRowCount }} 行</span>
                 <span>{{ formatDuration(history.durationMs) }}</span>
-                <small>{{ history.operatorName || '系统' }}</small>
+                <small>{{ history.operatorName || '绯荤粺' }}</small>
               </button>
               <div v-if="!suiteRunHistories.length" class="execution-result-empty">
-                <strong>{{ isActiveSuiteDraft ? '请先保存套件' : '暂无运行记录' }}</strong>
-                <span>{{ isActiveSuiteDraft ? '保存套件后再运行，可查看最近运行结果' : '运行套件后可查看步骤明细、耗时和失败原因' }}</span>
+                <strong>{{ isActiveSuiteDraft ? '请先保存套件' : '暂无运行结果' }}</strong>
+                <span>{{ isActiveSuiteDraft ? '保存套件并运行后，这里会展示最近运行结果。' : '运行套件后，最近 10 次运行结果会显示在这里。' }}</span>
               </div>
             </div>
             <div class="execution-result-detail">
@@ -1633,14 +1708,14 @@ function showPending(message: string) {
                   <strong>{{ step.stepName }}</strong>
                   <small>{{ formatDuration(step.durationMs) }}</small>
                   <span v-if="step.response?.statusCode" class="execution-result-code">HTTP {{ step.response.statusCode }}</span>
-                  <span v-if="step.assertionResults?.length" class="execution-result-muted">{{ step.assertionResults.length }} 条断言</span>
-                  <span v-if="step.processorResults?.length" class="execution-result-muted">{{ step.processorResults.length }} 条处理日志</span>
+                  <span v-if="step.assertionResults?.length" class="execution-result-muted">{{ step.assertionResults.length }} 断言</span>
+                  <span v-if="step.processorResults?.length" class="execution-result-muted">{{ step.processorResults.length }} 处理器</span>
                   <p v-if="step.errorMessage">{{ step.errorMessage }}</p>
                 </div>
               </template>
               <div v-else class="execution-result-empty">
-                <strong>未选择运行记录</strong>
-                <span>点击左侧记录查看步骤明细</span>
+                <strong>暂无运行详情</strong>
+                <span>选择左侧运行结果后查看详情</span>
               </div>
             </div>
           </div>
@@ -1648,7 +1723,7 @@ function showPending(message: string) {
             <label class="execution-config-switch is-form-row">
               <div>
                 <Clock />
-                <span>启用定时</span>
+                <span>定时任务</span>
               </div>
               <el-switch v-model="executionScheduleEnabled" />
             </label>
@@ -1656,7 +1731,7 @@ function showPending(message: string) {
               <span>Cron 表达式</span>
               <el-input v-model="executionCronExpression" placeholder="例如 0 0 9 * * ?" />
             </label>
-            <p>当前仅保存定时配置，真实调度执行由后续调度服务接入。</p>
+            <p>当前仅保存定时配置，后续接入后台调度服务后按 Cron 自动触发套件。</p>
           </div>
           <div v-else class="execution-sub-config-panel">
             <label>
@@ -1678,16 +1753,16 @@ function showPending(message: string) {
         <aside class="execution-config-panel">
           <div class="execution-config-card">
             <div class="execution-config-head">
-              <el-select v-model="executionVisualEnvironment" placeholder="开户-UAT" class="execution-config-select">
+              <el-select v-model="executionVisualEnvironment" placeholder="寮€鍚?UAT" class="execution-config-select">
                 <el-option
                   v-for="environment in visibleEnvironmentOptions"
                   :key="environment.id"
                   :label="environment.name"
                   :value="environment.id"
                 />
-                <el-option v-if="!visibleEnvironmentOptions.length" label="开户-UAT" value="uat" />
+                <el-option v-if="!visibleEnvironmentOptions.length" label="寮€鍚?UAT" value="uat" />
               </el-select>
-              <el-button class="execution-config-icon" @click="showPending('执行环境配置后续接入')">
+              <el-button class="execution-config-icon" @click="showPending('閹笛嗩攽閻滎垰顣ㄩ柊宥囩枂閸氬海鐢婚幒銉ュ弳')">
                 <Settings2 />
               </el-button>
               <div class="execution-run-buttons">
@@ -1699,7 +1774,7 @@ function showPending(message: string) {
                   @click="handleRunSuite"
                 >
                   <Play />
-                  运行
+                  鏉╂劘顢?
                 </el-button>
                 <el-button
                   class="execution-save-button"
@@ -1708,7 +1783,7 @@ function showPending(message: string) {
                   @click="handleSaveSuite"
                 >
                   <Save />
-                  保存
+                  娣囨繂鐡?
                 </el-button>
               </div>
             </div>
@@ -1757,8 +1832,8 @@ function showPending(message: string) {
               <label>
                 <span>运行于</span>
                 <el-select v-model="executionVisualRunOn">
-                  <el-option label="本地执行机" value="local" />
-                  <el-option label="远程执行机" value="remote" />
+                  <el-option label="本地执行器" value="local" />
+                  <el-option label="远程执行器" value="remote" />
                 </el-select>
               </label>
               <div class="execution-config-switch">
@@ -1785,7 +1860,7 @@ function showPending(message: string) {
           </div>
           <el-button type="primary" class="execution-list-create-button" @click="handleCreateSuite">
             <Plus />
-            新建套件
+            閺傛澘缂撴總妞炬
           </el-button>
         </div>
         <div class="execution-suite-list-table">
@@ -1848,7 +1923,7 @@ function showPending(message: string) {
         <div class="scenario-import-content">
           <aside class="scenario-import-tree-pane">
             <div class="scenario-import-tree-controls">
-              <el-select :model-value="activeSuiteDetail?.workspaceCode || props.workspaceCode" disabled placeholder="空间">
+              <el-select :model-value="activeSuiteDetail?.workspaceCode || props.workspaceCode" disabled placeholder="宸ヤ綔绌洪棿">
                 <el-option :label="activeSuiteWorkspaceName" :value="activeSuiteDetail?.workspaceCode || props.workspaceCode" />
               </el-select>
               <el-select v-if="arrangePickerType === 'api'" model-value="HTTP" class="scenario-import-protocol" disabled>
@@ -1857,7 +1932,7 @@ function showPending(message: string) {
             </div>
             <el-input
               v-model="arrangeCandidateKeyword"
-              :placeholder="`输入${arrangePickerTypeLabel}名称搜索`"
+              :placeholder="`鎼滅储${arrangePickerTypeLabel}鍚嶇О`"
               clearable
               @keyup.enter="handleArrangeCandidateSearch"
               @clear="handleArrangeCandidateSearch"
@@ -1865,7 +1940,7 @@ function showPending(message: string) {
             <el-tree
               :data="[{
                 key: 'execution-arrange-all',
-                label: arrangePickerType === 'api' ? '全部用例' : '全部场景',
+                label: arrangePickerType === 'api' ? '閸忋劑鍎撮悽銊ょ伐' : '閸忋劑鍎撮崷鐑樻珯',
                 count: arrangeCandidateTotal,
                 children: [{
                   key: 'execution-arrange-workspace',
@@ -1892,7 +1967,7 @@ function showPending(message: string) {
           <section class="scenario-import-table-pane">
             <div class="scenario-import-table-toolbar">
               <div class="scenario-import-table-title">
-                {{ arrangePickerType === 'api' ? '全部用例' : '全部场景' }}
+                {{ arrangePickerType === 'api' ? '閸忋劑鍎撮悽銊ょ伐' : '閸忋劑鍎撮崷鐑樻珯' }}
                 <span>({{ arrangeCandidateTotal }})</span>
               </div>
             </div>
@@ -1909,14 +1984,14 @@ function showPending(message: string) {
                 <template #default="{ row }">{{ 100000 + row.id }}</template>
               </el-table-column>
               <el-table-column prop="name" label="用例名称" min-width="180" show-overflow-tooltip />
-              <el-table-column label="请求类型" width="110">
+              <el-table-column label="请求方法" width="110">
                 <template #default="{ row }">
                   <span :class="['scenario-import-method-tag', requestMethodClass(row.method)]">{{ row.method }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="path" label="路径" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="path" label="请求路径" min-width="220" show-overflow-tooltip />
               <el-table-column prop="definitionName" label="所属接口" min-width="160" show-overflow-tooltip />
-              <el-table-column label="状态" width="120">
+              <el-table-column label="操作" width="120">
                 <template #default="{ row }">
                   <span v-if="addedArrangeItemIds.has(row.id)" class="execution-import-added">已在套件中</span>
                   <span v-else>{{ row.lastRunResult || '未运行' }}</span>
@@ -1938,7 +2013,7 @@ function showPending(message: string) {
               <el-table-column prop="name" label="场景名称" min-width="220" show-overflow-tooltip />
               <el-table-column prop="moduleName" label="所属模块" min-width="150" show-overflow-tooltip />
               <el-table-column prop="stepCount" label="步骤数" width="100" />
-              <el-table-column label="状态" width="120">
+              <el-table-column label="操作" width="120">
                 <template #default="{ row }">
                   <span v-if="addedArrangeItemIds.has(row.id)" class="execution-import-added">已在套件中</span>
                   <span v-else>{{ row.status || '进行中' }}</span>
@@ -2442,37 +2517,158 @@ function showPending(message: string) {
   background: #2563eb;
 }
 
-.execution-suite-header {
+.execution-suite-header,
+.scenario-suite-like-header {
   display: grid;
   gap: 8px;
   padding: 16px 24px;
   border-bottom: 1px solid #f3f4f6;
 }
 
-.execution-suite-name-row {
+.execution-suite-name-row,
+.scenario-suite-like-name-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 12px;
 }
 
-.execution-suite-name-row strong {
+.execution-suite-name-row strong,
+.scenario-suite-like-name-row strong {
+  min-width: 0;
+  overflow: hidden;
   color: #111827;
   font-size: 18px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.execution-priority-badge {
+.execution-priority-badge,
+.scenario-suite-like-priority-badge {
+  --scenario-priority-bg: #ffedd5;
+  --scenario-priority-border: #fed7aa;
+  --scenario-priority-color: #c2410c;
+  --scenario-priority-hover-bg: #fed7aa;
+  --scenario-priority-hover-border: #fdba74;
   display: inline-flex;
+  height: 24px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  height: 24px;
+  gap: 4px;
   padding: 0 10px;
-  border: 1px solid #fed7aa;
+  border: 1px solid var(--scenario-priority-border);
   border-radius: 6px;
-  background: #ffedd5;
-  color: #c2410c;
+  background: var(--scenario-priority-bg);
+  color: var(--scenario-priority-color);
+  cursor: pointer;
   font-size: 12px;
   font-weight: 700;
+}
+
+.scenario-suite-like-priority-badge:hover {
+  border-color: var(--scenario-priority-hover-border);
+  background: var(--scenario-priority-hover-bg);
+}
+
+.scenario-suite-like-priority-badge .el-icon {
+  font-size: 11px;
+}
+
+.scenario-suite-like-priority-badge.is-p0 {
+  --scenario-priority-bg: #fef2f2;
+  --scenario-priority-border: #fecaca;
+  --scenario-priority-color: #dc2626;
+  --scenario-priority-hover-bg: #fee2e2;
+  --scenario-priority-hover-border: #fca5a5;
+}
+
+.scenario-suite-like-priority-badge.is-p1 {
+  --scenario-priority-bg: #ffedd5;
+  --scenario-priority-border: #fed7aa;
+  --scenario-priority-color: #c2410c;
+  --scenario-priority-hover-bg: #fed7aa;
+  --scenario-priority-hover-border: #fdba74;
+}
+
+.scenario-suite-like-priority-badge.is-p2 {
+  --scenario-priority-bg: #eff6ff;
+  --scenario-priority-border: #bfdbfe;
+  --scenario-priority-color: #2563eb;
+  --scenario-priority-hover-bg: #dbeafe;
+  --scenario-priority-hover-border: #93c5fd;
+}
+
+.scenario-suite-like-priority-badge.is-p3 {
+  --scenario-priority-bg: #f1f5f9;
+  --scenario-priority-border: #cbd5e1;
+  --scenario-priority-color: #475569;
+  --scenario-priority-hover-bg: #e2e8f0;
+  --scenario-priority-hover-border: #94a3b8;
+}
+
+.scenario-suite-like-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.scenario-suite-like-title-input {
+  width: min(420px, 52vw);
+}
+
+.scenario-suite-like-title-input :deep(.el-input__wrapper) {
+  min-height: 28px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #dbeafe inset;
+}
+
+.scenario-suite-like-edit {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #98a2b3;
+  cursor: pointer;
+}
+
+.scenario-suite-like-edit:hover {
+  background: #f3f4f6;
+  color: #2563eb;
+}
+
+.scenario-suite-like-edit .el-icon {
+  font-size: 14px;
+}
+
+.scenario-suite-like-description-input {
+  width: min(640px, 100%);
+}
+
+.scenario-suite-like-description-input :deep(.el-input__wrapper) {
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.scenario-suite-like-description-input :deep(.el-input__wrapper:hover),
+.scenario-suite-like-description-input :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+  box-shadow: 0 0 0 1px #d1d5db inset;
+}
+
+.scenario-suite-like-description-input :deep(.el-input__inner) {
+  color: #6b7280;
+  font-size: 14px;
 }
 
 .execution-suite-header p {
@@ -2481,17 +2677,32 @@ function showPending(message: string) {
   font-size: 14px;
 }
 
-.execution-suite-meta {
+.execution-suite-meta,
+.scenario-suite-like-meta {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   color: #9ca3af;
   font-size: 12px;
 }
 
-.execution-suite-meta svg {
+.execution-suite-meta span,
+.scenario-suite-like-meta span {
+  min-width: 0;
+}
+
+.execution-suite-meta svg,
+.scenario-suite-like-meta svg {
   width: 13px;
   height: 13px;
+  flex: 0 0 auto;
+}
+
+.scenario-suite-like-meta span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .execution-case-list {

@@ -69,6 +69,15 @@ export interface WebUiCollectCandidateDisplayMeta {
   description: string
 }
 
+export interface WebUiCollectSaveNavigationInput {
+  workspaceCode: string
+  pageId: number
+  groupId?: number | null
+  collectTaskId?: number | null
+  savedCount: number
+  skippedCount: number
+}
+
 type CandidateReviewShape = Pick<
   WebUiElementCollectCandidate,
   'validationStatus' | 'matchCount' | 'validationMessage' | 'confidence' | 'saveBlockedReason'
@@ -250,6 +259,22 @@ export function sortCollectCandidatesForReview<T extends CandidateSortShape>(can
     if (confidenceDiff !== 0) return confidenceDiff
     return String(left.id ?? '').localeCompare(String(right.id ?? ''))
   })
+}
+
+export function buildCollectSaveResultNavigationQuery(input: WebUiCollectSaveNavigationInput): Record<string, string> {
+  const query: Record<string, string> = {
+    workspace: input.workspaceCode,
+    pageId: String(input.pageId),
+    saved: String(input.savedCount),
+    skipped: String(input.skippedCount),
+  }
+  if (input.groupId) {
+    query.groupId = String(input.groupId)
+  }
+  if (input.collectTaskId) {
+    query.collectTaskId = String(input.collectTaskId)
+  }
+  return query
 }
 
 export function buildCollectCandidateValidationSummary(

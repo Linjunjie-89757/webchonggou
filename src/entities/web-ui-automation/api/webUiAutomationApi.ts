@@ -47,6 +47,8 @@ import type {
   WebUiElementCollectResponse,
   WebUiElementCollectFilterDetailsResponse,
   WebUiElementCollectTaskResponse,
+  WebUiElementCollectTaskListItem,
+  WebUiElementCollectTaskListQuery,
   WebUiElementItem,
   WebUiElementListQuery,
   WebUiElementQualityCheckResult,
@@ -350,6 +352,31 @@ function normalizeElementCollectResponse(item: WebUiElementCollectResponse): Web
     message: item.message || null,
     aiEnhanced: Boolean(item.aiEnhanced),
     fallbackReason: item.fallbackReason || null,
+  }
+}
+
+function normalizeElementCollectTaskListItem(item: WebUiElementCollectTaskListItem): WebUiElementCollectTaskListItem {
+  return {
+    ...item,
+    taskId: Number(item.taskId),
+    status: item.status || 'PROCESSING',
+    currentStage: item.currentStage || 'UPLOAD_SNAPSHOT',
+    progressPercent: Number(item.progressPercent || 0),
+    source: item.source || 'LOCAL_RUNNER',
+    runnerId: item.runnerId || null,
+    sessionId: item.sessionId || null,
+    actualUrl: item.actualUrl || null,
+    pageTitle: item.pageTitle || null,
+    moduleId: item.moduleId === null || item.moduleId === undefined ? null : Number(item.moduleId),
+    pageId: item.pageId === null || item.pageId === undefined ? null : Number(item.pageId),
+    pageName: item.pageName || null,
+    aiModelConfigId: item.aiModelConfigId === null || item.aiModelConfigId === undefined ? null : Number(item.aiModelConfigId),
+    aiModelName: item.aiModelName || null,
+    rawCount: Number(item.rawCount || 0),
+    finalCount: Number(item.finalCount || 0),
+    message: item.message || null,
+    createdAt: item.createdAt || null,
+    completedAt: item.completedAt || null,
   }
 }
 
@@ -864,6 +891,24 @@ export const webUiAutomationApi = {
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeElementCollectTaskResponse(unwrapApiResponse(payload))
+  },
+
+  async listLocalRunnerCollectTasks(workspaceCode = 'ALL', query?: WebUiElementCollectTaskListQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<WebUiElementCollectTaskListItem>>>(
+      '/automation/web/elements/collect-tasks',
+      {
+        headers: workspaceHeaders(workspaceCode),
+        params: cleanQuery(query),
+      },
+    )
+    return normalizePageResponse(unwrapApiResponse(payload), normalizeElementCollectTaskListItem)
+  },
+
+  async deleteLocalRunnerCollectTask(workspaceCode = 'ALL', taskId: number) {
+    const payload = await httpDelete<ApiResponse<null>>(`/automation/web/elements/collect-tasks/${taskId}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+    return unwrapApiResponse(payload)
   },
 
   async getLocalRunnerCollectTaskFilterDetails(workspaceCode = 'ALL', taskId: number) {

@@ -61,6 +61,23 @@ export interface ApiRequestBodyInput {
   binaryBase64?: string | null
 }
 
+export interface ApiSchemaFieldInput {
+  location: 'query' | 'header' | 'path' | 'body' | string
+  fieldPath: string
+  name?: string | null
+  type?: string | null
+  format?: string | null
+  required?: boolean | null
+  description?: string | null
+  example?: unknown
+  defaultValue?: unknown
+  enumValues?: string[] | null
+  minLength?: number | null
+  maxLength?: number | null
+  minimum?: string | null
+  maximum?: string | null
+}
+
 export interface ApiRequestConfigInput {
   method: string
   path: string
@@ -70,6 +87,7 @@ export interface ApiRequestConfigInput {
   cookies: ApiKeyValueInput[]
   body: ApiRequestBodyInput
   authConfig: ApiAuthConfigInput
+  schemaFields?: ApiSchemaFieldInput[]
 }
 
 export interface ApiAutomationEnvironmentItem {

@@ -23,7 +23,9 @@ const emit = defineEmits<{
   export: []
   'quality-check': []
   'open-recent-task': [task: WebUiElementCollectRecentTask]
+  'remove-recent-task': [task: WebUiElementCollectRecentTask]
   'clear-recent-tasks': []
+  'open-collect-task-list': []
   'ai-collect': []
 }>()
 </script>
@@ -60,7 +62,9 @@ const emit = defineEmits<{
         <WebUiElementCollectRecentTasks
           :tasks="recentCollectTasks"
           @open="emit('open-recent-task', $event)"
+          @remove="emit('remove-recent-task', $event)"
           @clear="emit('clear-recent-tasks')"
+          @all="emit('open-collect-task-list')"
         />
         <AppButton class="web-ui-filter-toolbar__ai" :icon="Cpu" @click="emit('ai-collect')">AI 采集</AppButton>
       </div>

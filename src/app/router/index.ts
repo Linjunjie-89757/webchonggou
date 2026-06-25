@@ -183,11 +183,51 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'automation/api',
-        name: 'automation-api',
+        redirect: to => ({ path: '/automation/api/interfaces', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'automation/api/interfaces',
+        name: 'automation-api-interfaces',
         component: ApiAutomationPage,
         meta: {
-          title: '接口自动化',
-          description: '后续先输出拆分方案，再迁移执行工作台，不复制旧大组件。',
+          title: '接口管理',
+          description: '管理接口定义、接口用例、导入和调试运行。',
+        },
+      },
+      {
+        path: 'automation/api/scenarios',
+        name: 'automation-api-scenarios',
+        component: ApiAutomationPage,
+        meta: {
+          title: '接口场景',
+          description: '编排接口用例、测试数据和场景运行结果。',
+        },
+      },
+      {
+        path: 'automation/api/execution-suites',
+        name: 'automation-api-execution-suites',
+        component: ApiAutomationPage,
+        meta: {
+          title: '执行套件',
+          description: '编排接口用例和场景，维护定时任务、CI/CD 和运行结果。',
+        },
+      },
+      {
+        path: 'automation/api/reports',
+        name: 'automation-api-reports',
+        component: ApiAutomationPage,
+        meta: {
+          title: '接口自动化报告',
+          description: '查看接口用例、场景和执行套件的运行报告。',
+        },
+      },
+      {
+        path: 'automation/api/settings',
+        name: 'automation-api-settings',
+        component: ApiAutomationPage,
+        meta: {
+          title: '接口自动化设置',
+          description: '维护接口自动化运行、通知和全局策略设置。',
         },
       },
       {

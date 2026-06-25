@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -16,6 +16,8 @@ const DATA_DIR = join(homedir(), '.auto-web-ui-runner');
 const AUTH_DIR = join(DATA_DIR, 'auth');
 const VALIDATION_LOCATOR_LIMIT = 200;
 const VALIDATION_SCREENSHOT_LIMIT = 8;
+const AUTH_STALE_MINUTES = 24 * 60;
+const DEFAULT_SESSION_TTL_MINUTES = 15;
 
 let browser;
 let context;
@@ -25,6 +27,7 @@ let playwrightModule;
 
 const port = Number.parseInt(process.env.WEB_UI_RUNNER_PORT || '', 10) || DEFAULT_PORT;
 const allowedOrigins = parseAllowedOrigins(process.env.WEB_UI_RUNNER_ORIGINS);
+const sessionTtlMinutes = normalizePositiveInteger(process.env.WEB_UI_RUNNER_SESSION_TTL_MINUTES, DEFAULT_SESSION_TTL_MINUTES);
 
 const server = createServer(async (request, response) => {
   try {
@@ -56,9 +59,20 @@ const server = createServer(async (request, response) => {
       return sendJson(response, 200, result);
     }
 
+    if (route === 'POST /session/release') {
+      const result = await releaseCurrentSession('manual');
+      return sendJson(response, 200, result);
+    }
+
     if (route === 'POST /auth/save') {
       const payload = await readJson(request);
       const result = await saveAuthState(payload);
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /auth/status') {
+      const payload = await readJson(request);
+      const result = await getAuthStateStatus(payload);
       return sendJson(response, 200, result);
     }
 
@@ -120,7 +134,7 @@ async function getHealth() {
         error: chromiumError,
       },
     },
-    session: activeSession || null,
+    session: buildSessionView(),
   };
 }
 
@@ -146,11 +160,12 @@ async function openCollectPage(payload) {
       currentUrl: page.url(),
       openedAt: activeSession?.openedAt || new Date().toISOString(),
       authStateExists: activeSession?.authStateExists || false,
+      expiresAt: activeSession?.expiresAt || buildSessionExpiresAt(),
     };
 
     return {
       success: true,
-      session: activeSession,
+      session: buildSessionView(),
       page: await getPageInfo(page),
     };
   }
@@ -179,17 +194,19 @@ async function openCollectPage(payload) {
     currentUrl: page.url(),
     openedAt: new Date().toISOString(),
     authStateExists: existsSync(storageStatePath),
+    expiresAt: buildSessionExpiresAt(),
   };
 
   return {
     success: true,
-    session: activeSession,
+    session: buildSessionView(),
     page: await getPageInfo(page),
   };
 }
 
 async function captureCurrentPage(payload) {
   ensurePage();
+  ensureSessionFresh();
 
   if (payload.waitMs) {
     await page.waitForTimeout(Math.min(Number(payload.waitMs), 10_000));
@@ -204,7 +221,7 @@ async function captureCurrentPage(payload) {
 
   return {
     success: true,
-    session: activeSession,
+    session: buildSessionView(),
     page: pageInfo,
     candidates: buildCandidatesFromElements(rawElements),
     rawCount: rawElements.length,
@@ -214,6 +231,7 @@ async function captureCurrentPage(payload) {
 
 async function validateCurrentPageLocators(payload) {
   ensurePage();
+  ensureSessionFresh();
   const locators = Array.isArray(payload.locators) ? payload.locators : [];
   const results = [];
   let screenshotCount = 0;
@@ -327,21 +345,58 @@ async function saveAuthState(payload) {
 
   await mkdir(AUTH_DIR, { recursive: true });
   await context.storageState({ path: storageStatePath });
+  const savedAt = new Date().toISOString();
   await writeFile(
     `${storageStatePath}.meta.json`,
     JSON.stringify({
       workspaceId,
       environmentId,
-      savedAt: new Date().toISOString(),
+      savedAt,
       url: page?.url() || '',
     }, null, 2),
     'utf8',
   );
+  if (activeSession) {
+    activeSession.authStateExists = true;
+    activeSession.authSavedAt = savedAt;
+  }
 
   return {
     success: true,
     storageStatePath,
-    savedAt: new Date().toISOString(),
+    savedAt,
+  };
+}
+
+async function getAuthStateStatus(payload) {
+  const workspaceId = optionalString(payload.workspaceId) || activeSession?.workspaceId || 'default-workspace';
+  const environmentId = optionalString(payload.environmentId) || activeSession?.environmentId || 'default-environment';
+  const storageStatePath = getStorageStatePath(workspaceId, environmentId);
+  const exists = existsSync(storageStatePath);
+  const meta = await readJsonFile(`${storageStatePath}.meta.json`);
+  const savedAt = typeof meta?.savedAt === 'string' ? meta.savedAt : null;
+  const savedUrl = typeof meta?.url === 'string' ? meta.url : null;
+  const ageMinutes = savedAt ? Math.max(0, Math.floor((Date.now() - Date.parse(savedAt)) / 60000)) : null;
+
+  return {
+    success: true,
+    workspaceId,
+    environmentId,
+    exists,
+    savedAt,
+    savedUrl,
+    ageMinutes,
+    stale: exists && typeof ageMinutes === 'number' ? ageMinutes >= AUTH_STALE_MINUTES : false,
+    staleAfterMinutes: AUTH_STALE_MINUTES,
+    activeSession: activeSession
+      ? {
+          sessionId: activeSession.sessionId,
+          currentUrl: getActivePageUrl() || activeSession.currentUrl || '',
+          openedAt: activeSession.openedAt || null,
+          expiresAt: activeSession.expiresAt || null,
+          authStateExists: Boolean(activeSession.authStateExists),
+        }
+      : null,
   };
 }
 
@@ -351,10 +406,31 @@ async function clearAuthState(payload) {
   const storageStatePath = getStorageStatePath(workspaceId, environmentId);
   await rm(storageStatePath, { force: true });
   await rm(`${storageStatePath}.meta.json`, { force: true });
+  if (activeSession && activeSession.workspaceId === workspaceId && activeSession.environmentId === environmentId) {
+    activeSession.authStateExists = false;
+    activeSession.authSavedAt = null;
+  }
 
   return {
     success: true,
     cleared: true,
+  };
+}
+
+async function releaseCurrentSession(reason = 'manual') {
+  const releasedSession = buildSessionView();
+  if (context) {
+    await context.close().catch(() => {});
+  }
+  context = undefined;
+  page = undefined;
+  activeSession = undefined;
+
+  return {
+    success: true,
+    released: Boolean(releasedSession),
+    reason,
+    session: releasedSession,
   };
 }
 
@@ -524,8 +600,25 @@ function ensurePage() {
   }
 }
 
+function ensureSessionFresh() {
+  if (!activeSession || !isSessionExpired(activeSession)) {
+    return;
+  }
+  const expiredAt = activeSession.expiresAt || '';
+  void releaseCurrentSession('expired');
+  throw new Error(`Local Runner page session has expired${expiredAt ? ` at ${expiredAt}` : ''}. Please open the target page again.`);
+}
+
 function getStorageStatePath(workspaceId, environmentId) {
   return join(AUTH_DIR, `${safeName(workspaceId)}__${safeName(environmentId)}.json`);
+}
+
+async function readJsonFile(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 function safeName(value) {
@@ -582,6 +675,36 @@ function getActivePageUrl() {
   return hasUsablePage() ? page.url() : '';
 }
 
+function buildSessionExpiresAt() {
+  return new Date(Date.now() + sessionTtlMinutes * 60_000).toISOString();
+}
+
+function buildSessionView() {
+  if (!activeSession) {
+    return null;
+  }
+  const now = Date.now();
+  const expiresAt = activeSession.expiresAt || null;
+  const expiresAtMs = expiresAt ? Date.parse(expiresAt) : NaN;
+  const remainingMs = Number.isNaN(expiresAtMs) ? null : Math.max(0, expiresAtMs - now);
+  return {
+    ...activeSession,
+    currentUrl: getActivePageUrl() || activeSession.currentUrl || '',
+    expiresAt,
+    ttlMinutes: sessionTtlMinutes,
+    remainingSeconds: typeof remainingMs === 'number' ? Math.ceil(remainingMs / 1000) : null,
+    expired: isSessionExpired(activeSession),
+  };
+}
+
+function isSessionExpired(session) {
+  if (!session?.expiresAt) {
+    return false;
+  }
+  const expiresAtMs = Date.parse(session.expiresAt);
+  return !Number.isNaN(expiresAtMs) && Date.now() >= expiresAtMs;
+}
+
 function clearClosedSession() {
   if (page && page.isClosed()) {
     page = undefined;
@@ -593,6 +716,11 @@ function clearClosedSession() {
 
 function optionalString(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizePositiveInteger(value, fallback) {
+  const numeric = Number.parseInt(String(value || ''), 10);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
 async function shutdown() {

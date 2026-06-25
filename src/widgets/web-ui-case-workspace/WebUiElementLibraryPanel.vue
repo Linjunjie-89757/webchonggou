@@ -17,6 +17,7 @@ import {
   type WebUiElementItem,
   type WebUiElementCollectFilterSummary,
   type WebUiElementCollectFilterDetail,
+  type WebUiElementCollectTaskListItem,
   type WebUiElementCollectTaskResponse,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
@@ -27,12 +28,17 @@ import {
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
 import {
+  buildLocalRunnerStatusView,
   captureLocalRunnerPage,
   checkLocalRunnerHealth,
+  clearLocalRunnerAuth,
+  getLocalRunnerAuthStatus,
   mapRunnerCandidateToCollectCandidate,
   openLocalRunnerPage,
+  releaseLocalRunnerSession,
   saveLocalRunnerAuth,
   validateLocalRunnerLocators,
+  type LocalRunnerAuthStatus,
   type LocalRunnerHealthView,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
 import {
@@ -50,6 +56,7 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 import WebUiElementAiCollectDrawer from './WebUiElementAiCollectDrawer.vue'
 import WebUiElementCollectLaunchDialog from './WebUiElementCollectLaunchDialog.vue'
+import WebUiElementCollectTaskListDrawer from './WebUiElementCollectTaskListDrawer.vue'
 import type { WebUiElementCollectRecentTask } from './WebUiElementCollectRecentTasks.vue'
 import WebUiElementDetailDrawer from './WebUiElementDetailDrawer.vue'
 import WebUiElementDirectoryPanel, { type WebUiElementDirectoryNode } from './WebUiElementDirectoryPanel.vue'
@@ -193,6 +200,7 @@ const pageDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
 const referenceDrawerVisible = ref(false)
 const impactDrawerVisible = ref(false)
+const collectTaskListDrawerVisible = ref(false)
 const loadingReferences = ref(false)
 const syncingReferences = ref(false)
 const loadingImpactReferences = ref(false)
@@ -204,10 +212,14 @@ const aiCollecting = ref(false)
 const localRunnerChecking = ref(false)
 const localRunnerOpening = ref(false)
 const localRunnerCapturing = ref(false)
+const localRunnerAuthSaving = ref(false)
+const localRunnerAuthClearing = ref(false)
+const localRunnerSessionReleasing = ref(false)
 const localRunnerValidating = ref(false)
 const collectTaskRefreshing = ref(false)
 const collectTaskPolling = ref(false)
 const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
+const localRunnerAuthStatus = ref<LocalRunnerAuthStatus | null>(null)
 const aiSaving = ref(false)
 const aiProviderLoading = ref(false)
 const aiProviders = ref<AiProviderConnectionItem[]>([])
@@ -229,6 +241,7 @@ const detailDrawerVisible = ref(false)
 const validateTarget = ref<WebUiElementItem | null>(null)
 const detailTarget = ref<WebUiElementItem | null>(null)
 const consumedElementDeepLinkKey = ref('')
+const consumedCollectSaveResultKey = ref('')
 const validateEnvironmentId = ref<number | null>(null)
 const validateBaseUrl = ref('')
 const validateResult = ref<ValidateWebUiLocatorResponse | null>(null)
@@ -588,6 +601,46 @@ function findDirectoryNode(nodes: ElementDirectoryNode[], id: string): ElementDi
   return null
 }
 
+function getRouteNumberQuery(name: string) {
+  const value = route.query[name]
+  const raw = Array.isArray(value) ? value[0] : value
+  return Number(raw || 0) || null
+}
+
+function applyRouteDirectorySelection() {
+  const groupId = getRouteNumberQuery('groupId')
+  const pageId = getRouteNumberQuery('pageId')
+  const targetId = groupId ? `group-${groupId}` : pageId ? `page-${pageId}` : ''
+  if (!targetId) {
+    return
+  }
+
+  const target = findDirectoryNode(treeData.value, targetId)
+  if (!target) {
+    return
+  }
+
+  selectedTree.value = {
+    id: target.id,
+    type: target.type,
+    rawId: target.rawId,
+    workspaceCode: target.workspaceCode,
+    label: target.label,
+  }
+  const page = target.type === 'GROUP'
+    ? pages.value.find(item => item.id === groups.value.find(group => group.id === target.rawId)?.pageId)
+    : target.type === 'PAGE'
+      ? pages.value.find(item => item.id === target.rawId)
+      : null
+  const moduleItem = page ? modules.value.find(item => item.id === page.moduleId) : null
+  expandedTreeKeys.value = Array.from(new Set([
+    ...expandedTreeKeys.value,
+    target.workspaceCode ? `workspace-${target.workspaceCode}` : '',
+    moduleItem ? `module-${moduleItem.id}` : '',
+    page ? `page-${page.id}` : '',
+  ].filter(Boolean)))
+}
+
 function getWorkspaceCodeForCreate() {
   if (selectedWorkspaceCode.value && selectedWorkspaceCode.value !== 'ALL') {
     return selectedWorkspaceCode.value
@@ -648,6 +701,7 @@ async function loadTreeAssets() {
     pages.value = pageResult.items
     groups.value = groupResult.items
     expandedTreeKeys.value = Array.from(new Set(moduleResult.items.map(item => `workspace-${item.workspaceCode}`)))
+    applyRouteDirectorySelection()
 
     if (selectedTree.value.type !== 'ALL') {
       const current = findDirectoryNode(treeData.value, selectedTree.value.id)
@@ -693,6 +747,7 @@ async function loadElements() {
     elements.value = page.items
     total.value = page.total
     consumeElementDeepLink()
+    consumeCollectSaveResultNotice()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -822,6 +877,35 @@ function consumeElementDeepLink() {
   openDetailDrawer(target)
 }
 
+function consumeCollectSaveResultNotice() {
+  const collectTaskId = getRouteNumberQuery('collectTaskId')
+  const savedCount = getRouteNumberQuery('saved') ?? 0
+  const skippedCount = getRouteNumberQuery('skipped') ?? 0
+  if (!collectTaskId && !savedCount && !skippedCount) {
+    consumedCollectSaveResultKey.value = ''
+    return
+  }
+
+  const key = `${props.workspaceCode}:${collectTaskId || ''}:${savedCount}:${skippedCount}:${selectedTree.value.id}`
+  if (consumedCollectSaveResultKey.value === key) {
+    return
+  }
+
+  consumedCollectSaveResultKey.value = key
+  const taskText = collectTaskId ? `，来源采集任务 #${collectTaskId}` : ''
+  if (savedCount > 0 && skippedCount > 0) {
+    ElMessage.warning(`已定位到本次保存结果：新增 ${savedCount} 个，跳过重复 ${skippedCount} 个${taskText}`)
+    return
+  }
+  if (savedCount > 0) {
+    ElMessage.success(`已定位到本次保存结果：新增 ${savedCount} 个元素${taskText}`)
+    return
+  }
+  if (skippedCount > 0) {
+    ElMessage.warning(`本次没有新增元素，已跳过 ${skippedCount} 个重复候选${taskText}`)
+  }
+}
+
 function openElementCollectTask(item: WebUiElementItem) {
   if (!item.collectTaskId) {
     ElMessage.warning('该元素没有关联采集任务')
@@ -901,6 +985,7 @@ function handleAiModuleChange() {
   aiCollectForm.groupId = null
   aiCollectForm.groupName = ''
   resetAiCollectResults()
+  void refreshLocalRunnerAuthStatus()
 }
 
 function handleAiGroupChange(groupId: number | null) {
@@ -1182,6 +1267,32 @@ function openRecentCollectTask(task: WebUiElementCollectRecentTask) {
       groupName: task.groupName || undefined,
     },
   })
+}
+
+function openCollectTaskListDrawer() {
+  collectTaskListDrawerVisible.value = true
+}
+
+function openCollectTaskFromList(task: WebUiElementCollectTaskListItem) {
+  collectTaskListDrawerVisible.value = false
+  void router.push({
+    path: `/automation/web/elements/collect-tasks/${task.taskId}`,
+    query: {
+      workspaceCode: props.workspaceCode || 'ALL',
+      pageId: task.pageId ? String(task.pageId) : undefined,
+      pageName: task.pageName || undefined,
+      pageUrl: task.actualUrl || undefined,
+      groupStrategy: 'AI',
+    },
+  })
+}
+
+function removeRecentCollectTask(task: WebUiElementCollectRecentTask | WebUiElementCollectTaskListItem) {
+  recentCollectTasks.value = recentCollectTasks.value.filter(item => !(
+    item.taskId === task.taskId
+    && ('workspaceCode' in task ? item.workspaceCode === task.workspaceCode : true)
+  ))
+  persistRecentCollectTasks()
 }
 
 function clearRecentCollectTasks() {
@@ -1711,24 +1822,47 @@ async function refreshLocalRunnerHealth(options: { silent?: boolean } = {}) {
   localRunnerChecking.value = true
   try {
     localRunnerHealth.value = await checkLocalRunnerHealth()
-    if (!localRunnerHealth.value.playwrightAvailable || !localRunnerHealth.value.chromiumInstalled) {
+    await refreshLocalRunnerAuthStatus()
+    const status = buildLocalRunnerStatusView({
+      health: localRunnerHealth.value,
+      expectedUrl: aiCollectForm.pageUrl,
+    })
+    if (!status.canCollect && status.kind !== 'URL_MISMATCH') {
       if (!options.silent) {
-        ElMessage.warning('本地执行器已连接，但 Playwright 或 Chromium 不可用')
+        ElMessage.warning(status.title)
       }
       return
     }
     if (!options.silent) {
-      ElMessage.success(localRunnerHealth.value.currentUrl
-        ? '本地执行器已连接，当前页面可采集'
-        : '本地执行器已连接，请先打开目标页或在 Runner 浏览器中进入目标页面')
+      ElMessage.success(status.title)
     }
   } catch (error) {
     localRunnerHealth.value = null
+    localRunnerAuthStatus.value = null
     if (!options.silent) {
-      ElMessage.error(`本地执行器未连接：${getRequestErrorMessage(error)}`)
+      const status = buildLocalRunnerStatusView({
+        errorMessage: getRequestErrorMessage(error),
+      })
+      ElMessage.error(status.title)
     }
   } finally {
     localRunnerChecking.value = false
+  }
+}
+
+async function refreshLocalRunnerAuthStatus() {
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem || !localRunnerHealth.value?.online) {
+    localRunnerAuthStatus.value = null
+    return
+  }
+  try {
+    localRunnerAuthStatus.value = await getLocalRunnerAuthStatus({
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+  } catch {
+    localRunnerAuthStatus.value = null
   }
 }
 
@@ -1756,6 +1890,7 @@ async function openLocalRunnerCollectPage() {
       environmentId: aiCollectForm.environmentId,
     })
     localRunnerHealth.value = await checkLocalRunnerHealth()
+    await refreshLocalRunnerAuthStatus()
     if (result.page?.isProbablyLoginPage) {
       ElMessage.warning('页面可能需要登录，请在本地浏览器完成登录后点击继续采集')
       return
@@ -1765,6 +1900,194 @@ async function openLocalRunnerCollectPage() {
     ElMessage.error(`打开本地页面失败：${getRequestErrorMessage(error)}`)
   } finally {
     localRunnerOpening.value = false
+  }
+}
+
+async function saveCurrentLocalRunnerAuth() {
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  if (!localRunnerHealth.value?.online) {
+    ElMessage.warning('请先启动并检测本地 Runner')
+    return
+  }
+
+  localRunnerAuthSaving.value = true
+  try {
+    await saveLocalRunnerAuth({
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    await refreshLocalRunnerAuthStatus()
+    ElMessage.success('已保存当前 Runner 登录态')
+  } catch (error) {
+    ElMessage.error(`保存 Runner 登录态失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerAuthSaving.value = false
+  }
+}
+
+async function clearCurrentLocalRunnerAuth() {
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+  if (!localRunnerHealth.value?.online) {
+    ElMessage.warning('请先启动并检测本地 Runner')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '清空后，Runner 下次打开该环境页面将不再自动复用已保存登录态。是否继续？',
+      '清空 Runner 登录态',
+      {
+        confirmButtonText: '清空登录态',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  localRunnerAuthClearing.value = true
+  try {
+    await clearLocalRunnerAuth({
+      workspaceId: moduleItem.workspaceCode,
+      environmentId: aiCollectForm.environmentId,
+    })
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    await refreshLocalRunnerAuthStatus()
+    ElMessage.success('已清空当前环境登录态')
+  } catch (error) {
+    ElMessage.error(`清空 Runner 登录态失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerAuthClearing.value = false
+  }
+}
+
+async function releaseCurrentLocalRunnerSession() {
+  if (!localRunnerHealth.value?.online) {
+    ElMessage.warning('请先启动并检测本地 Runner')
+    return
+  }
+  if (!localRunnerHealth.value.currentUrl) {
+    ElMessage.warning('当前没有可释放的 Runner 页面会话')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '释放后会关闭 Runner 当前打开的业务页面，但不会删除已保存的登录态。下次采集需要重新打开目标页。是否继续？',
+      '释放 Runner 页面会话',
+      {
+        confirmButtonText: '释放页面会话',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  localRunnerSessionReleasing.value = true
+  try {
+    await releaseLocalRunnerSession()
+    localRunnerHealth.value = await checkLocalRunnerHealth()
+    await refreshLocalRunnerAuthStatus()
+    ElMessage.success('已释放当前 Runner 页面会话')
+  } catch (error) {
+    ElMessage.error(`释放 Runner 页面会话失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerSessionReleasing.value = false
+  }
+}
+
+async function confirmLocalRunnerPageMismatch() {
+  await refreshLocalRunnerHealth({ silent: true })
+  const status = buildLocalRunnerStatusView({
+    health: localRunnerHealth.value,
+    expectedUrl: aiCollectForm.pageUrl,
+  })
+  if (status.kind !== 'URL_MISMATCH') {
+    return true
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `Runner 当前页面是：${status.currentUrl || '-'}。采集会以 Runner 当前页面为准，而不是表单里的目标页地址。是否继续？`,
+      'Runner 当前页面和目标页不一致',
+      {
+        confirmButtonText: '继续采集当前页',
+        cancelButtonText: '返回检查',
+        type: 'warning',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function confirmLocalRunnerSessionFreshness() {
+  await refreshLocalRunnerHealth({ silent: true })
+  const health = localRunnerHealth.value
+  if (!health?.currentUrl) {
+    return true
+  }
+  if (health.expired) {
+    ElMessage.warning('Runner 页面会话已过期，请重新打开目标页后再采集')
+    return false
+  }
+  if (typeof health.remainingSeconds !== 'number' || health.remainingSeconds > 120) {
+    return true
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      'Runner 当前页面会话即将过期。继续采集可能在采集或真机验证时失效，建议重新打开目标页刷新会话。是否仍继续？',
+      'Runner 页面会话即将过期',
+      {
+        confirmButtonText: '仍然继续',
+        cancelButtonText: '返回刷新页面',
+        type: 'warning',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function confirmLocalRunnerAuthReadiness() {
+  await refreshLocalRunnerAuthStatus()
+  if (!aiCollectForm.environmentId || !localRunnerHealth.value?.online) {
+    return true
+  }
+  const status = localRunnerAuthStatus.value
+  if (status?.exists && !status.stale) {
+    return true
+  }
+
+  const title = status?.exists ? '登录态保存时间较久' : '当前环境未保存登录态'
+  const message = status?.exists
+    ? '当前环境已有登录态快照，但保存时间较久。如果业务系统登录态已过期，采集可能进入登录页。建议重新登录并保存一次登录态。是否仍继续采集？'
+    : '当前环境还没有保存登录态。如果目标页面需要登录，请先打开目标页，在 Runner 浏览器里完成登录，并点击“保存登录态”。是否仍继续采集当前页面？'
+
+  try {
+    await ElMessageBox.confirm(message, title, {
+      confirmButtonText: '仍然继续采集',
+      cancelButtonText: '返回处理登录态',
+      type: 'warning',
+    })
+    return true
+  } catch {
+    return false
   }
 }
 
@@ -1797,6 +2120,15 @@ async function startCollectTaskWorkbench() {
   resetAiCollectResults()
   localRunnerCapturing.value = true
   try {
+    if (!await confirmLocalRunnerPageMismatch()) {
+      return
+    }
+    if (!await confirmLocalRunnerSessionFreshness()) {
+      return
+    }
+    if (!await confirmLocalRunnerAuthReadiness()) {
+      return
+    }
     const result = await captureLocalRunnerPage(300)
     await saveLocalRunnerAuth({
       workspaceId: moduleItem.workspaceCode,
@@ -1889,6 +2221,15 @@ async function captureLocalRunnerCandidates() {
     const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
     if (!moduleItem) {
       ElMessage.warning('请选择有效的所属模块')
+      return
+    }
+    if (!await confirmLocalRunnerPageMismatch()) {
+      return
+    }
+    if (!await confirmLocalRunnerSessionFreshness()) {
+      return
+    }
+    if (!await confirmLocalRunnerAuthReadiness()) {
       return
     }
     const result = await captureLocalRunnerPage(300)
@@ -3193,6 +3534,15 @@ watch(
 )
 
 watch(
+  () => aiCollectForm.environmentId,
+  () => {
+    if (aiCollectLaunchVisible.value) {
+      void refreshLocalRunnerAuthStatus()
+    }
+  },
+)
+
+watch(
   () => currentCollectTask.value?.status,
   (taskStatus) => {
     if (isCollectTaskTerminalStatus(taskStatus)) {
@@ -3237,7 +3587,9 @@ onBeforeUnmount(() => {
         @export="exportCurrentElements"
         @quality-check="runQualityCheck"
         @open-recent-task="openRecentCollectTask"
+        @remove-recent-task="removeRecentCollectTask"
         @clear-recent-tasks="clearRecentCollectTasks"
+        @open-collect-task-list="openCollectTaskListDrawer"
         @ai-collect="openAiCollectDrawer"
       />
 
@@ -3424,14 +3776,28 @@ onBeforeUnmount(() => {
       :local-runner-checking="localRunnerChecking"
       :local-runner-opening="localRunnerOpening"
       :local-runner-capturing="localRunnerCapturing"
+      :local-runner-auth-saving="localRunnerAuthSaving"
+      :local-runner-auth-clearing="localRunnerAuthClearing"
+      :local-runner-session-releasing="localRunnerSessionReleasing"
       :local-runner-health="localRunnerHealth"
+      :local-runner-auth-status="localRunnerAuthStatus"
       @module-change="handleAiModuleChange"
       @page-change="handleAiPageChange"
       @group-change="handleAiGroupChange"
       @check-local-runner="checkLocalRunner"
       @open-local-runner-page="openLocalRunnerCollectPage"
+      @save-local-runner-auth="saveCurrentLocalRunnerAuth"
+      @clear-local-runner-auth="clearCurrentLocalRunnerAuth"
+      @release-local-runner-session="releaseCurrentLocalRunnerSession"
       @start="startCollectTaskWorkbench"
       @offline="openOfflineAiCollectDrawer"
+    />
+
+    <WebUiElementCollectTaskListDrawer
+      v-model="collectTaskListDrawerVisible"
+      :workspace-code="props.workspaceCode"
+      @open="openCollectTaskFromList"
+      @deleted="removeRecentCollectTask"
     />
 
     <WebUiElementAiCollectDrawer

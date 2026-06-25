@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
 import type {
   ApiDefinitionCaseItem,
@@ -10,10 +11,20 @@ import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entitie
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { ApiInterfaceWorkspace } from '@/widgets/api-interface-workspace'
 
+type ApiAutomationSection = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
+
+const route = useRoute()
 const workspaceCode = ref('ALL')
 const workspaces = ref<WorkspaceItem[]>([])
 const workspaceReady = ref(false)
 const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
+const activeSection = computed<ApiAutomationSection>(() => {
+  if (route.path.endsWith('/scenarios')) return 'scenarios'
+  if (route.path.endsWith('/execution-suites')) return 'execution'
+  if (route.path.endsWith('/reports')) return 'reports'
+  if (route.path.endsWith('/settings')) return 'settings'
+  return 'definitions'
+})
 
 function isKnownWorkspaceCode(workspaceCode: string, items: WorkspaceItem[]) {
   return workspaceCode === 'ALL' || items.some(item => item.workspaceCode === workspaceCode)
@@ -67,6 +78,7 @@ watch(selectedWorkspaceCode, (value) => {
   >
     <div class="api-automation-page">
       <ApiInterfaceWorkspace
+        :active-section="activeSection"
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :workspaces="workspaces"
