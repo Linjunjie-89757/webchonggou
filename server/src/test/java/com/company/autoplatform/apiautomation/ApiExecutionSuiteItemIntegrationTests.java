@@ -160,6 +160,7 @@ class ApiExecutionSuiteItemIntegrationTests extends IntegrationTestSupport {
                         "SCRIPT",
                         null,
                         null,
+                        null,
                         true,
                         null,
                         List.of(),

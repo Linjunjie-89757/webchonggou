@@ -207,27 +207,27 @@ class ApiScenarioExecutionSupportTests {
     }
 
     private ApiScenarioStepInput apiStep(Long resourceId) {
-        return new ApiScenarioStepInput(null, "API step", "API", "DEFINITION", resourceId, true,
+        return new ApiScenarioStepInput(null, "API step", "API", null, "DEFINITION", resourceId, true,
                 null, List.of(), List.of(), List.of(), null, null, null, null, null, null, null, List.of());
     }
 
     private ApiScenarioStepInput scriptStep(String name, String script) {
-        return new ApiScenarioStepInput(null, name, "SCRIPT", null, null, true,
+        return new ApiScenarioStepInput(null, name, "SCRIPT", null, null, null, true,
                 null, List.of(), List.of(), List.of(), null, null, null, null, null, null, script, List.of());
     }
 
     private ApiScenarioStepInput ifStep(String expression, List<ApiScenarioStepInput> children) {
-        return new ApiScenarioStepInput(null, "IF", "IF_CONTROLLER", null, null, true,
+        return new ApiScenarioStepInput(null, "IF", "IF_CONTROLLER", null, null, null, true,
                 null, List.of(), List.of(), List.of(), null, "EXPRESSION", expression, null, null, null, null, children);
     }
 
     private ApiScenarioStepInput loopStep(String loopType, Integer loopCount, String foreachExpression, List<ApiScenarioStepInput> children) {
-        return new ApiScenarioStepInput(null, "Loop", "LOOP_CONTROLLER", null, null, true,
+        return new ApiScenarioStepInput(null, "Loop", "LOOP_CONTROLLER", null, null, null, true,
                 null, List.of(), List.of(), List.of(), null, null, null, loopType, loopCount, foreachExpression, null, children);
     }
 
     private ApiScenarioStepInput referencedScenarioStep(Long scenarioId) {
-        return new ApiScenarioStepInput(null, "Ref", "API_SCENARIO", null, scenarioId, true,
+        return new ApiScenarioStepInput(null, "Ref", "API_SCENARIO", null, null, scenarioId, true,
                 null, List.of(), List.of(), List.of(), null, null, null, null, null, null, null, List.of());
     }
 
@@ -239,6 +239,17 @@ class ApiScenarioExecutionSupportTests {
         @Override
         public String normalizeScenarioStepType(ApiScenarioStepInput step) {
             return step.stepType();
+        }
+
+        @Override
+        public String normalizeScenarioStepRefType(ApiScenarioStepInput step) {
+            if (step.refType() != null) {
+                return step.refType();
+            }
+            return switch (step.stepType()) {
+                case "API", "API_CASE", "API_SCENARIO" -> "REF";
+                default -> "DIRECT";
+            };
         }
 
         @Override
