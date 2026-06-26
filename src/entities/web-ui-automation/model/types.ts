@@ -197,6 +197,7 @@ export interface WebUiElementItem {
   lastValidateAt: string | null
   lastValidateMessage: string | null
   lastMatchCount: number | null
+  lastLocalRunnerRunId?: string | null
   collectTaskId?: number | null
   collectSource?: string | null
   collectConfidence?: number | null
@@ -258,6 +259,13 @@ export interface WebUiElementValidateResultItem {
   matchCount: number
   errorMessage: string | null
   screenshotBase64: string | null
+  locatorType?: WebUiLocatorType | string | null
+  locatorValue?: string | null
+  validationSource?: 'SERVER' | 'LOCAL_RUNNER' | string | null
+  runnerRunId?: string | null
+  runnerPageUrl?: string | null
+  validatedAt?: string | null
+  runnerTaskStatus?: string | null
 }
 
 export interface WebUiElementBatchValidateResult {
@@ -659,6 +667,15 @@ export interface ValidateWebUiLocatorResponse {
   matchCount: number
   errorMessage: string | null
   screenshotBase64: string | null
+  runnerRunId?: string | null
+}
+
+export interface ApplyLocalRunnerElementValidationResultPayload {
+  matched: boolean
+  matchCount: number
+  errorMessage?: string | null
+  screenshotBase64?: string | null
+  runnerRunId?: string | null
 }
 
 export interface SaveWebUiCiTokenPayload {
@@ -686,6 +703,8 @@ export interface WebUiRunRequest {
   environmentId?: number | null
   headless?: boolean | null
   variableSetId?: number | null
+  mockEnabled?: boolean | null
+  mockApplicationId?: number | null
   runtimeVariables?: Record<string, string> | null
 }
 

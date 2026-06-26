@@ -1,6 +1,7 @@
 package com.company.autoplatform.webuiautomation;
 
 import com.company.autoplatform.common.BadRequestException;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -156,6 +157,7 @@ public class WebUiExecutionContextSupport {
         return name.trim();
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public record WebUiEnvironmentConfig(
             String browserType,
             Boolean headless,
@@ -163,10 +165,11 @@ public class WebUiExecutionContextSupport {
             Viewport viewport,
             Boolean ignoreHttpsErrors,
             Long defaultVariableSetId,
+            Long mockApplicationId,
             List<VariableItem> variables
     ) {
         static WebUiEnvironmentConfig defaults() {
-            return new WebUiEnvironmentConfig(null, null, null, null, null, null, List.of());
+            return new WebUiEnvironmentConfig(null, null, null, null, null, null, null, List.of());
         }
     }
 
@@ -194,6 +197,7 @@ public class WebUiExecutionContextSupport {
             EnvironmentSnapshot environment,
             Long variableSetId,
             String variableSetName,
+            MockSnapshot mock,
             Map<String, String> variables
     ) {
     }
@@ -205,6 +209,14 @@ public class WebUiExecutionContextSupport {
             String browserType,
             Boolean headless,
             Integer defaultTimeoutMs
+    ) {
+    }
+
+    public record MockSnapshot(
+            Long id,
+            String appName,
+            String appCode,
+            String baseUrl
     ) {
     }
 }

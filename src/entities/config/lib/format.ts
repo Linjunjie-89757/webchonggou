@@ -67,7 +67,7 @@ export function getParamCategory(item: Pick<ParamSetItem, 'paramType' | 'paramNa
   if (item.paramType === 'BUSINESS' || ['business', '业务'].some((keyword) => text.includes(keyword))) {
     return 'business'
   }
-  if (item.paramType === 'API' || ['header', 'body', 'query', 'api'].some((keyword) => text.includes(keyword))) {
+  if (item.paramType === 'API_VARIABLE_SET' || item.paramType === 'API' || ['header', 'body', 'query', 'api'].some((keyword) => text.includes(keyword))) {
     return 'api'
   }
   return 'global'
@@ -79,7 +79,7 @@ export function getParamTypeMeta(item: Pick<ParamSetItem, 'paramType' | 'paramNa
     return { label: 'Web UI 变量集', tone: 'purple' as const }
   }
   if (category === 'api') {
-    return { label: '接口参数', tone: 'purple' as const }
+    return { label: item.paramType === 'API_VARIABLE_SET' ? '接口变量集' : '接口参数', tone: 'purple' as const }
   }
   if (category === 'business') {
     return { label: '业务参数', tone: 'success' as const }
@@ -118,8 +118,8 @@ export function parseParamContent(contentJson: string) {
 }
 
 export function getParamValueText(item: Pick<ParamSetItem, 'contentJson' | 'paramType'>) {
-  const variables = item.paramType === 'WEB_UI_VARIABLE_SET' ? parseWebUiVariableSummary(item.contentJson) : []
-  if (item.paramType === 'WEB_UI_VARIABLE_SET') {
+  const variables = isVariableSetType(item.paramType) ? parseVariableSummary(item.contentJson) : []
+  if (isVariableSetType(item.paramType)) {
     return `${variables.length} 个变量`
   }
 
@@ -131,12 +131,12 @@ export function getParamValueText(item: Pick<ParamSetItem, 'contentJson' | 'para
 }
 
 export function getParamDescriptionText(item: Pick<ParamSetItem, 'contentJson' | 'paramType'>) {
-  if (item.paramType === 'WEB_UI_VARIABLE_SET') {
-    const variables = parseWebUiVariableSummary(item.contentJson)
+  if (isVariableSetType(item.paramType)) {
+    const variables = parseVariableSummary(item.contentJson)
     if (variables.length > 0) {
       return `包含 ${variables.slice(0, 3).join('、')}${variables.length > 3 ? ' 等' : ''}`
     }
-    return 'Web UI 执行变量集'
+    return item.paramType === 'WEB_UI_VARIABLE_SET' ? 'Web UI 执行变量集' : '接口自动化变量集'
   }
 
   const parsed = parseParamContent(item.contentJson)
@@ -170,7 +170,11 @@ function getWebUiEnvDescription(configJson: string) {
   }
 }
 
-function parseWebUiVariableSummary(contentJson: string) {
+function isVariableSetType(paramType: string) {
+  return paramType === 'WEB_UI_VARIABLE_SET' || paramType === 'API_VARIABLE_SET'
+}
+
+function parseVariableSummary(contentJson: string) {
   const raw = contentJson?.trim()
   if (!raw) {
     return []

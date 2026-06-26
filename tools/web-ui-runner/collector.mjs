@@ -86,6 +86,11 @@ export function normalizeLocatorValidationResult(result) {
     locatorValue: result.locatorValue,
     validationStatus,
     matchCount,
+    visible: Boolean(result.visible),
+    enabled: Boolean(result.enabled),
+    editable: Boolean(result.editable),
+    clickable: Boolean(result.enabled),
+    inputtable: Boolean(result.editable),
     validationMessage,
     screenshotBase64: result.screenshotBase64 || null,
   };

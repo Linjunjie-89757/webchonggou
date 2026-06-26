@@ -54,6 +54,8 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
                 List.of(),
                 List.of(),
                 null,
+                null,
+                null,
                 null
         ));
 
@@ -103,6 +105,8 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
                 List.of(statusCodeAssertion()),
                 List.of(),
                 List.of(),
+                null,
+                null,
                 null,
                 null
         ));

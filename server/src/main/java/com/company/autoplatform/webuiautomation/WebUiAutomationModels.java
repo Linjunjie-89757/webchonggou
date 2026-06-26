@@ -183,6 +183,7 @@ public final class WebUiAutomationModels {
             Boolean headless,
             Integer defaultTimeoutMs,
             Long defaultVariableSetId,
+            Long mockApplicationId,
             Integer status
     ) {
     }
@@ -200,6 +201,7 @@ public final class WebUiAutomationModels {
             String source,
             Long defaultVariableSetId,
             String defaultVariableSetName,
+            Long mockApplicationId,
             LocalDateTime createdAt,
             LocalDateTime updatedAt
     ) {
@@ -209,6 +211,8 @@ public final class WebUiAutomationModels {
             Long environmentId,
             Boolean headless,
             Long variableSetId,
+            Boolean mockEnabled,
+            Long mockApplicationId,
             Map<String, String> runtimeVariables
     ) {
     }
@@ -220,6 +224,8 @@ public final class WebUiAutomationModels {
             Boolean headless,
             Boolean stopOnFailure,
             Long variableSetId,
+            Boolean mockEnabled,
+            Long mockApplicationId,
             Map<String, String> runtimeVariables
     ) {
     }
@@ -256,6 +262,8 @@ public final class WebUiAutomationModels {
             Integer defaultTimeoutMs,
             String status,
             Long variableSetId,
+            Boolean mockEnabled,
+            Long mockApplicationId,
             Map<String, String> runtimeVariables,
             List<@Valid SaveWebUiCaseStepRequest> steps
     ) {
@@ -275,7 +283,17 @@ public final class WebUiAutomationModels {
             Boolean matched,
             Integer matchCount,
             String errorMessage,
-            String screenshotBase64
+            String screenshotBase64,
+            String runnerRunId
+    ) {
+    }
+
+    public record ApplyLocalRunnerElementValidationResultRequest(
+            Boolean matched,
+            Integer matchCount,
+            String errorMessage,
+            String screenshotBase64,
+            String runnerRunId
     ) {
     }
 
@@ -630,6 +648,7 @@ public final class WebUiAutomationModels {
             LocalDateTime lastValidateAt,
             String lastValidateMessage,
             Integer lastMatchCount,
+            String lastLocalRunnerRunId,
             Long collectTaskId,
             String collectSource,
             Integer collectConfidence,

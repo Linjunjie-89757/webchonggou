@@ -36,6 +36,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/api/auth/login").permitAll()
                         .requestMatchers("/api/automation/web/ci/batches/run").permitAll()
+                        .requestMatchers("/api/mock/**").permitAll()
+                        .requestMatchers("/api/public/local-runner/**").permitAll()
                         .requestMatchers("/api/public/automation/web/element-collect-tasks/**").permitAll()
                         .requestMatchers("/api/public/automation/web/report-shares/**").permitAll()
                         .requestMatchers("/error").permitAll()

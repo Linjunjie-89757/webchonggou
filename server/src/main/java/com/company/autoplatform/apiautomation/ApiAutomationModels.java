@@ -401,6 +401,7 @@ public final class ApiAutomationModels {
             String variableSetName,
             String operator,
             LocalDateTime createdAt,
+            String contextSnapshotJson,
             List<ApiRunStepResultResponse> stepResults
     ) {
     }
@@ -713,6 +714,7 @@ public final class ApiAutomationModels {
             Long operatorId,
             String operatorName,
             LocalDateTime createdAt,
+            String contextSnapshotJson,
             List<ApiExecutionSuiteDataIteration> dataIterations,
             List<ApiExecutionSuiteRunItemSnapshot> itemSnapshots,
             List<ApiRunStepResultResponse> stepResults
@@ -794,6 +796,7 @@ public final class ApiAutomationModels {
             Long operatorId,
             String operatorName,
             LocalDateTime createdAt,
+            String contextSnapshotJson,
             List<ApiExecutionSuiteDataIteration> dataIterations,
             List<ApiRunStepResultResponse> stepResults
     ) {
@@ -897,6 +900,8 @@ public final class ApiAutomationModels {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
+            Long defaultVariableSetId,
+            Long mockApplicationId,
             Integer status
     ) {
     }
@@ -910,6 +915,8 @@ public final class ApiAutomationModels {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
+            Long defaultVariableSetId,
+            Long mockApplicationId,
             Integer status
     ) {
     }
@@ -1065,10 +1072,12 @@ public final class ApiAutomationModels {
             Long testDatasetId,
             Integer loopCount,
             Integer threadCount,
+            Boolean mockEnabled,
+            Long mockApplicationId,
             Map<String, String> rowVariables
     ) {
         public ApiRunRequest(String workspaceCode, Long environmentId, Long variableSetId, String branchName, String triggerSource) {
-            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null);
+            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null);
         }
     }
 
@@ -1082,7 +1091,9 @@ public final class ApiAutomationModels {
             List<ApiProcessorInput> preProcessors,
             List<ApiProcessorInput> postProcessors,
             Long environmentId,
-            Long variableSetId
+            Long variableSetId,
+            Boolean mockEnabled,
+            Long mockApplicationId
     ) {
     }
 
@@ -1096,7 +1107,9 @@ public final class ApiAutomationModels {
             List<ApiProcessorInput> preProcessors,
             List<ApiProcessorInput> postProcessors,
             Long environmentId,
-            Long variableSetId
+            Long variableSetId,
+            Boolean mockEnabled,
+            Long mockApplicationId
     ) {
     }
 
@@ -1222,6 +1235,7 @@ public final class ApiAutomationModels {
             String operatorName,
             LocalDateTime createdAt,
             Boolean archived,
+            String contextSnapshotJson,
             List<ApiExecutionSuiteDataIteration> dataIterations,
             List<ApiExecutionSuiteRunItemSnapshot> itemSnapshots,
             List<ApiRunStepResultResponse> stepResults

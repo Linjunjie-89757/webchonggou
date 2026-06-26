@@ -62,7 +62,7 @@ public class ApiExecutionDomainService {
         workspaceScopeSupport.validateReadable(definition.getWorkspaceId(), workspaceCode, "Current workspace cannot run the definition");
         workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(definition.getWorkspaceId()).getWorkspaceCode());
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(definition.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(definition.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(definition.getWorkspaceId(), "API", "接口调试", definition.getDefinitionName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeDefinition(definition, definition.getDefinitionName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), definition.getWorkspaceId(), step);
@@ -84,7 +84,7 @@ public class ApiExecutionDomainService {
         workspaceScopeSupport.validateReadable(apiCase.getWorkspaceId(), workspaceCode, "Current workspace cannot run the case");
         workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(apiCase.getWorkspaceId()).getWorkspaceCode());
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(apiCase.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(apiCase.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(apiCase.getWorkspaceId(), "API", "接口用例调试", apiCase.getCaseName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeCase(apiCase, apiCase.getCaseName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), apiCase.getWorkspaceId(), step);
@@ -94,7 +94,8 @@ public class ApiExecutionDomainService {
                 envelope.report(),
                 step,
                 request.environmentId(),
-                request.variableSetId()
+                request.variableSetId(),
+                context.contextSnapshotJson()
         );
         return new ApiRunResponse(
                 envelope.task().getId(),
@@ -106,6 +107,10 @@ public class ApiExecutionDomainService {
                 List.of(),
                 List.of(step.response())
         );
+    }
+
+    String buildExecutionContextSnapshot(Long workspaceId, Long environmentId, Long variableSetId, Long mockApplicationId, Boolean mockEnabled) {
+        return executionEngine.buildExecutionContext(workspaceId, environmentId, variableSetId, null, mockApplicationId, mockEnabled).contextSnapshotJson();
     }
 
     public ApiRunResponse debugRunDefinitionDraft(String workspaceCode, ApiDebugDefinitionRequest request) {
@@ -146,7 +151,7 @@ public class ApiExecutionDomainService {
         draftDefinition.setPostprocessorsJson(ApiAutomationJsonSupport.toJson(normalizePostProcessors(request.postProcessors(), request.extractors()),
                 "Failed to serialize post-processors"));
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null);
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(workspace.getId(), "API", "接口调试", draftDefinition.getDefinitionName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeDefinition(draftDefinition, draftDefinition.getDefinitionName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), workspace.getId(), step);
@@ -208,7 +213,7 @@ public class ApiExecutionDomainService {
         draftCase.setPostprocessorsJson(ApiAutomationJsonSupport.toJson(normalizeProcessors(request.postProcessors(), "POST"),
                 "Failed to serialize case postprocessors"));
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null);
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(workspace.getId(), "API", "接口用例调试", draftCase.getCaseName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeCase(draftCase, draftCase.getCaseName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), workspace.getId(), step);
@@ -228,7 +233,8 @@ public class ApiExecutionDomainService {
                     envelope.report(),
                     step,
                     request.environmentId(),
-                    request.variableSetId()
+                    request.variableSetId(),
+                    context.contextSnapshotJson()
             );
         }
         return new ApiRunResponse(
@@ -351,7 +357,8 @@ public class ApiExecutionDomainService {
                 success,
                 failureSummary,
                 dataIterations,
-                responses
+                responses,
+                firstAggregate.contextSnapshotJson()
         );
         return new ApiRunResponse(
                 firstAggregate.envelope().task().getId(),
@@ -432,6 +439,8 @@ public class ApiExecutionDomainService {
                 request.testDatasetId(),
                 request.loopCount(),
                 request.threadCount(),
+                request.mockEnabled(),
+                request.mockApplicationId(),
                 rowValues
         );
         ScenarioRunAggregate aggregate = runScenarioOnce(scenario, rowRequest, rowValues, plan.sequence());
@@ -472,7 +481,7 @@ public class ApiExecutionDomainService {
     ) {
         Long environmentId = request.environmentId() != null ? request.environmentId() : scenario.getDefaultEnvId();
         Long variableSetId = request.variableSetId() != null ? request.variableSetId() : scenario.getVariableSetId();
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(scenario.getWorkspaceId(), environmentId, variableSetId, request.rowVariables());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(scenario.getWorkspaceId(), environmentId, variableSetId, request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
         for (ApiVariableItem variable : readVariables(scenario.getScenarioVariablesJson())) {
             if (variable.name() != null && !variable.name().isBlank()) {
                 context.variables().putIfAbsent(variable.name().trim(), Optional.ofNullable(variable.value()).orElse(""));
@@ -548,7 +557,7 @@ public class ApiExecutionDomainService {
         if (rowVariables == null) {
             executionEngine.finalizeRunScenario(scenario, success, failureSummary, envelope.task(), envelope.report());
         }
-        return new ScenarioRunAggregate(envelope, success, failureSummary, responses);
+        return new ScenarioRunAggregate(envelope, success, failureSummary, responses, context.contextSnapshotJson());
     }
 
     private ApiRunResponse toScenarioRunResponse(ScenarioRunAggregate aggregate, List<ApiExecutionSuiteDataIteration> dataIterations) {
@@ -625,7 +634,8 @@ public class ApiExecutionDomainService {
             boolean success,
             String failureSummary,
             List<ApiExecutionSuiteDataIteration> dataIterations,
-            List<ApiRunStepResultResponse> stepResults
+            List<ApiRunStepResultResponse> stepResults,
+            String contextSnapshotJson
     ) {
         CurrentUserPrincipal currentUser = currentUserOrNull();
         long durationMs = stepResults.stream()
@@ -658,6 +668,7 @@ public class ApiExecutionDomainService {
         entity.setThreadCount(normalizeScenarioThreadCount(request.threadCount()));
         entity.setDataIterationJson(ApiAutomationJsonSupport.toJson(dataIterations == null ? List.of() : dataIterations, "Failed to serialize scenario data iterations"));
         entity.setDetailJson(ApiAutomationJsonSupport.toJson(stepResults == null ? List.of() : stepResults, "Failed to serialize scenario run steps"));
+        entity.setContextSnapshotJson(contextSnapshotJson);
         entity.setOperatorId(currentUser == null ? null : currentUser.userId());
         entity.setOperatorName(currentUser == null ? "系统调度" : currentUser.displayName());
         entity.setCreatedAt(LocalDateTime.now());
@@ -718,6 +729,7 @@ public class ApiExecutionDomainService {
                 item.operatorId(),
                 item.operatorName(),
                 item.createdAt(),
+                entity.getContextSnapshotJson(),
                 readScenarioDataIterations(entity.getDataIterationJson()),
                 readScenarioStepResults(entity.getDetailJson())
         );
@@ -753,7 +765,8 @@ public class ApiExecutionDomainService {
             ApiExecutionRuntimeModels.RunEnvelope envelope,
             boolean success,
             String failureSummary,
-            List<ApiRunStepResultResponse> stepResults
+            List<ApiRunStepResultResponse> stepResults,
+            String contextSnapshotJson
     ) {
     }
 

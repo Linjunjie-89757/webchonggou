@@ -380,6 +380,7 @@ function normalizeReportDetail(item: ApiAutomationReportDetail): ApiAutomationRe
     globalTimeoutMs: item.globalTimeoutMs ?? null,
     stepFailureRetryCount: item.stepFailureRetryCount ?? null,
     defaultStepWaitMs: item.defaultStepWaitMs ?? null,
+    contextSnapshotJson: item.contextSnapshotJson || null,
     dataIterations: Array.isArray(item.dataIterations) ? item.dataIterations.map(normalizeDataIteration) : [],
     itemSnapshots: Array.isArray(item.itemSnapshots) ? item.itemSnapshots : [],
     stepResults: Array.isArray(item.stepResults) ? item.stepResults : [],

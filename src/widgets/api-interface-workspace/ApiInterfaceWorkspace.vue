@@ -52,6 +52,7 @@ import {
   type ApiRunHistoryItem,
   type ApiRunResult,
   type ApiRunStepResult,
+  type ApiRuntimeContextSnapshot,
   type ApiSchemaFieldInput,
   type SaveApiDefinitionCasePayload,
   type SaveApiDefinitionPayload,
@@ -1404,6 +1405,31 @@ async function openReportDetail(item: ApiAutomationReportItem) {
     reportDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     reportDetailLoading.value = false
+  }
+}
+
+const selectedReportContextSnapshot = computed<ApiRuntimeContextSnapshot | null>(() => {
+  return parseRuntimeContextSnapshot(selectedReportDetail.value?.contextSnapshotJson)
+})
+
+const selectedReportContextVariables = computed(() => {
+  const variables = selectedReportContextSnapshot.value?.variables || {}
+  return Object.entries(variables).map(([key, value]) => ({ key, value }))
+})
+
+const selectedReportContextVariableSetLabel = computed(() => {
+  const variableSet = selectedReportContextSnapshot.value?.variableSet
+  const name = variableSet?.name || selectedReportDetail.value?.variableSetName || ''
+  if (!name) return '未使用变量集'
+  return variableSet?.versionNo ? `${name} · v${variableSet.versionNo}` : name
+})
+
+function parseRuntimeContextSnapshot(value?: string | null): ApiRuntimeContextSnapshot | null {
+  if (!value) return null
+  try {
+    return JSON.parse(value) as ApiRuntimeContextSnapshot
+  } catch {
+    return null
   }
 }
 
@@ -7446,6 +7472,43 @@ onBeforeUnmount(() => {
             </p>
           </section>
 
+          <section v-if="selectedReportContextSnapshot" class="api-report-detail-section">
+            <h3>运行上下文快照</h3>
+            <div class="api-report-context-grid">
+              <div>
+                <span>环境</span>
+                <strong>{{ selectedReportDetail.environmentName || selectedReportContextSnapshot.environment?.id || '未选择环境' }}</strong>
+                <small>{{ selectedReportContextSnapshot.environment?.baseUrl || '-' }}</small>
+              </div>
+              <div>
+                <span>变量集</span>
+                <strong>{{ selectedReportContextVariableSetLabel }}</strong>
+                <small>
+                  ID {{ selectedReportContextSnapshot.variableSet?.id ?? selectedReportDetail.variableSetId ?? '-' }}
+                </small>
+              </div>
+              <div>
+                <span>Mock 应用</span>
+                <strong>{{ selectedReportContextSnapshot.mock?.appName || '未启用 Mock' }}</strong>
+                <small>{{ selectedReportContextSnapshot.mock?.appCode || selectedReportContextSnapshot.mock?.baseUrl || '-' }}</small>
+              </div>
+              <div>
+                <span>变量数量</span>
+                <strong>{{ selectedReportContextVariables.length }}</strong>
+                <small>保存本次运行实际变量</small>
+              </div>
+            </div>
+            <details v-if="selectedReportContextVariables.length" class="api-report-context-variables">
+              <summary>查看变量快照</summary>
+              <div>
+                <span v-for="item in selectedReportContextVariables" :key="item.key">
+                  <b>{{ item.key }}</b>
+                  <em>{{ item.value || '-' }}</em>
+                </span>
+              </div>
+            </details>
+          </section>
+
           <section v-if="selectedReportDetail.itemSnapshots.length" class="api-report-detail-section">
             <h3>编排项结果</h3>
             <div class="api-report-item-list">
@@ -8144,6 +8207,81 @@ onBeforeUnmount(() => {
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.api-report-context-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-report-context-grid div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.api-report-context-grid span,
+.api-report-context-grid small {
+  display: block;
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-context-grid strong {
+  display: block;
+  overflow: hidden;
+  margin: 5px 0 3px;
+  color: #111827;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-context-variables {
+  margin-top: 12px;
+  color: #374151;
+  font-size: 12px;
+}
+
+.api-report-context-variables summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.api-report-context-variables div {
+  display: grid;
+  max-height: 220px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.api-report-context-variables span {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #f3f4f6;
+}
+
+.api-report-context-variables b,
+.api-report-context-variables em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-context-variables em {
+  margin-top: 3px;
+  color: #6b7280;
+  font-style: normal;
 }
 
 .api-report-failure {

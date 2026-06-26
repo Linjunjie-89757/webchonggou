@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Cpu, InfoFilled } from '@element-plus/icons-vue'
 
 import { type AiProviderConnectionItem } from '@/entities/ai-provider'
@@ -11,11 +12,13 @@ import {
   type WebUiElementCollectFilterSummary,
   type WebUiElementCollectFilterDetail,
   type WebUiElementCollectTaskResponse,
+  type LocalRunnerTaskDetailResponse,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import type { LocalRunnerHealthView } from '@/entities/web-ui-automation/lib/localRunnerClient'
+import type { LocalRunnerTaskPollingStatus } from '@/entities/web-ui-automation/lib/localRunnerClient'
 import {
   getCollectCandidateReviewLevel,
   getCollectCandidateReviewMessage,
@@ -112,6 +115,10 @@ const props = defineProps<{
   localRunnerCapturing: boolean
   localRunnerValidating: boolean
   localRunnerHealth: LocalRunnerHealthView | null
+  localRunnerTaskPollingStatus: LocalRunnerTaskPollingStatus | null
+  localRunnerTaskPollingStarting: boolean
+  localRunnerDebugTaskCreating: boolean
+  localRunnerDebugTask: LocalRunnerTaskDetailResponse | null
   saving: boolean
 }>()
 
@@ -129,6 +136,10 @@ const emit = defineEmits<{
   'preview-screenshot': [candidate: AiElementCandidate]
   'check-local-runner': []
   'open-local-runner-page': []
+  'start-task-polling': []
+  'create-debug-validate-task': []
+  'refresh-debug-task': []
+  'preview-debug-screenshot': [screenshotBase64: string]
   'capture-local-runner-page': []
   'refresh-collect-task': []
   'cancel-collect-task': []
@@ -188,6 +199,79 @@ function getAiCandidateRowClassName({ row }: { row: AiElementCandidate }) {
 function recoverableFilterDetailCount() {
   return props.collectFilterDetails.filter(item => item.recoverable).length
 }
+
+function formatDebugTaskStatus(status?: string | null) {
+  if (status === 'SUCCESS') return '成功'
+  if (status === 'FAILED') return '失败'
+  if (status === 'DEGRADED') return '降级'
+  if (status === 'RUNNING') return '执行中'
+  if (status === 'ASSIGNED') return '已领取'
+  if (status === 'PENDING') return '等待领取'
+  return status || '暂无任务'
+}
+
+function getDebugTaskStatusType(status?: string | null) {
+  if (status === 'SUCCESS') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (status === 'DEGRADED') return 'warning'
+  if (status === 'RUNNING' || status === 'ASSIGNED') return 'primary'
+  return 'info'
+}
+
+type DebugTaskResultRow = {
+  locatorId: string
+  locatorType: string
+  locatorValue: string
+  validationStatus: string
+  matchCount: number
+  visible: boolean
+  clickable: boolean
+  inputtable: boolean
+  validationMessage: string | null
+  screenshotBase64: string | null
+}
+
+const debugTaskSummary = computed(() => {
+  const result = props.localRunnerDebugTask?.result as {
+    summary?: {
+      mode?: string
+      total?: number
+      passed?: number
+      failed?: number
+    }
+    durationMs?: number
+  } | null
+  return {
+    mode: result?.summary?.mode || '-',
+    total: Number(result?.summary?.total || 0),
+    passed: Number(result?.summary?.passed || 0),
+    failed: Number(result?.summary?.failed || 0),
+    durationMs: Number(result?.durationMs || 0),
+  }
+})
+
+const debugTaskResultRows = computed<DebugTaskResultRow[]>(() => {
+  const result = props.localRunnerDebugTask?.result as {
+    reportData?: {
+      results?: unknown[]
+    }
+  } | null
+  const rows = Array.isArray(result?.reportData?.results) ? result.reportData.results : []
+  return rows
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map((item, index) => ({
+      locatorId: String(item.locatorId || `locator-${index + 1}`),
+      locatorType: String(item.locatorType || '-'),
+      locatorValue: String(item.locatorValue || ''),
+      validationStatus: String(item.validationStatus || 'UNVERIFIED'),
+      matchCount: Number(item.matchCount || 0),
+      visible: Boolean(item.visible),
+      clickable: Boolean(item.clickable),
+      inputtable: Boolean(item.inputtable),
+      validationMessage: typeof item.validationMessage === 'string' ? item.validationMessage : null,
+      screenshotBase64: typeof item.screenshotBase64 === 'string' ? item.screenshotBase64 : null,
+    }))
+})
 </script>
 
 <template>
@@ -273,7 +357,112 @@ function recoverableFilterDetailCount() {
                   <AppButton size="small" :loading="localRunnerOpening" @click="emit('open-local-runner-page')">
                     打开目标页
                   </AppButton>
+                  <AppButton size="small" :loading="localRunnerTaskPollingStarting" @click="emit('start-task-polling')">
+                    启动任务轮询
+                  </AppButton>
+                  <AppButton
+                    size="small"
+                    type="primary"
+                    :loading="localRunnerDebugTaskCreating"
+                    @click="emit('create-debug-validate-task')"
+                  >
+                    创建验证任务
+                  </AppButton>
                 </div>
+                <div class="web-ui-ai-collect__runner-task-status">
+                  <template v-if="localRunnerTaskPollingStatus?.poller">
+                    <el-tag type="success" effect="light">任务轮询中</el-tag>
+                    <span>Runner {{ localRunnerTaskPollingStatus.poller.runnerId || '-' }}</span>
+                    <span>已拉取 {{ localRunnerTaskPollingStatus.poller.pulledCount }}，完成 {{ localRunnerTaskPollingStatus.poller.completedCount }}</span>
+                    <small>{{ localRunnerTaskPollingStatus.poller.lastMessage || '等待任务' }}</small>
+                  </template>
+                  <template v-else>
+                    <el-tag type="info" effect="light">任务轮询未启动</el-tag>
+                    <small>用于调试新的 Local Runner 通用任务链路：后端创建任务，Runner 自动拉取并真机验证。</small>
+                  </template>
+                </div>
+                <div v-if="localRunnerDebugTask" class="web-ui-ai-collect__runner-task-status">
+                  <el-tag :type="getDebugTaskStatusType(localRunnerDebugTask.status)" effect="light">
+                    {{ formatDebugTaskStatus(localRunnerDebugTask.status) }}
+                  </el-tag>
+                  <span>{{ localRunnerDebugTask.runId }}</span>
+                  <small>
+                    {{ localRunnerDebugTask.statusMessage || localRunnerDebugTask.errorMessage || '验证任务已创建，可刷新查看最新结果' }}
+                  </small>
+                  <AppButton size="small" @click="emit('refresh-debug-task')">刷新任务</AppButton>
+                </div>
+                <section
+                  v-if="localRunnerDebugTask && (debugTaskResultRows.length || localRunnerDebugTask.errorMessage)"
+                  class="web-ui-ai-collect__debug-result"
+                >
+                  <div class="web-ui-ai-collect__debug-result-header">
+                    <strong>调试验证结果</strong>
+                    <el-tag type="info" effect="light">{{ debugTaskSummary.mode }}</el-tag>
+                    <el-tag type="success" effect="light">通过 {{ debugTaskSummary.passed }}</el-tag>
+                    <el-tag :type="debugTaskSummary.failed ? 'danger' : 'info'" effect="light">
+                      失败 {{ debugTaskSummary.failed }}
+                    </el-tag>
+                    <span>共 {{ debugTaskSummary.total }} 个，耗时 {{ debugTaskSummary.durationMs }}ms</span>
+                  </div>
+                  <el-alert
+                    v-if="localRunnerDebugTask.errorMessage"
+                    :title="localRunnerDebugTask.errorMessage"
+                    type="error"
+                    show-icon
+                    :closable="false"
+                  />
+                  <el-table
+                    v-if="debugTaskResultRows.length"
+                    :data="debugTaskResultRows"
+                    size="small"
+                    border
+                    class="web-ui-ai-collect__debug-table"
+                  >
+                    <el-table-column label="定位方式" width="108">
+                      <template #default="{ row }">
+                        <el-tag effect="light">{{ row.locatorType }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="定位值" min-width="220" show-overflow-tooltip>
+                      <template #default="{ row }">
+                        <span>{{ row.locatorValue || '-' }}</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="验证" width="112">
+                      <template #default="{ row }">
+                        <el-tag :type="getAiValidationTagType(row.validationStatus)" effect="light">
+                          {{ formatAiValidationStatus(row.validationStatus) }}
+                        </el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="匹配" width="72" prop="matchCount" />
+                    <el-table-column label="状态" min-width="150">
+                      <template #default="{ row }">
+                        <div class="web-ui-ai-collect__debug-flags">
+                          <el-tag :type="row.visible ? 'success' : 'info'" effect="light">可见</el-tag>
+                          <el-tag :type="row.clickable ? 'success' : 'info'" effect="light">可点</el-tag>
+                          <el-tag :type="row.inputtable ? 'success' : 'info'" effect="light">可输入</el-tag>
+                        </div>
+                        <small v-if="row.validationMessage" class="web-ui-ai-collect__hint">
+                          {{ row.validationMessage }}
+                        </small>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="证据" width="96">
+                      <template #default="{ row }">
+                        <el-button
+                          v-if="row.screenshotBase64"
+                          link
+                          type="primary"
+                          @click="emit('preview-debug-screenshot', row.screenshotBase64)"
+                        >
+                          查看截图
+                        </el-button>
+                        <span v-else>-</span>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </section>
               </div>
             </el-form-item>
           </template>
@@ -711,19 +900,22 @@ function recoverableFilterDetailCount() {
 }
 
 .web-ui-ai-collect__runner-status,
-.web-ui-ai-collect__runner-actions {
+.web-ui-ai-collect__runner-actions,
+.web-ui-ai-collect__runner-task-status {
   display: flex;
   align-items: center;
   gap: var(--app-space-2);
   flex-wrap: wrap;
 }
 
-.web-ui-ai-collect__runner-status {
+.web-ui-ai-collect__runner-status,
+.web-ui-ai-collect__runner-task-status {
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
 }
 
-.web-ui-ai-collect__runner-status small {
+.web-ui-ai-collect__runner-status small,
+.web-ui-ai-collect__runner-task-status small {
   flex-basis: 100%;
   color: var(--app-text-muted);
 }
@@ -763,6 +955,30 @@ function recoverableFilterDetailCount() {
   border: 1px solid var(--app-border-color);
   border-radius: var(--app-radius-md);
   background: var(--app-bg-soft);
+}
+
+.web-ui-ai-collect__debug-result {
+  display: grid;
+  gap: var(--app-space-2);
+  padding-top: var(--app-space-2);
+  border-top: 1px solid var(--app-border-color);
+}
+
+.web-ui-ai-collect__debug-result-header,
+.web-ui-ai-collect__debug-flags {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-2);
+  flex-wrap: wrap;
+}
+
+.web-ui-ai-collect__debug-result-header {
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+.web-ui-ai-collect__debug-table {
+  width: 100%;
 }
 
 .web-ui-ai-collect__filter-details-header,

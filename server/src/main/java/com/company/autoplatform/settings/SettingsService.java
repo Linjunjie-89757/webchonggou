@@ -10,17 +10,20 @@ public class SettingsService {
     private final DbConnectionTestSupport dbConnectionTestSupport;
     private final SettingsEnvironmentDomainService environmentDomainService;
     private final SettingsParamSetDomainService paramSetDomainService;
+    private final ConfigReferenceDomainService referenceDomainService;
 
     public SettingsService(
             DbConnectionDomainService dbConnectionDomainService,
             DbConnectionTestSupport dbConnectionTestSupport,
             SettingsEnvironmentDomainService environmentDomainService,
-            SettingsParamSetDomainService paramSetDomainService
+            SettingsParamSetDomainService paramSetDomainService,
+            ConfigReferenceDomainService referenceDomainService
     ) {
         this.dbConnectionDomainService = dbConnectionDomainService;
         this.dbConnectionTestSupport = dbConnectionTestSupport;
         this.environmentDomainService = environmentDomainService;
         this.paramSetDomainService = paramSetDomainService;
+        this.referenceDomainService = referenceDomainService;
     }
 
     public PageResponse<EnvConfigItem> listEnvs(String workspaceCode, String keyword, String envType, Integer status) {
@@ -43,6 +46,10 @@ public class SettingsService {
         environmentDomainService.deleteEnv(id, workspaceCode);
     }
 
+    public ConfigReferenceModels.ConfigReferenceSummary environmentReferences(Long id, String workspaceCode) {
+        return referenceDomainService.environmentReferences(id, workspaceCode);
+    }
+
     public PageResponse<ParamSetItem> listParams(String workspaceCode, String keyword, String paramType, Integer status) {
         return paramSetDomainService.listParams(workspaceCode, keyword, paramType, status);
     }
@@ -59,8 +66,24 @@ public class SettingsService {
         return paramSetDomainService.updateParamStatus(id, workspaceCode, request);
     }
 
+    public PageResponse<ParamSetChangeHistoryItem> listParamChangeHistory(Long id, String workspaceCode) {
+        return paramSetDomainService.listChangeHistory(id, workspaceCode);
+    }
+
+    public PageResponse<ParamSetVersionItem> listParamVersions(Long id, String workspaceCode) {
+        return paramSetDomainService.listVersions(id, workspaceCode);
+    }
+
+    public ParamSetItem rollbackParamVersion(Long id, Long versionId, String workspaceCode) {
+        return paramSetDomainService.rollbackVersion(id, versionId, workspaceCode);
+    }
+
     public void deleteParam(Long id, String workspaceCode) {
         paramSetDomainService.deleteParam(id, workspaceCode);
+    }
+
+    public ConfigReferenceModels.ConfigReferenceSummary paramReferences(Long id, String workspaceCode) {
+        return referenceDomainService.paramReferences(id, workspaceCode);
     }
 
     public PageResponse<DbConnectionItem> listDbConnections(String workspaceCode, String keyword, String dbType, Integer status) {

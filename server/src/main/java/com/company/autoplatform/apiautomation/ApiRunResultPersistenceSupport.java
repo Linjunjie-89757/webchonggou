@@ -57,9 +57,10 @@ public class ApiRunResultPersistenceSupport {
             ReportEntity report,
             ApiExecutionRuntimeModels.RunStepComputation step,
             Long environmentId,
-            Long variableSetId
+            Long variableSetId,
+            String contextSnapshotJson
     ) {
-        caseRunHistoryMapper.insert(toCaseRunHistoryEntity(apiCase, report, step, environmentId, variableSetId));
+        caseRunHistoryMapper.insert(toCaseRunHistoryEntity(apiCase, report, step, environmentId, variableSetId, contextSnapshotJson));
     }
 
     ApiRunStepResultEntity toRunStepResultEntity(
@@ -92,7 +93,8 @@ public class ApiRunResultPersistenceSupport {
             ReportEntity report,
             ApiExecutionRuntimeModels.RunStepComputation step,
             Long environmentId,
-            Long variableSetId
+            Long variableSetId,
+            String contextSnapshotJson
     ) {
         ApiAutomationModels.ApiRunStepResultResponse response = step.response();
         ApiDefinitionCaseRunHistoryEntity entity = new ApiDefinitionCaseRunHistoryEntity();
@@ -111,6 +113,7 @@ public class ApiRunResultPersistenceSupport {
         entity.setStatusCode(response.response() == null ? null : response.response().statusCode());
         entity.setDurationMs(response.durationMs());
         entity.setResponseSize(computeResponseSize(response.response()));
+        entity.setContextSnapshotJson(contextSnapshotJson);
         entity.setCreatedAt(LocalDateTime.now());
         entity.setUpdatedAt(LocalDateTime.now());
         return entity;

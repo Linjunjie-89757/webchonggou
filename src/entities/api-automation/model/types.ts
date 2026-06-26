@@ -528,6 +528,8 @@ export interface ApiRunPayload {
   testDatasetId?: number | null
   loopCount?: number | null
   threadCount?: number | null
+  mockEnabled?: boolean | null
+  mockApplicationId?: number | null
   rowVariables?: Record<string, string> | null
 }
 
@@ -592,6 +594,26 @@ export interface ApiRunResult {
   stepResults: ApiRunStepResult[]
 }
 
+export interface ApiRuntimeContextSnapshot {
+  environment?: {
+    id?: number | null
+    baseUrl?: string | null
+    timeoutMs?: number | null
+  } | null
+  variableSet?: {
+    id?: number | null
+    name?: string | null
+    versionNo?: number | null
+  } | null
+  mock?: {
+    id?: number | null
+    appName?: string | null
+    appCode?: string | null
+    baseUrl?: string | null
+  } | null
+  variables?: Record<string, string>
+}
+
 export interface ApiRunHistoryItem {
   id: number
   workspaceCode: string
@@ -614,6 +636,7 @@ export interface ApiRunHistoryItem {
 }
 
 export interface ApiRunHistoryDetail extends ApiRunHistoryItem {
+  contextSnapshotJson?: string | null
   stepResults: ApiRunStepResult[]
 }
 
@@ -713,6 +736,7 @@ export interface ApiAutomationReportDetail extends ApiAutomationReportItem {
   globalTimeoutMs: number | null
   stepFailureRetryCount: number | null
   defaultStepWaitMs: number | null
+  contextSnapshotJson?: string | null
   dataIterations: ApiExecutionSuiteDataIteration[]
   itemSnapshots: ApiExecutionSuiteRunItemSnapshot[]
   stepResults: ApiRunStepResult[]

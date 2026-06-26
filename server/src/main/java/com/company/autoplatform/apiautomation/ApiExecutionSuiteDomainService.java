@@ -303,7 +303,14 @@ public class ApiExecutionSuiteDomainService {
                 request == null || request.environmentId() == null ? suite.getEnvironmentId() : request.environmentId(),
                 request == null || request.variableSetId() == null ? suite.getVariableSetId() : request.variableSetId(),
                 request == null || request.branchName() == null || request.branchName().isBlank() ? suite.getBranchName() : request.branchName(),
-                request == null || request.triggerSource() == null || request.triggerSource().isBlank() ? "MANUAL" : request.triggerSource()
+                request == null || request.triggerSource() == null || request.triggerSource().isBlank() ? "MANUAL" : request.triggerSource(),
+                null,
+                null,
+                null,
+                null,
+                request == null ? null : request.mockEnabled(),
+                request == null ? null : request.mockApplicationId(),
+                null
         );
         SuiteExecutionPolicy policy = SuiteExecutionPolicy.of(
                 Boolean.TRUE.equals(suite.getContinueOnFailure()),
@@ -316,7 +323,14 @@ public class ApiExecutionSuiteDomainService {
         suite.setLastRunAt(LocalDateTime.now());
         suite.setUpdatedAt(LocalDateTime.now());
         suiteMapper.updateById(suite);
-        persistSuiteRunHistory(suite, effectiveRequest, aggregate.success(), aggregate.failureSummary(), aggregate.stepResults(), aggregate.itemSnapshots(), aggregate.dataIterations(), aggregate.reportId());
+        String contextSnapshotJson = executionDomainServiceProvider.getObject().buildExecutionContextSnapshot(
+                suite.getWorkspaceId(),
+                effectiveRequest.environmentId(),
+                effectiveRequest.variableSetId(),
+                effectiveRequest.mockApplicationId(),
+                effectiveRequest.mockEnabled()
+        );
+        persistSuiteRunHistory(suite, effectiveRequest, aggregate.success(), aggregate.failureSummary(), aggregate.stepResults(), aggregate.itemSnapshots(), aggregate.dataIterations(), aggregate.reportId(), contextSnapshotJson);
         return new ApiRunResponse(
                 aggregate.taskId(),
                 aggregate.reportId(),
@@ -361,11 +375,13 @@ public class ApiExecutionSuiteDomainService {
                    effectiveRequest.branchName(),
                    effectiveRequest.triggerSource(),
                    effectiveRequest.testDatasetEnabled(),
-                   effectiveRequest.testDatasetId(),
-                   effectiveRequest.loopCount(),
-                   effectiveRequest.threadCount(),
-                   row.values()
-           );
+                    effectiveRequest.testDatasetId(),
+                    effectiveRequest.loopCount(),
+                    effectiveRequest.threadCount(),
+                    effectiveRequest.mockEnabled(),
+                    effectiveRequest.mockApplicationId(),
+                    row.values()
+            );
             SuiteRunAggregate rowRun = runSuiteOnce(enabledItems, workspace.getWorkspaceCode(), rowRequest, policy, row);
             if (taskId == null) {
                 taskId = rowRun.taskId();
@@ -672,7 +688,8 @@ public class ApiExecutionSuiteDomainService {
             List<ApiRunStepResultResponse> stepResults,
             List<ApiExecutionSuiteRunItemSnapshot> itemSnapshots,
             List<ApiExecutionSuiteDataIteration> dataIterations,
-            Long reportId
+            Long reportId,
+            String contextSnapshotJson
     ) {
         CurrentUserPrincipal currentUser = currentUserOrNull();
         long durationMs = stepResults.stream()
@@ -716,6 +733,7 @@ public class ApiExecutionSuiteDomainService {
         entity.setOperatorName(currentUser == null ? "系统调度" : currentUser.displayName());
         entity.setDetailJson(ApiAutomationJsonSupport.toJson(stepResults, "Failed to serialize execution suite run detail"));
         entity.setItemSnapshotJson(ApiAutomationJsonSupport.toJson(itemSnapshots, "Failed to serialize execution suite item snapshots"));
+        entity.setContextSnapshotJson(contextSnapshotJson);
         entity.setCreatedAt(LocalDateTime.now());
         entity.setUpdatedAt(LocalDateTime.now());
         suiteRunHistoryMapper.insert(entity);
@@ -808,6 +826,7 @@ public class ApiExecutionSuiteDomainService {
                 entity.getOperatorId(),
                 entity.getOperatorName(),
                 entity.getCreatedAt(),
+                entity.getContextSnapshotJson(),
                 readSuiteDataIterations(entity.getDataIterationJson()),
                 itemSnapshots,
                 stepResults

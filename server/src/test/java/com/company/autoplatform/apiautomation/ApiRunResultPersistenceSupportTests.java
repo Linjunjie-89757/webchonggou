@@ -112,7 +112,8 @@ class ApiRunResultPersistenceSupportTests {
                 report,
                 stepComputation(false, responseSnapshot(500, "错误"), List.of(), List.of(), List.of()),
                 100L,
-                200L
+                200L,
+                null
         );
 
         assertThat(entity.getWorkspaceId()).isEqualTo(10L);

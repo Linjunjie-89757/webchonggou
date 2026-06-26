@@ -2,6 +2,7 @@ package com.company.autoplatform.settings;
 
 import com.company.autoplatform.IntegrationTestSupport;
 import com.company.autoplatform.common.BadRequestException;
+import com.company.autoplatform.common.PageResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -21,6 +22,9 @@ class DbConnectionServiceTests extends IntegrationTestSupport {
 
     @Autowired
     private ParamSetMapper paramSetMapper;
+
+    @Autowired
+    private ParamSetChangeHistoryMapper paramSetChangeHistoryMapper;
 
     @Test
     void settingsListsSupportOptionalFilters() {
@@ -213,6 +217,78 @@ class DbConnectionServiceTests extends IntegrationTestSupport {
         settingsService.deleteParam(param.id(), WORKSPACE_CODE);
         assertThat(envConfigMapper.selectById(env.id())).isNull();
         assertThat(paramSetMapper.selectById(param.id())).isNull();
+    }
+
+    @Test
+    void paramSetChangesAreRecordedForCreateUpdateAndStatus() {
+        String unique = "settings-param-history-" + System.nanoTime();
+
+        ParamSetItem created = settingsService.createParam(WORKSPACE_CODE, new CreateParamSetRequest(
+                null,
+                "API_VARIABLE_SET",
+                unique + "-param",
+                "{\"variables\":[{\"name\":\"token\",\"value\":\"one\"}]}"
+        ));
+        ParamSetItem updated = settingsService.updateParam(created.id(), WORKSPACE_CODE, new CreateParamSetRequest(
+                null,
+                "API_VARIABLE_SET",
+                unique + "-param-updated",
+                "{\"variables\":[{\"name\":\"token\",\"value\":\"two\"}]}"
+        ));
+        settingsService.updateParamStatus(created.id(), WORKSPACE_CODE, new UpdateSettingStatusRequest(0));
+
+        PageResponse<ParamSetChangeHistoryItem> page = settingsService.listParamChangeHistory(created.id(), WORKSPACE_CODE);
+
+        assertThat(updated.paramName()).isEqualTo(unique + "-param-updated");
+        assertThat(page.items())
+                .extracting(ParamSetChangeHistoryItem::changeType)
+                .containsExactly("STATUS", "UPDATE", "CREATE");
+        assertThat(page.items().get(1).changedFields()).contains("paramName", "contentJson");
+        assertThat(page.items().get(1).operatorName()).isEqualTo("Zhang Li");
+        assertThat(paramSetChangeHistoryMapper.selectList(null))
+                .extracting(ParamSetChangeHistoryEntity::getParamSetId)
+                .contains(created.id());
+
+        settingsService.deleteParam(created.id(), WORKSPACE_CODE);
+    }
+
+    @Test
+    void paramSetVersionsAreRecordedAndRollbackCreatesNewVersion() {
+        String unique = "settings-param-version-" + System.nanoTime();
+
+        ParamSetItem created = settingsService.createParam(WORKSPACE_CODE, new CreateParamSetRequest(
+                null,
+                "API_VARIABLE_SET",
+                unique + "-param",
+                "{\"variables\":[{\"name\":\"token\",\"value\":\"one\"}]}"
+        ));
+        settingsService.updateParam(created.id(), WORKSPACE_CODE, new CreateParamSetRequest(
+                null,
+                "API_VARIABLE_SET",
+                unique + "-param-updated",
+                "{\"variables\":[{\"name\":\"token\",\"value\":\"two\"}]}"
+        ));
+
+        PageResponse<ParamSetVersionItem> versions = settingsService.listParamVersions(created.id(), WORKSPACE_CODE);
+
+        assertThat(versions.items())
+                .extracting(ParamSetVersionItem::versionNo)
+                .containsExactly(2, 1);
+        assertThat(versions.items().get(0).latest()).isTrue();
+        assertThat(versions.items().get(1).contentJson()).contains("\"one\"");
+
+        ParamSetItem rolledBack = settingsService.rollbackParamVersion(created.id(), versions.items().get(1).id(), WORKSPACE_CODE);
+        PageResponse<ParamSetVersionItem> afterRollback = settingsService.listParamVersions(created.id(), WORKSPACE_CODE);
+
+        assertThat(rolledBack.paramName()).isEqualTo(unique + "-param");
+        assertThat(rolledBack.contentJson()).contains("\"one\"");
+        assertThat(afterRollback.items())
+                .extracting(ParamSetVersionItem::versionNo)
+                .containsExactly(3, 2, 1);
+        assertThat(afterRollback.items().get(0).changeType()).isEqualTo("ROLLBACK");
+        assertThat(afterRollback.items().get(0).latest()).isTrue();
+
+        settingsService.deleteParam(created.id(), WORKSPACE_CODE);
     }
 
     @Test

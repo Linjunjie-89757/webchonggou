@@ -8,6 +8,7 @@ export interface ConfigEnvForm {
   envName: string
   baseUrl: string
   configJson: string
+  description: string
   browserType: 'CHROMIUM' | 'FIREFOX' | 'WEBKIT'
   headless: boolean
   defaultTimeoutMs: number
@@ -15,10 +16,12 @@ export interface ConfigEnvForm {
   viewportHeight: number
   ignoreHttpsErrors: boolean
   defaultVariableSetId: number | null
+  mockApplicationId: number | null
   status: ConfigStatus
 }
 
 interface WebUiEnvConfig {
+  description?: string
   browserType?: string
   headless?: boolean
   defaultTimeoutMs?: number
@@ -28,6 +31,7 @@ interface WebUiEnvConfig {
   }
   ignoreHttpsErrors?: boolean
   defaultVariableSetId?: number | null
+  mockApplicationId?: number | null
 }
 
 export function createDefaultConfigEnvForm(workspaceCode = 'ALL'): ConfigEnvForm {
@@ -37,6 +41,7 @@ export function createDefaultConfigEnvForm(workspaceCode = 'ALL'): ConfigEnvForm
     envName: '',
     baseUrl: '',
     configJson: '',
+    description: '',
     browserType: 'CHROMIUM',
     headless: true,
     defaultTimeoutMs: 10000,
@@ -44,25 +49,28 @@ export function createDefaultConfigEnvForm(workspaceCode = 'ALL'): ConfigEnvForm
     viewportHeight: 900,
     ignoreHttpsErrors: false,
     defaultVariableSetId: null,
+    mockApplicationId: null,
     status: 1,
   }
 }
 
 export function createConfigEnvFormFromItem(item: EnvConfigItem): ConfigEnvForm {
-  const webUiConfig = parseWebUiEnvConfig(item.configJson)
+  const envConfig = parseEnvConfig(item.configJson)
   return {
     workspaceCode: item.workspaceCode || 'ALL',
     envType: item.envType || 'TEST',
     envName: item.envName,
     baseUrl: item.baseUrl,
     configJson: item.configJson ?? '',
-    browserType: normalizeBrowserType(webUiConfig.browserType),
-    headless: webUiConfig.headless !== false,
-    defaultTimeoutMs: clampNumber(webUiConfig.defaultTimeoutMs, 1000, 60000, 10000),
-    viewportWidth: clampNumber(webUiConfig.viewport?.width, 320, 7680, 1440),
-    viewportHeight: clampNumber(webUiConfig.viewport?.height, 240, 4320, 900),
-    ignoreHttpsErrors: webUiConfig.ignoreHttpsErrors === true,
-    defaultVariableSetId: typeof webUiConfig.defaultVariableSetId === 'number' ? webUiConfig.defaultVariableSetId : null,
+    description: envConfig.description || '',
+    browserType: normalizeBrowserType(envConfig.browserType),
+    headless: envConfig.headless !== false,
+    defaultTimeoutMs: clampNumber(envConfig.defaultTimeoutMs ?? envConfig.timeoutMs, 1000, 60000, 10000),
+    viewportWidth: clampNumber(envConfig.viewport?.width, 320, 7680, 1440),
+    viewportHeight: clampNumber(envConfig.viewport?.height, 240, 4320, 900),
+    ignoreHttpsErrors: envConfig.ignoreHttpsErrors === true || envConfig.ignoreSsl === true,
+    defaultVariableSetId: typeof envConfig.defaultVariableSetId === 'number' ? envConfig.defaultVariableSetId : null,
+    mockApplicationId: typeof envConfig.mockApplicationId === 'number' ? envConfig.mockApplicationId : null,
     status: item.status,
   }
 }
@@ -70,6 +78,7 @@ export function createConfigEnvFormFromItem(item: EnvConfigItem): ConfigEnvForm 
 export function buildCreateEnvPayload(form: ConfigEnvForm): CreateEnvPayload {
   const configJson = form.envType === 'WEB_UI'
     ? JSON.stringify({
+        description: form.description.trim(),
         browserType: form.browserType,
         headless: form.headless,
         defaultTimeoutMs: clampNumber(form.defaultTimeoutMs, 1000, 60000, 10000),
@@ -79,8 +88,15 @@ export function buildCreateEnvPayload(form: ConfigEnvForm): CreateEnvPayload {
         },
         ignoreHttpsErrors: form.ignoreHttpsErrors,
         defaultVariableSetId: form.defaultVariableSetId,
+        mockApplicationId: form.mockApplicationId,
       })
-    : form.configJson.trim()
+    : JSON.stringify({
+        description: form.description.trim(),
+        timeoutMs: clampNumber(form.defaultTimeoutMs, 1000, 60000, 10000),
+        ignoreSsl: form.ignoreHttpsErrors,
+        defaultVariableSetId: form.defaultVariableSetId,
+        mockApplicationId: form.mockApplicationId,
+      })
 
   return {
     workspaceCode: form.workspaceCode === 'ALL' ? undefined : form.workspaceCode,
@@ -105,14 +121,20 @@ export function validateConfigEnvForm(form: ConfigEnvForm) {
   return ''
 }
 
-function parseWebUiEnvConfig(configJson: string): WebUiEnvConfig {
+function parseEnvConfig(configJson: string): WebUiEnvConfig & {
+  timeoutMs?: number
+  ignoreSsl?: boolean
+} {
   if (!configJson?.trim()) {
     return {}
   }
   try {
-    return JSON.parse(configJson) as WebUiEnvConfig
+    return JSON.parse(configJson) as WebUiEnvConfig & {
+      timeoutMs?: number
+      ignoreSsl?: boolean
+    }
   } catch {
-    return {}
+    return { description: configJson.trim() }
   }
 }
 

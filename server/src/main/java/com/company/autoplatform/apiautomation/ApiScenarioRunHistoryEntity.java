@@ -68,6 +68,9 @@ public class ApiScenarioRunHistoryEntity extends BaseEntity {
     @TableField("detail_json")
     private String detailJson;
 
+    @TableField("context_snapshot_json")
+    private String contextSnapshotJson;
+
     @TableField("operator_id")
     private Long operatorId;
 

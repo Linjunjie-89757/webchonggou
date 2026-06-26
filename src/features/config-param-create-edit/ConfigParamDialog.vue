@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { configParamTypeOptions, configStatusOptions, type ParamSetItem } from '@/entities/config'
@@ -12,6 +12,7 @@ import {
   createDefaultConfigParamForm,
   createDefaultWebUiVariableSetForm,
   createDefaultWebUiVariable,
+  isVariableSetParamType,
   parseWebUiVariables,
   type ConfigParamDialogMode,
   type ConfigParamForm,
@@ -42,6 +43,7 @@ const form = reactive<ConfigParamForm>(createDefaultConfigParamForm(props.defaul
 const formError = reactive({
   message: '',
 })
+const isVariableSet = computed(() => isVariableSetParamType(form.paramType))
 
 function resetForm() {
   const nextForm =
@@ -143,7 +145,7 @@ watch(
     :model-value="modelValue"
     :title="fixedParamType === 'WEB_UI_VARIABLE_SET'
       ? (mode === 'create' ? '新增变量集' : '编辑变量集')
-      : (mode === 'create' ? '新增参数' : '编辑参数')"
+      : (mode === 'create' ? '新增变量集/参数' : '编辑变量集/参数')"
     width="760px"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -154,10 +156,10 @@ watch(
       </div>
 
       <div class="config-param-dialog__field">
-        <span>参数名 *</span>
+        <span>名称 *</span>
         <el-input
           v-model="form.paramName"
-          :placeholder="fixedParamType === 'WEB_UI_VARIABLE_SET' ? '例如：测试环境管理员变量集' : '例如：REQUEST_TIMEOUT'"
+          :placeholder="isVariableSet ? '例如：订单冒烟变量集' : '例如：REQUEST_TIMEOUT'"
         />
       </div>
 
@@ -176,7 +178,7 @@ watch(
         </div>
       </div>
 
-      <div v-if="form.paramType !== 'WEB_UI_VARIABLE_SET'" class="config-param-dialog__field">
+      <div v-if="!isVariableSet" class="config-param-dialog__field">
         <span>参数值 *</span>
         <el-input
           v-model="form.value"
@@ -185,7 +187,7 @@ watch(
         />
       </div>
 
-      <div v-if="form.paramType !== 'WEB_UI_VARIABLE_SET'" class="config-param-dialog__field">
+      <div v-if="!isVariableSet" class="config-param-dialog__field">
         <span>说明</span>
         <el-input
           v-model="form.description"
@@ -195,7 +197,7 @@ watch(
         />
       </div>
 
-      <label v-if="form.paramType !== 'WEB_UI_VARIABLE_SET'" class="config-param-dialog__checkbox">
+      <label v-if="!isVariableSet" class="config-param-dialog__checkbox">
         <input v-model="form.sensitive" type="checkbox">
         <span>敏感参数（密码、密钥等）</span>
       </label>
@@ -314,7 +316,7 @@ watch(
 
 .config-param-dialog__segment {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
   gap: var(--app-space-2);
 }
 

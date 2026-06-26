@@ -19,6 +19,7 @@ import {
   type WebUiElementCollectFilterDetail,
   type WebUiElementCollectTaskListItem,
   type WebUiElementCollectTaskResponse,
+  type LocalRunnerTaskDetailResponse,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
   type WebUiElementValidateResultItem,
@@ -38,9 +39,12 @@ import {
   openLocalRunnerPage,
   releaseLocalRunnerSession,
   saveLocalRunnerAuth,
+  startLocalRunnerTaskPolling,
+  getLocalRunnerTaskPollingStatus,
   validateLocalRunnerLocators,
   type LocalRunnerAuthStatus,
   type LocalRunnerHealthView,
+  type LocalRunnerTaskPollingStatus,
 } from '@/entities/web-ui-automation/lib/localRunnerClient'
 import {
   buildCollectCandidateSaveSummary,
@@ -119,6 +123,13 @@ type LocalQualityIssue = {
   locatorType?: WebUiLocatorType | null
   locatorValue?: string | null
   usageCount?: number
+}
+type LocalRunnerElementValidateResultRow = {
+  locatorId: string
+  validationStatus: string
+  matchCount: number
+  validationMessage: string | null
+  screenshotBase64: string | null
 }
 type ElementImpactReference = WebUiElementReferenceItem & {
   elementId: number
@@ -217,10 +228,16 @@ const localRunnerAuthSaving = ref(false)
 const localRunnerAuthClearing = ref(false)
 const localRunnerSessionReleasing = ref(false)
 const localRunnerValidating = ref(false)
+const localRunnerElementValidating = ref(false)
+const localRunnerBatchValidating = ref(false)
+const localRunnerTaskPollingStarting = ref(false)
+const localRunnerDebugTaskCreating = ref(false)
 const collectTaskRefreshing = ref(false)
 const collectTaskPolling = ref(false)
 const localRunnerHealth = ref<LocalRunnerHealthView | null>(null)
 const localRunnerAuthStatus = ref<LocalRunnerAuthStatus | null>(null)
+const localRunnerTaskPollingStatus = ref<LocalRunnerTaskPollingStatus | null>(null)
+const localRunnerDebugTask = ref<LocalRunnerTaskDetailResponse | null>(null)
 const aiSaving = ref(false)
 const aiProviderLoading = ref(false)
 const aiProviders = ref<AiProviderConnectionItem[]>([])
@@ -262,6 +279,7 @@ const qualityIssues = ref<WebUiElementQualityIssue[]>([])
 const localQualityIssues = ref<LocalQualityIssue[]>([])
 const qualityIssueFilter = ref<QualityIssueFilter>('ALL')
 const batchValidateResults = ref<WebUiElementValidateResultItem[]>([])
+const batchValidateElementSnapshots = ref<WebUiElementItem[]>([])
 const importJsonText = ref('')
 const batchValidateSummary = reactive({
   totalCount: 0,
@@ -331,6 +349,7 @@ const aiCollectForm = reactive<WebUiElementCollectLaunchForm & {
 })
 const aiCandidateFilter = ref<AiCandidateFilter>('ALL')
 let collectTaskPollingTimer: ReturnType<typeof window.setTimeout> | null = null
+let localRunnerDebugTaskTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const batchMoveForm = reactive({
   pageId: null as number | null,
@@ -1379,6 +1398,14 @@ function previewAiCandidateScreenshot(candidate: AiElementCandidate) {
   window.open(`data:image/png;base64,${candidate.screenshotBase64}`, '_blank', 'noopener,noreferrer')
 }
 
+function previewLocalRunnerDebugScreenshot(screenshotBase64: string) {
+  if (!screenshotBase64) {
+    ElMessage.warning('该验证结果没有截图证据')
+    return
+  }
+  window.open(`data:image/png;base64,${screenshotBase64}`, '_blank', 'noopener,noreferrer')
+}
+
 function applyCollectTaskDetail(taskDetail: WebUiElementCollectTaskResponse, customGroupName: string) {
   const candidates = mapCollectCandidatesToAiCandidates(taskDetail.candidates, customGroupName)
   aiCandidates.value = candidates
@@ -1853,10 +1880,42 @@ function isLocalRunnerSessionLostMessage(message: string) {
   return /No active browser page|Target page|context|browser has been closed|has been closed|active page/i.test(message)
 }
 
+function isLocalRunnerDebugTaskTerminal(status?: string | null) {
+  return ['SUCCESS', 'FAILED', 'DEGRADED', 'CANCELED', 'TIMEOUT', 'RUNNER_OFFLINE'].includes(String(status || '').toUpperCase())
+}
+
+function stopLocalRunnerDebugTaskRefresh() {
+  if (localRunnerDebugTaskTimer) {
+    window.clearTimeout(localRunnerDebugTaskTimer)
+    localRunnerDebugTaskTimer = null
+  }
+}
+
+function scheduleLocalRunnerDebugTaskRefresh(runId: string) {
+  stopLocalRunnerDebugTaskRefresh()
+  if (!runId || isLocalRunnerDebugTaskTerminal(localRunnerDebugTask.value?.status)) {
+    return
+  }
+  localRunnerDebugTaskTimer = window.setTimeout(async () => {
+    localRunnerDebugTaskTimer = null
+    try {
+      await refreshLocalRunnerDebugTask(true)
+      if (aiCollectDrawerVisible.value && !isLocalRunnerDebugTaskTerminal(localRunnerDebugTask.value?.status)) {
+        scheduleLocalRunnerDebugTaskRefresh(runId)
+      }
+    } catch {
+      if (aiCollectDrawerVisible.value) {
+        scheduleLocalRunnerDebugTaskRefresh(runId)
+      }
+    }
+  }, 2000)
+}
+
 async function refreshLocalRunnerHealth(options: { silent?: boolean } = {}) {
   localRunnerChecking.value = true
   try {
     localRunnerHealth.value = await checkLocalRunnerHealth()
+    await refreshLocalRunnerTaskPollingStatus(true)
     await refreshLocalRunnerAuthStatus()
     const status = buildLocalRunnerStatusView({
       health: localRunnerHealth.value,
@@ -1882,6 +1941,17 @@ async function refreshLocalRunnerHealth(options: { silent?: boolean } = {}) {
     }
   } finally {
     localRunnerChecking.value = false
+  }
+}
+
+async function refreshLocalRunnerTaskPollingStatus(silent = false) {
+  try {
+    localRunnerTaskPollingStatus.value = await getLocalRunnerTaskPollingStatus()
+  } catch (error) {
+    localRunnerTaskPollingStatus.value = null
+    if (!silent) {
+      ElMessage.warning(`任务轮询状态读取失败：${getRequestErrorMessage(error)}`)
+    }
   }
 }
 
@@ -1938,6 +2008,135 @@ async function openLocalRunnerCollectPage() {
     ElMessage.error(`打开本地页面失败：${getRequestErrorMessage(error)}`)
   } finally {
     localRunnerOpening.value = false
+  }
+}
+
+async function startLocalRunnerGenericTaskPolling() {
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  const workspaceCode = moduleItem?.workspaceCode || props.workspaceCode || 'ALL'
+  localRunnerTaskPollingStarting.value = true
+  try {
+    localRunnerTaskPollingStatus.value = await startLocalRunnerTaskPolling({
+      installId: `web-ui-${workspaceCode}`,
+      capabilities: ['WEB_ELEMENT_VALIDATE'],
+      workspaceCodes: workspaceCode === 'ALL' ? [] : [workspaceCode],
+      intervalMs: 2000,
+    })
+    ElMessage.success('Runner 通用任务轮询已启动')
+  } catch (error) {
+    ElMessage.error(`启动 Runner 任务轮询失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerTaskPollingStarting.value = false
+  }
+}
+
+function isLocalRunnerTaskPollingReadyForWorkspace(status: LocalRunnerTaskPollingStatus | null, workspaceCode: string) {
+  const poller = status?.poller
+  if (!poller?.runnerId || poller.running === false) {
+    return false
+  }
+  if (!poller.capabilities.includes('WEB_ELEMENT_VALIDATE')) {
+    return false
+  }
+  if (workspaceCode === 'ALL') {
+    return !poller.workspaceCodes.length
+  }
+  return !poller.workspaceCodes.length || poller.workspaceCodes.includes(workspaceCode)
+}
+
+async function ensureLocalRunnerGenericTaskPolling(workspaceCode: string) {
+  await refreshLocalRunnerTaskPollingStatus(true)
+  const currentStatus = localRunnerTaskPollingStatus.value
+  if (isLocalRunnerTaskPollingReadyForWorkspace(currentStatus, workspaceCode) && currentStatus) {
+    return currentStatus
+  }
+  const startedStatus = await startLocalRunnerTaskPolling({
+    installId: `web-ui-${workspaceCode}`,
+    capabilities: ['WEB_ELEMENT_VALIDATE'],
+    workspaceCodes: workspaceCode === 'ALL' ? [] : [workspaceCode],
+    intervalMs: 2000,
+  })
+  localRunnerTaskPollingStatus.value = startedStatus
+  return startedStatus
+}
+
+async function createLocalRunnerDebugValidateTask() {
+  const moduleItem = modules.value.find(item => item.id === aiCollectForm.moduleId)
+  if (!moduleItem) {
+    ElMessage.warning('请选择所属模块')
+    return
+  }
+
+  localRunnerDebugTaskCreating.value = true
+  try {
+    await refreshLocalRunnerHealth({ silent: true })
+    if (!localRunnerHealth.value?.currentUrl) {
+      ElMessage.warning('请先用 Runner 打开目标页，或在本地浏览器手动进入目标业务页面')
+      return
+    }
+
+    const polling = await ensureLocalRunnerGenericTaskPolling(moduleItem.workspaceCode)
+    const runnerId = polling.poller?.runnerId
+    if (!runnerId) {
+      throw new Error('Runner 任务轮询未返回 runnerId')
+    }
+
+    const result = await captureLocalRunnerPage(100)
+    const locators = result.candidates
+      .map((candidate, index) => ({
+        locatorId: `debug-candidate-${index + 1}`,
+        locatorType: candidate.locator?.strategy || 'CSS',
+        locatorValue: candidate.locator?.value || '',
+      }))
+      .filter(item => item.locatorValue.trim())
+      .slice(0, 10)
+
+    if (!locators.length) {
+      ElMessage.warning('当前页面没有可用于调试验证的候选定位器')
+      return
+    }
+
+    const task = await webUiAutomationApi.createLocalRunnerDebugTask(moduleItem.workspaceCode, {
+      runId: `debug-web-element-validate-${Date.now()}`,
+      taskType: 'WEB_ELEMENT_VALIDATE',
+      runnerId,
+      resourceCost: 3,
+      payload: {
+        pageUrl: result.page?.url || localRunnerHealth.value.currentUrl || '',
+        locators,
+      },
+    })
+    localRunnerDebugTask.value = task
+    scheduleLocalRunnerDebugTaskRefresh(task.runId)
+    ElMessage.success(`验证任务 ${task.runId} 已创建，Runner 会自动拉取执行`)
+  } catch (error) {
+    ElMessage.error(`创建验证任务失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerDebugTaskCreating.value = false
+  }
+}
+
+async function refreshLocalRunnerDebugTask(silent = false) {
+  const runId = localRunnerDebugTask.value?.runId
+  if (!runId) {
+    if (!silent) {
+      ElMessage.warning('暂无可刷新的验证任务')
+    }
+    return null
+  }
+  try {
+    const task = await webUiAutomationApi.getLocalRunnerDebugTask(runId)
+    localRunnerDebugTask.value = task
+    await refreshLocalRunnerTaskPollingStatus(true)
+    if (!silent) {
+      ElMessage.success('验证任务状态已刷新')
+    }
+    return task
+  } catch (error) {
+    if (!silent) {
+      ElMessage.error(`刷新验证任务失败：${getRequestErrorMessage(error)}`)
+    }
+    throw error
   }
 }
 
@@ -2722,6 +2921,7 @@ async function batchValidateElements() {
       headless: environment.headless ?? true,
       timeoutMs: environment.defaultTimeoutMs || 10000,
     }
+    batchValidateElementSnapshots.value = [...selectedElements.value]
     const result = await webUiAutomationApi.batchValidateElements(currentQueryWorkspaceCode.value, {
       elementIds: selectedElements.value.map(item => item.id),
       ...options,
@@ -2730,7 +2930,7 @@ async function batchValidateElements() {
     batchValidateSummary.totalCount = result.totalCount
     batchValidateSummary.passedCount = result.passedCount
     batchValidateSummary.failedCount = result.failedCount
-    batchValidateResults.value = result.results
+    batchValidateResults.value = enrichBatchValidateResultRows(result.results)
     batchValidateFilter.value = result.failedCount ? 'FAILED' : 'ALL'
     batchValidateDrawerVisible.value = true
     ElMessage[result.failedCount ? 'warning' : 'success'](
@@ -2749,6 +2949,62 @@ function focusBatchValidateElement(item: WebUiElementValidateResultItem) {
   pageNo.value = 1
   batchValidateDrawerVisible.value = false
   void loadElements()
+}
+
+function enrichBatchValidateResultRows(rows: WebUiElementValidateResultItem[]) {
+  return rows.map((row) => {
+    const target = findBatchValidateElementSnapshot(row.elementId)
+    return {
+      ...row,
+      locatorType: row.locatorType || target?.locatorType || null,
+      locatorValue: row.locatorValue || target?.locatorValue || null,
+    }
+  })
+}
+
+function openBatchValidateElementDetail(item: WebUiElementValidateResultItem) {
+  const target = elements.value.find(element => element.id === item.elementId)
+    || findBatchValidateElementSnapshot(item.elementId)
+  if (!target) {
+    focusBatchValidateElement(item)
+    ElMessage.warning('已定位到元素列表，请重新打开详情')
+    return
+  }
+  batchValidateDrawerVisible.value = false
+  openDetailDrawer(target)
+}
+
+async function copyBatchValidateLocator(item: WebUiElementValidateResultItem) {
+  if (!item.locatorValue) {
+    ElMessage.warning('该结果没有可复制的定位器')
+    return
+  }
+  const text = item.locatorType ? `${item.locatorType}: ${item.locatorValue}` : item.locatorValue
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('定位器已复制')
+  } catch (error) {
+    ElMessage.error(`复制定位器失败：${getRequestErrorMessage(error)}`)
+  }
+}
+
+async function reopenBatchValidateRunnerPage(item: WebUiElementValidateResultItem) {
+  if (!item.runnerPageUrl) {
+    ElMessage.warning('该结果没有 Runner 页面地址')
+    return
+  }
+  try {
+    const target = findBatchValidateElementSnapshot(item.elementId)
+    await openLocalRunnerPage({
+      url: item.runnerPageUrl,
+      workspaceId: target?.workspaceCode || props.workspaceCode || currentQueryWorkspaceCode.value,
+      environmentId: aiCollectForm.environmentId || 'manual',
+    })
+    await refreshLocalRunnerHealth({ silent: true })
+    ElMessage.success('已重新打开 Runner 页面')
+  } catch (error) {
+    ElMessage.error(`重新打开 Runner 页面失败：${getRequestErrorMessage(error)}`)
+  }
 }
 
 function getBatchValidateImageSrc(item: WebUiElementValidateResultItem) {
@@ -2812,6 +3068,9 @@ async function retryFailedBatchValidateElements() {
 
   batchOperating.value = true
   try {
+    batchValidateElementSnapshots.value = failedBatchValidateResults.value
+      .map(item => findBatchValidateElementSnapshot(item.elementId))
+      .filter((item): item is WebUiElementItem => Boolean(item))
     const result = await webUiAutomationApi.batchValidateElements(currentQueryWorkspaceCode.value, {
       elementIds: failedBatchValidateResults.value.map(item => item.elementId),
       ...lastBatchValidateOptions.value,
@@ -2819,7 +3078,7 @@ async function retryFailedBatchValidateElements() {
     batchValidateSummary.totalCount = result.totalCount
     batchValidateSummary.passedCount = result.passedCount
     batchValidateSummary.failedCount = result.failedCount
-    batchValidateResults.value = result.results
+    batchValidateResults.value = enrichBatchValidateResultRows(result.results)
     batchValidateFilter.value = result.failedCount ? 'FAILED' : 'ALL'
     ElMessage[result.failedCount ? 'warning' : 'success'](
       `失败项重试完成，通过 ${result.passedCount} 个，失败 ${result.failedCount} 个`,
@@ -3557,6 +3816,331 @@ async function submitValidateElement() {
   }
 }
 
+function getLocalRunnerElementValidateResultRows(task: LocalRunnerTaskDetailResponse): LocalRunnerElementValidateResultRow[] {
+  const result = task.result as {
+    reportData?: {
+      results?: unknown[]
+    }
+  } | null
+  const rows = Array.isArray(result?.reportData?.results) ? result.reportData.results : []
+  return rows
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
+    .map(row => ({
+      locatorId: String(row.locatorId || ''),
+      validationStatus: String(row.validationStatus || 'UNVERIFIED'),
+      matchCount: Number(row.matchCount || 0),
+      validationMessage: typeof row.validationMessage === 'string' ? row.validationMessage : null,
+      screenshotBase64: typeof row.screenshotBase64 === 'string' ? row.screenshotBase64 : null,
+    }))
+}
+
+function getLocalRunnerElementValidateResult(task: LocalRunnerTaskDetailResponse): LocalRunnerElementValidateResultRow | null {
+  return getLocalRunnerElementValidateResultRows(task)[0] || null
+}
+
+async function waitForLocalRunnerElementValidateTask(runId: string, timeoutMs = 45_000) {
+  let task = await webUiAutomationApi.getLocalRunnerDebugTask(runId)
+  const deadline = Date.now() + timeoutMs
+
+  while (!isLocalRunnerDebugTaskTerminal(task.status) && Date.now() < deadline) {
+    await new Promise(resolve => window.setTimeout(resolve, 1000))
+    task = await webUiAutomationApi.getLocalRunnerDebugTask(runId)
+  }
+
+  return task
+}
+
+async function submitValidateElementWithLocalRunner() {
+  const target = validateTarget.value
+  if (!target) {
+    return
+  }
+
+  localRunnerElementValidating.value = true
+  try {
+    await refreshLocalRunnerHealth({ silent: true })
+    if (!localRunnerHealth.value?.online) {
+      ElMessage.warning('请先启动并检测本地 Runner')
+      return
+    }
+    if (!localRunnerHealth.value.currentUrl) {
+      ElMessage.warning('请先用 Runner 打开目标页，或在本地浏览器手动进入目标业务页面')
+      return
+    }
+    if (localRunnerHealth.value.pageAlive === false) {
+      ElMessage.warning('Runner 当前页面已失效，请重新打开目标页后再验证')
+      return
+    }
+
+    const workspaceCode = target.workspaceCode || props.workspaceCode || 'ALL'
+    const polling = await ensureLocalRunnerGenericTaskPolling(workspaceCode)
+    const runnerId = polling.poller?.runnerId
+    if (!runnerId) {
+      throw new Error('Runner 任务轮询未返回 runnerId')
+    }
+
+    const task = await webUiAutomationApi.createLocalRunnerDebugTask(workspaceCode, {
+      runId: `element-validate-${target.id}-${Date.now()}`,
+      taskType: 'WEB_ELEMENT_VALIDATE',
+      runnerId,
+      resourceCost: 3,
+      payload: {
+        pageUrl: localRunnerHealth.value.currentUrl,
+        locators: [
+          {
+            locatorId: `element-${target.id}`,
+            elementId: target.id,
+            locatorType: target.locatorType,
+            locatorValue: target.locatorValue,
+          },
+        ],
+      },
+    })
+    const completedTask = await waitForLocalRunnerElementValidateTask(task.runId)
+    const row = getLocalRunnerElementValidateResult(completedTask)
+    const matched = row?.validationStatus === 'PASSED'
+    const matchCount = row?.matchCount ?? 0
+    const errorMessage = matched
+      ? row?.validationMessage || null
+      : row?.validationMessage || completedTask.errorMessage || (isLocalRunnerDebugTaskTerminal(completedTask.status) ? '本地 Runner 未匹配到唯一元素' : '本地 Runner 验证任务仍在执行，请稍后刷新或重试')
+    const appliedResult = row
+      ? await webUiAutomationApi.applyLocalRunnerElementValidationResult(workspaceCode, target.id, {
+          matched,
+          matchCount,
+          errorMessage,
+          screenshotBase64: row.screenshotBase64,
+          runnerRunId: completedTask.runId,
+        })
+      : null
+
+    validateResult.value = {
+      matched: appliedResult?.matched ?? matched,
+      matchCount: appliedResult?.matchCount ?? matchCount,
+      errorMessage: appliedResult?.errorMessage ?? errorMessage,
+      screenshotBase64: appliedResult?.screenshotBase64 || row?.screenshotBase64 || null,
+      runnerRunId: appliedResult?.runnerRunId || completedTask.runId,
+    }
+    const messageText = matched ? `本地 Runner 验证通过，匹配 ${matchCount} 个元素` : errorMessage || '本地 Runner 验证未通过'
+    ElMessage[matched ? 'success' : 'warning'](
+      messageText,
+    )
+    if (row) {
+      await reloadAll()
+    }
+  } catch (error) {
+    ElMessage.error(`本地 Runner 验证失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerElementValidating.value = false
+  }
+}
+
+function findBatchValidateElementSnapshot(elementId: number) {
+  return batchValidateElementSnapshots.value.find(item => item.id === elementId)
+    || selectedElements.value.find(item => item.id === elementId)
+    || elements.value.find(item => item.id === elementId)
+    || null
+}
+
+function getBatchLocalRunnerTargets(scope: 'SELECTED' | 'ALL_RESULTS' | 'FAILED_RESULTS') {
+  if (scope === 'SELECTED') {
+    return selectedElements.value
+  }
+
+  const sourceResults = scope === 'FAILED_RESULTS' ? failedBatchValidateResults.value : batchValidateResults.value
+  const seen = new Set<number>()
+  return sourceResults
+    .map(item => findBatchValidateElementSnapshot(item.elementId))
+    .filter((item): item is WebUiElementItem => Boolean(item && !seen.has(item.id) && seen.add(item.id)))
+}
+
+function escapeLocalRunnerConfirmHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function formatLocalRunnerTraceDateTime(date = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('-') + `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+async function confirmLocalRunnerBatchValidation(options: {
+  currentUrl: string
+  pageTitle?: string | null
+  targetCount: number
+  locatorCount: number
+  scope: 'SELECTED' | 'ALL_RESULTS' | 'FAILED_RESULTS'
+}) {
+  const scopeText = options.scope === 'FAILED_RESULTS'
+    ? '当前失败项'
+    : options.scope === 'ALL_RESULTS'
+      ? '当前抽屉结果'
+      : '已勾选元素'
+  const pageTitle = options.pageTitle?.trim() || '-'
+  const message = [
+    `<p>本次会在 <strong>Runner 当前页面</strong> 上执行真机验证，请确认页面是否正确。</p>`,
+    `<p>当前页面：<span class="web-ui-local-runner-confirm-url">${escapeLocalRunnerConfirmHtml(options.currentUrl)}</span></p>`,
+    `<p>页面标题：${escapeLocalRunnerConfirmHtml(pageTitle)}</p>`,
+    `<p>验证范围：${scopeText}，元素 ${options.targetCount} 个，定位器 ${options.locatorCount} 个。</p>`,
+  ].join('')
+
+  try {
+    await ElMessageBox.confirm(
+      `<div class="web-ui-local-runner-confirm">${message}</div>`,
+      '确认本地批量验证',
+      {
+        confirmButtonText: '开始验证',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: true,
+        type: 'warning',
+      },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function batchValidateWithLocalRunner(scope: 'SELECTED' | 'ALL_RESULTS' | 'FAILED_RESULTS') {
+  const targets = getBatchLocalRunnerTargets(scope)
+  if (!targets.length) {
+    ElMessage.warning(scope === 'SELECTED' ? '请先选择元素' : '当前结果里没有可本地验证的元素')
+    return
+  }
+
+  const locators = targets
+    .filter(item => item.locatorValue.trim())
+    .map(item => ({
+      locatorId: `element-${item.id}`,
+      elementId: item.id,
+      locatorType: item.locatorType,
+      locatorValue: item.locatorValue,
+    }))
+  if (!locators.length) {
+    ElMessage.warning('选中元素缺少有效定位器，无法本地验证')
+    return
+  }
+
+  localRunnerBatchValidating.value = true
+  try {
+    await refreshLocalRunnerHealth({ silent: true })
+    if (!localRunnerHealth.value?.online) {
+      ElMessage.warning('请先启动并检测本地 Runner')
+      return
+    }
+    if (!localRunnerHealth.value.currentUrl) {
+      ElMessage.warning('请先用 Runner 打开目标页，或在本地浏览器手动进入目标业务页面')
+      return
+    }
+    if (localRunnerHealth.value.pageAlive === false) {
+      ElMessage.warning('Runner 当前页面已失效，请重新打开目标页后再验证')
+      return
+    }
+    const confirmed = await confirmLocalRunnerBatchValidation({
+      currentUrl: localRunnerHealth.value.currentUrl,
+      pageTitle: localRunnerHealth.value.pageTitle,
+      targetCount: targets.length,
+      locatorCount: locators.length,
+      scope,
+    })
+    if (!confirmed) {
+      return
+    }
+
+    const targetWorkspaceCodes = Array.from(new Set(
+      targets
+        .map(item => item.workspaceCode)
+        .filter((workspaceCode): workspaceCode is string => Boolean(workspaceCode && workspaceCode !== 'ALL')),
+    ))
+    const taskWorkspaceCode = targetWorkspaceCodes.length === 1 ? targetWorkspaceCodes[0] : currentQueryWorkspaceCode.value || 'ALL'
+    const polling = await ensureLocalRunnerGenericTaskPolling(taskWorkspaceCode)
+    const runnerId = polling.poller?.runnerId
+    if (!runnerId) {
+      throw new Error('Runner 任务轮询未返回 runnerId')
+    }
+
+    const validationPageUrl = localRunnerHealth.value.currentUrl
+    const task = await webUiAutomationApi.createLocalRunnerDebugTask(taskWorkspaceCode, {
+      runId: `batch-element-validate-${Date.now()}`,
+      taskType: 'WEB_ELEMENT_VALIDATE',
+      runnerId,
+      resourceCost: Math.min(10, Math.max(3, Math.ceil(locators.length / 20))),
+      payload: {
+        pageUrl: validationPageUrl,
+        locators,
+      },
+    })
+    const completedTask = await waitForLocalRunnerElementValidateTask(task.runId, 90_000)
+    const rows = getLocalRunnerElementValidateResultRows(completedTask)
+    const rowsByLocatorId = new Map(rows.map(row => [row.locatorId, row]))
+    const nextResults: WebUiElementValidateResultItem[] = []
+    let appliedCount = 0
+    const validatedAt = formatLocalRunnerTraceDateTime()
+
+    for (const target of targets) {
+      const row = rowsByLocatorId.get(`element-${target.id}`) || null
+      const matched = row?.validationStatus === 'PASSED'
+      const matchCount = row?.matchCount ?? 0
+      const errorMessage = row
+        ? (matched ? row.validationMessage || null : row.validationMessage || '本地 Runner 未匹配到唯一元素')
+        : (isLocalRunnerDebugTaskTerminal(completedTask.status) ? '未收到本地 Runner 验证结果' : '本地 Runner 验证任务仍在执行，请稍后重试')
+      const appliedResult = row
+        ? await webUiAutomationApi.applyLocalRunnerElementValidationResult(target.workspaceCode || taskWorkspaceCode, target.id, {
+            matched,
+            matchCount,
+            errorMessage,
+            screenshotBase64: row.screenshotBase64,
+            runnerRunId: completedTask.runId,
+          })
+        : null
+      if (row) {
+        appliedCount += 1
+      }
+      nextResults.push({
+        elementId: target.id,
+        elementName: target.elementName,
+        matched: appliedResult?.matched ?? matched,
+        matchCount: appliedResult?.matchCount ?? matchCount,
+        errorMessage: appliedResult?.errorMessage ?? errorMessage,
+        screenshotBase64: appliedResult?.screenshotBase64 || row?.screenshotBase64 || null,
+        locatorType: target.locatorType,
+        locatorValue: target.locatorValue,
+        validationSource: 'LOCAL_RUNNER',
+        runnerRunId: appliedResult?.runnerRunId || completedTask.runId,
+        runnerPageUrl: validationPageUrl,
+        validatedAt,
+        runnerTaskStatus: completedTask.status,
+      })
+    }
+
+    const passedCount = nextResults.filter(item => item.matched).length
+    batchValidateElementSnapshots.value = targets
+    batchValidateSummary.totalCount = nextResults.length
+    batchValidateSummary.passedCount = passedCount
+    batchValidateSummary.failedCount = nextResults.length - passedCount
+    batchValidateResults.value = nextResults
+    batchValidateFilter.value = batchValidateSummary.failedCount ? 'FAILED' : 'ALL'
+    batchValidateDrawerVisible.value = true
+    ElMessage[batchValidateSummary.failedCount ? 'warning' : 'success'](
+      `本地批量验证完成，写回 ${appliedCount} 个，通过 ${batchValidateSummary.passedCount} 个，失败 ${batchValidateSummary.failedCount} 个`,
+    )
+    if (appliedCount > 0) {
+      await reloadAll()
+    }
+  } catch (error) {
+    ElMessage.error(`本地批量验证失败：${getRequestErrorMessage(error)}`)
+  } finally {
+    localRunnerBatchValidating.value = false
+  }
+}
+
 function handlePageChange(value: number) {
   pageNo.value = value
   void loadElements()
@@ -3608,8 +4192,12 @@ watch(
   (visible) => {
     if (!visible) {
       stopCollectTaskPolling()
+      stopLocalRunnerDebugTaskRefresh()
     } else {
       scheduleCollectTaskPolling()
+      if (localRunnerDebugTask.value && !isLocalRunnerDebugTaskTerminal(localRunnerDebugTask.value.status)) {
+        scheduleLocalRunnerDebugTaskRefresh(localRunnerDebugTask.value.runId)
+      }
     }
   },
 )
@@ -3638,6 +4226,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopCollectTaskPolling()
+  stopLocalRunnerDebugTaskRefresh()
 })
 </script>
 
@@ -3691,6 +4280,7 @@ onBeforeUnmount(() => {
           <AppButton size="small" :loading="batchOperating" @click="batchDisableElements">批量停用</AppButton>
           <AppButton size="small" :loading="batchOperating" @click="openBatchMoveDialog">移动分组</AppButton>
           <AppButton size="small" :loading="batchOperating" @click="batchValidateElements">批量验证</AppButton>
+          <AppButton size="small" :loading="localRunnerBatchValidating" @click="batchValidateWithLocalRunner('SELECTED')">本地批量验证</AppButton>
           <AppButton size="small" :loading="loadingImpactReferences" @click="openImpactDrawer()">影响分析</AppButton>
           <AppButton size="small" type="danger" :loading="batchOperating" @click="batchDeleteElements">批量删除</AppButton>
         </div>
@@ -3741,12 +4331,14 @@ onBeforeUnmount(() => {
       :validate-failure-hint="getValidateFailureHint(validateResult)"
       :validate-image-src="validateImageSrc"
       :validating="validatingId !== null"
+      :local-runner-validating="localRunnerElementValidating"
       @batch-page-change="handleBatchMovePageChange"
       @validate-environment-change="handleValidateEnvironmentChange"
       @submit-batch-move="submitBatchMove"
       @submit-import="importElementsFromJson"
       @preview-validate-screenshot="previewValidateScreenshot"
       @submit-validate="submitValidateElement"
+      @submit-local-runner-validate="submitValidateElementWithLocalRunner"
     />
 
     <WebUiElementStructureDialogs
@@ -3783,12 +4375,19 @@ onBeforeUnmount(() => {
       :summary="batchValidateSummary"
       :filter="batchValidateFilter"
       :results="visibleBatchValidateResults"
+      :all-results="batchValidateResults"
       :failed-count="failedBatchValidateResults.length"
       :operating="batchOperating"
+      :local-runner-operating="localRunnerBatchValidating"
       @filter-change="setBatchValidateFilter"
       @preview-screenshot="previewBatchValidateScreenshot"
       @focus="focusBatchValidateElement"
+      @detail="openBatchValidateElementDetail"
+      @copy-locator="copyBatchValidateLocator"
+      @reopen-runner-page="reopenBatchValidateRunnerPage"
       @retry="retryFailedBatchValidateElements"
+      @local-runner-validate-all="batchValidateWithLocalRunner('ALL_RESULTS')"
+      @local-runner-validate-failed="batchValidateWithLocalRunner('FAILED_RESULTS')"
     />
 
     <WebUiElementQualityDrawer
@@ -3909,6 +4508,10 @@ onBeforeUnmount(() => {
       :local-runner-capturing="localRunnerCapturing"
       :local-runner-validating="localRunnerValidating"
       :local-runner-health="localRunnerHealth"
+      :local-runner-task-polling-status="localRunnerTaskPollingStatus"
+      :local-runner-task-polling-starting="localRunnerTaskPollingStarting"
+      :local-runner-debug-task-creating="localRunnerDebugTaskCreating"
+      :local-runner-debug-task="localRunnerDebugTask"
       :saving="aiSaving"
       @module-change="handleAiModuleChange"
       @page-change="handleAiPageChange"
@@ -3917,6 +4520,10 @@ onBeforeUnmount(() => {
       @generate="generateAiCandidates"
       @check-local-runner="checkLocalRunner"
       @open-local-runner-page="openLocalRunnerCollectPage"
+      @start-task-polling="startLocalRunnerGenericTaskPolling"
+      @create-debug-validate-task="createLocalRunnerDebugValidateTask"
+      @refresh-debug-task="() => refreshLocalRunnerDebugTask(false)"
+      @preview-debug-screenshot="previewLocalRunnerDebugScreenshot"
       @capture-local-runner-page="captureLocalRunnerCandidates"
       @refresh-collect-task="refreshCurrentCollectTask"
       @cancel-collect-task="cancelCurrentCollectTask"
@@ -3974,6 +4581,15 @@ onBeforeUnmount(() => {
 .web-ui-element-library :deep(.el-select),
 .web-ui-element-library :deep(.el-input-number) {
   width: 100%;
+}
+
+:global(.web-ui-local-runner-confirm p) {
+  margin: 0 0 var(--app-space-2);
+  line-height: 1.6;
+}
+
+:global(.web-ui-local-runner-confirm-url) {
+  word-break: break-all;
 }
 
 @media (max-width: 1100px) {

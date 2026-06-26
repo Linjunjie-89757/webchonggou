@@ -174,7 +174,7 @@ const activeSuiteName = computed(() => {
   if (activeSuiteDetail.value) return activeSuiteDetail.value.name
   const activeNode = findSuiteNode(executionSuiteTree.value, activeSuiteId.value)
   if (activeNode?.type === 'suite') return activeNode.label
-  return '閺堫亪鈧瀚ㄦ總妞炬'
+  return '未保存套件'
 })
 
 const activeSuiteKey = computed(() => activeSuiteDetail.value ? `suite:${activeSuiteDetail.value.id}` : EXECUTION_SUITE_LIST_KEY)
@@ -293,16 +293,16 @@ const visibleExecutionSuites = computed(() => {
 
 const executionSuiteListTitle = computed(() => {
   const node = activeSuiteListNode.value
-  if (node?.type === 'workspace') return `${node.label}濂椾欢`
+  if (node?.type === 'workspace') return `${node.label}套件`
   if (node?.type === 'module') return node.label
-  return '濂椾欢鍒楄〃'
+  return '套件列表'
 })
 
 const executionSuiteListSubtitle = computed(() => {
   const node = activeSuiteListNode.value
-  if (node?.type === 'workspace') return '灞曠ず褰撳墠绌洪棿涓嬬殑鎵ц濂椾欢'
-  if (node?.type === 'module') return '灞曠ず褰撳墠妯″潡鍙婂瓙妯″潡涓嬬殑鎵ц濂椾欢'
-  return '灞曠ず鍏ㄩ儴鎵ц濂椾欢锛屾敮鎸佹墦寮€銆佽繍琛屽拰缁存姢缂栨帓'
+  if (node?.type === 'workspace') return '展示当前空间下的执行套件'
+  if (node?.type === 'module') return '展示当前模块及子模块下的执行套件'
+  return '展示全部执行套件，支持打开、运行和维护编排'
 })
 
 const filteredSuiteTree = computed(() => {
@@ -978,7 +978,7 @@ async function deleteArrangeItem(row: ExecutionSuiteCase) {
   }
   try {
     await apiExecutionSuiteApi.deleteSuiteItem(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id, row.arrangeId)
-    ElMessage.success('缂栨帓椤瑰凡鍒犻櫎')
+    ElMessage.success('编排项已删除')
     await loadSuiteArrangeItems()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1095,7 +1095,7 @@ function runResultClass(result: string | null) {
 
 function resolveActionWorkspaceCode() {
   if (!props.workspaceCode || props.workspaceCode === 'ALL') {
-    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀鎿嶄綔')
+    ElMessage.warning('请选择具体工作空间后再操作')
     return ''
   }
   return props.workspaceCode
@@ -1159,11 +1159,11 @@ function getRequestErrorMessage(error: unknown) {
 
 async function handleRunSuite() {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀杩愯濂椾欢')
+    ElMessage.warning('请选择具体工作空间后再运行套件')
     return
   }
   if (!activeSuiteDetail.value) {
-    ElMessage.warning('璇峰厛閫夋嫨鎵ц濂椾欢')
+    ElMessage.warning('请先选择执行套件')
     return
   }
   if (isActiveSuiteDraft.value) {
@@ -1193,7 +1193,7 @@ async function handleRunSuite() {
 
 async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀杩愯濂椾欢')
+    ElMessage.warning('请选择具体工作空间后再运行套件')
     return
   }
   suiteRunning.value = true
@@ -1219,11 +1219,11 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
 
 async function handleSaveSuite() {
   if (props.workspaceCode === 'ALL') {
-    ElMessage.warning('璇烽€夋嫨鍏蜂綋宸ヤ綔绌洪棿鍚庡啀淇濆瓨濂椾欢')
+    ElMessage.warning('请选择具体工作空间后再保存套件')
     return
   }
   if (!activeSuiteDetail.value) {
-    ElMessage.warning('璇峰厛閫夋嫨鎵ц濂椾欢')
+    ElMessage.warning('请先选择执行套件')
     return
   }
   if (!validateSuiteBeforeSave()) return
@@ -1434,7 +1434,7 @@ function showPending(message: string) {
           </template>
         </el-tree>
         <div v-else class="execution-suite-empty">
-          鏆傛棤鎵ц濂椾欢
+          暂无执行套件
         </div>
       </div>
     </aside>
@@ -1446,7 +1446,7 @@ function showPending(message: string) {
           type="button"
           class="execution-tab-scroll-button"
           :disabled="suiteTabOverflow.arrivedLeft"
-          aria-label="鍚戝乏婊氬姩濂椾欢鏍囩"
+          aria-label="向左滚动套件标签"
           @click="scrollSuiteTabStrip('left')"
         >
           <el-icon><ArrowLeft /></el-icon>
@@ -1478,12 +1478,12 @@ function showPending(message: string) {
           type="button"
           class="execution-tab-scroll-button"
           :disabled="suiteTabOverflow.arrivedRight"
-          aria-label="鍚戝彸婊氬姩濂椾欢鏍囩"
+          aria-label="向右滚动套件标签"
           @click="scrollSuiteTabStrip('right')"
         >
           <el-icon><ArrowRight /></el-icon>
         </button>
-        <button type="button" class="execution-tab-icon" aria-label="閺傛澘缂撴總妞炬" @click="handleCreateSuite">
+        <button type="button" class="execution-tab-icon" aria-label="新建套件" @click="handleCreateSuite">
           <el-icon><ElPlus /></el-icon>
         </button>
         <el-dropdown
@@ -1491,7 +1491,7 @@ function showPending(message: string) {
           popper-class="execution-suite-more-menu"
           @command="handleSuiteMoreCommand"
         >
-          <button type="button" class="execution-tab-icon" aria-label="鏇村濂椾欢鎿嶄綔">
+          <button type="button" class="execution-tab-icon" aria-label="更多套件操作">
             <MoreHorizontal />
           </button>
           <template #dropdown>
@@ -1580,11 +1580,11 @@ function showPending(message: string) {
               <div>
                 <button type="button" @click="openArrangePicker('api')">
                   <Plus />
-                  娣诲姞鎺ュ彛鐢ㄤ緥
+                  添加接口用例
                 </button>
                 <button type="button" @click="openArrangePicker('scene')">
                   <Plus />
-                  娣诲姞鍦烘櫙
+                  添加场景
                 </button>
               </div>
             </div>
@@ -1753,16 +1753,16 @@ function showPending(message: string) {
         <aside class="execution-config-panel">
           <div class="execution-config-card">
             <div class="execution-config-head">
-              <el-select v-model="executionVisualEnvironment" placeholder="寮€鍚?UAT" class="execution-config-select">
+              <el-select v-model="executionVisualEnvironment" placeholder="选择运行环境" class="execution-config-select">
                 <el-option
                   v-for="environment in visibleEnvironmentOptions"
                   :key="environment.id"
                   :label="environment.name"
                   :value="environment.id"
                 />
-                <el-option v-if="!visibleEnvironmentOptions.length" label="寮€鍚?UAT" value="uat" />
+                <el-option v-if="!visibleEnvironmentOptions.length" label="暂无可用环境" value="uat" disabled />
               </el-select>
-              <el-button class="execution-config-icon" @click="showPending('閹笛嗩攽閻滎垰顣ㄩ柊宥囩枂閸氬海鐢婚幒銉ュ弳')">
+              <el-button class="execution-config-icon" @click="showPending('运行环境配置后续接入')">
                 <Settings2 />
               </el-button>
               <div class="execution-run-buttons">
@@ -1774,7 +1774,7 @@ function showPending(message: string) {
                   @click="handleRunSuite"
                 >
                   <Play />
-                  鏉╂劘顢?
+                  运行
                 </el-button>
                 <el-button
                   class="execution-save-button"
@@ -1783,7 +1783,7 @@ function showPending(message: string) {
                   @click="handleSaveSuite"
                 >
                   <Save />
-                  娣囨繂鐡?
+                  保存
                 </el-button>
               </div>
             </div>
@@ -1860,7 +1860,7 @@ function showPending(message: string) {
           </div>
           <el-button type="primary" class="execution-list-create-button" @click="handleCreateSuite">
             <Plus />
-            閺傛澘缂撴總妞炬
+            新建套件
           </el-button>
         </div>
         <div class="execution-suite-list-table">
@@ -1923,7 +1923,7 @@ function showPending(message: string) {
         <div class="scenario-import-content">
           <aside class="scenario-import-tree-pane">
             <div class="scenario-import-tree-controls">
-              <el-select :model-value="activeSuiteDetail?.workspaceCode || props.workspaceCode" disabled placeholder="宸ヤ綔绌洪棿">
+              <el-select :model-value="activeSuiteDetail?.workspaceCode || props.workspaceCode" disabled placeholder="工作空间">
                 <el-option :label="activeSuiteWorkspaceName" :value="activeSuiteDetail?.workspaceCode || props.workspaceCode" />
               </el-select>
               <el-select v-if="arrangePickerType === 'api'" model-value="HTTP" class="scenario-import-protocol" disabled>
@@ -1932,7 +1932,7 @@ function showPending(message: string) {
             </div>
             <el-input
               v-model="arrangeCandidateKeyword"
-              :placeholder="`鎼滅储${arrangePickerTypeLabel}鍚嶇О`"
+              :placeholder="`搜索${arrangePickerTypeLabel}名称`"
               clearable
               @keyup.enter="handleArrangeCandidateSearch"
               @clear="handleArrangeCandidateSearch"

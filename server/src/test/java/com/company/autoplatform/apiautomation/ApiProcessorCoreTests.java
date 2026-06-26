@@ -104,6 +104,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                         )
                 )),
                 null,
+                null,
+                null,
                 null
         ));
 
@@ -158,6 +160,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                         List.of(extractor("xmlName", "X_PATH", "BODY", "/root/user/name", "SPECIFIC", 1, null))
                 )),
                 null,
+                null,
+                null,
                 null
         ));
 
@@ -182,6 +186,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                 ),
                 List.of(),
                 List.of(),
+                null,
+                null,
                 null,
                 null
         ));
@@ -215,6 +221,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                 List.of(),
                 List.of(),
                 List.of(),
+                null,
+                null,
                 null,
                 null
         ));
@@ -268,6 +276,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                         List.of()
                 )),
                 null,
+                null,
+                null,
                 null
         ));
 
@@ -317,6 +327,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                 )),
                 List.of(),
                 null,
+                null,
+                null,
                 null
         ));
 
@@ -339,6 +351,8 @@ class ApiProcessorCoreTests extends IntegrationTestSupport {
                 List.of(),
                 List.of(),
                 List.of(),
+                null,
+                null,
                 null,
                 null
         ));

@@ -1,0 +1,324 @@
+- generic [ref=e42]:
+  - complementary [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]: A
+      - generic [ref=e46]: 自动化测试平台
+    - navigation "主导航" [ref=e47]:
+      - link "工作台" [ref=e49] [cursor=pointer]:
+        - /url: /?workspace=ALL
+        - img [ref=e51]
+        - generic [ref=e53]: 工作台
+      - link "配置中心" [ref=e55] [cursor=pointer]:
+        - /url: /config-center?workspace=ALL
+        - img [ref=e57]
+        - generic [ref=e59]: 配置中心
+      - button "用例中心" [ref=e61] [cursor=pointer]:
+        - img [ref=e63]
+        - generic [ref=e65]: 用例中心
+      - link "缺陷管理" [ref=e67] [cursor=pointer]:
+        - /url: /bugs?workspace=ALL
+        - img [ref=e69]
+        - generic [ref=e71]: 缺陷管理
+      - button "接口自动化" [ref=e73] [cursor=pointer]:
+        - img [ref=e75]
+        - generic [ref=e78]: 接口自动化
+      - button "Web UI 自动化" [ref=e80] [cursor=pointer]:
+        - img [ref=e82]
+        - generic [ref=e84]: Web UI 自动化
+      - link "APP 自动化" [ref=e86] [cursor=pointer]:
+        - /url: /automation/app?workspace=ALL
+        - img [ref=e88]
+        - generic [ref=e90]: APP 自动化
+      - link "系统设置" [ref=e92] [cursor=pointer]:
+        - /url: /settings?workspace=ALL
+        - img [ref=e94]
+        - generic [ref=e96]: 系统设置
+  - generic [ref=e97]:
+    - generic [ref=e98]:
+      - generic [ref=e99]:
+        - generic [ref=e100]: 配置中心
+        - button "全部" [ref=e103] [cursor=pointer]:
+          - img [ref=e104]
+          - generic [ref=e108]: 全部
+          - img [ref=e109]
+      - button "超 超级管理员 SUPER_ADMIN" [ref=e113] [cursor=pointer]:
+        - generic [ref=e114]: 超
+        - generic [ref=e115]:
+          - generic [ref=e116]: 超级管理员
+          - generic [ref=e117]: SUPER_ADMIN
+        - img [ref=e119]
+    - main [ref=e121]:
+      - generic [ref=e124]:
+        - complementary [ref=e125]:
+          - button "环境配置 测试环境管理" [ref=e126] [cursor=pointer]:
+            - img [ref=e128]
+            - generic [ref=e131]:
+              - strong [ref=e132]: 环境配置
+              - generic [ref=e133]: 测试环境管理
+          - button "变量集 运行参数与敏感变量" [active] [ref=e134] [cursor=pointer]:
+            - img [ref=e136]
+            - generic [ref=e138]:
+              - strong [ref=e139]: 变量集
+              - generic [ref=e140]: 运行参数与敏感变量
+          - button "Mock 服务 第三方响应模拟" [ref=e141] [cursor=pointer]:
+            - img [ref=e143]
+            - generic [ref=e146]:
+              - strong [ref=e147]: Mock 服务
+              - generic [ref=e148]: 第三方响应模拟
+          - button "执行器配置 远程 Runner 管理" [ref=e149] [cursor=pointer]:
+            - img [ref=e151]
+            - generic [ref=e154]:
+              - strong [ref=e155]: 执行器配置
+              - generic [ref=e156]: 远程 Runner 管理
+          - button "通知配置 失败通知与渠道" [ref=e157] [cursor=pointer]:
+            - img [ref=e159]
+            - generic [ref=e161]:
+              - strong [ref=e162]: 通知配置
+              - generic [ref=e163]: 失败通知与渠道
+          - button "网络代理 网络出口与代理" [ref=e164] [cursor=pointer]:
+            - img [ref=e166]
+            - generic [ref=e169]:
+              - strong [ref=e170]: 网络代理
+              - generic [ref=e171]: 网络出口与代理
+          - button "数据库连接 数据源配置" [ref=e172] [cursor=pointer]:
+            - img [ref=e174]
+            - generic [ref=e178]:
+              - strong [ref=e179]: 数据库连接
+              - generic [ref=e180]: 数据源配置
+          - button "AI 连接池 模型服务连接" [ref=e181] [cursor=pointer]:
+            - img [ref=e183]
+            - generic [ref=e186]:
+              - strong [ref=e187]: AI 连接池
+              - generic [ref=e188]: 模型服务连接
+        - main [ref=e189]:
+          - generic [ref=e599]:
+            - generic [ref=e600]:
+              - generic [ref=e601]:
+                - heading "变量集" [level=2] [ref=e602]
+                - paragraph [ref=e603]: 管理接口、Web UI 和业务运行时变量。
+              - generic [ref=e604]:
+                - button "刷新" [ref=e605] [cursor=pointer]:
+                  - img [ref=e607]
+                  - generic [ref=e609]: 刷新
+                - button "新增变量集/参数" [ref=e610] [cursor=pointer]:
+                  - img [ref=e612]
+                  - generic [ref=e614]: 新增变量集/参数
+            - generic [ref=e615]:
+              - article [ref=e616]:
+                - generic [ref=e617]: 全部参数
+                - strong [ref=e618]: "11"
+              - article [ref=e619]:
+                - generic [ref=e620]: 全局参数
+                - strong [ref=e621]: "1"
+              - article [ref=e622]:
+                - generic [ref=e623]: 接口变量
+                - strong [ref=e624]: "2"
+              - article [ref=e625]:
+                - generic [ref=e626]: 业务参数
+                - strong [ref=e627]: "0"
+              - article [ref=e628]:
+                - generic [ref=e629]: Web UI 变量集
+                - strong [ref=e630]: "8"
+            - generic [ref=e631]:
+              - generic [ref=e633]:
+                - img [ref=e636]
+                - textbox "搜索名称 / 变量值 / 说明" [ref=e638]
+              - generic [ref=e641] [cursor=pointer]:
+                - generic:
+                  - combobox [ref=e643]
+                  - generic [ref=e644]: 状态
+                - img [ref=e647]
+              - button "重置" [ref=e649] [cursor=pointer]:
+                - img [ref=e651]
+                - generic [ref=e653]: 重置
+            - generic [ref=e654]:
+              - button "全部" [ref=e655] [cursor=pointer]
+              - button "全局参数" [ref=e656] [cursor=pointer]
+              - button "接口变量" [ref=e657] [cursor=pointer]
+              - button "业务参数" [ref=e658] [cursor=pointer]
+              - button "Web UI 变量集" [ref=e659] [cursor=pointer]
+            - table [ref=e661]:
+              - rowgroup [ref=e668]:
+                - row "名称 值 / 变量数 类型 说明 操作" [ref=e669]:
+                  - columnheader "名称" [ref=e670]
+                  - columnheader "值 / 变量数" [ref=e671]
+                  - columnheader "类型" [ref=e672]
+                  - columnheader "说明" [ref=e673]
+                  - columnheader "操作" [ref=e674]
+              - rowgroup [ref=e675]:
+                - 'row "开户-UAT-Token X-MAN {\"token\":\"demo-token\"} 全局参数 TOKEN 引用 编辑 删除" [ref=e676]':
+                  - cell "开户-UAT-Token X-MAN" [ref=e677]:
+                    - generic [ref=e678]: 开户-UAT-Token
+                    - generic [ref=e679]: X-MAN
+                  - 'cell "{\"token\":\"demo-token\"}" [ref=e680]':
+                    - 'generic "{\"token\":\"demo-token\"}" [ref=e681]'
+                  - cell "全局参数" [ref=e682]:
+                    - generic [ref=e683]: 全局参数
+                  - cell "TOKEN" [ref=e684]:
+                    - generic [ref=e685]: TOKEN
+                  - cell "引用 编辑 删除" [ref=e686]:
+                    - button "引用" [ref=e687] [cursor=pointer]:
+                      - img [ref=e689]
+                      - text: 引用
+                    - button "编辑" [ref=e692] [cursor=pointer]
+                    - button "删除" [ref=e693] [cursor=pointer]
+                - 'row "交易公共Header SCRM {\"X-App\":\"trade-web\"} 接口参数 HEADER 引用 编辑 删除" [ref=e694]':
+                  - cell "交易公共Header SCRM" [ref=e695]:
+                    - generic [ref=e696]: 交易公共Header
+                    - generic [ref=e697]: SCRM
+                  - 'cell "{\"X-App\":\"trade-web\"}" [ref=e698]':
+                    - 'generic "{\"X-App\":\"trade-web\"}" [ref=e699]'
+                  - cell "接口参数" [ref=e700]:
+                    - generic [ref=e701]: 接口参数
+                  - cell "HEADER" [ref=e702]:
+                    - generic [ref=e703]: HEADER
+                  - cell "引用 编辑 删除" [ref=e704]:
+                    - button "引用" [ref=e705] [cursor=pointer]:
+                      - img [ref=e707]
+                      - text: 引用
+                    - button "编辑" [ref=e710] [cursor=pointer]
+                    - button "删除" [ref=e711] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621000639 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e712]:
+                  - cell "Codex WebUI Vars 20260621000639 X-MAN" [ref=e713]:
+                    - generic [ref=e714]: Codex WebUI Vars 20260621000639
+                    - generic [ref=e715]: X-MAN
+                  - cell "0 个变量" [ref=e716]:
+                    - generic "0 个变量" [ref=e717]
+                  - cell "Web UI 变量集" [ref=e718]:
+                    - generic [ref=e719]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e720]:
+                    - generic [ref=e721]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e722]:
+                    - button "引用" [ref=e723] [cursor=pointer]:
+                      - img [ref=e725]
+                      - text: 引用
+                    - button "编辑" [ref=e728] [cursor=pointer]
+                    - button "删除" [ref=e729] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621000741 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e730]:
+                  - cell "Codex WebUI Vars 20260621000741 X-MAN" [ref=e731]:
+                    - generic [ref=e732]: Codex WebUI Vars 20260621000741
+                    - generic [ref=e733]: X-MAN
+                  - cell "0 个变量" [ref=e734]:
+                    - generic "0 个变量" [ref=e735]
+                  - cell "Web UI 变量集" [ref=e736]:
+                    - generic [ref=e737]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e738]:
+                    - generic [ref=e739]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e740]:
+                    - button "引用" [ref=e741] [cursor=pointer]:
+                      - img [ref=e743]
+                      - text: 引用
+                    - button "编辑" [ref=e746] [cursor=pointer]
+                    - button "删除" [ref=e747] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621000903 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e748]:
+                  - cell "Codex WebUI Vars 20260621000903 X-MAN" [ref=e749]:
+                    - generic [ref=e750]: Codex WebUI Vars 20260621000903
+                    - generic [ref=e751]: X-MAN
+                  - cell "0 个变量" [ref=e752]:
+                    - generic "0 个变量" [ref=e753]
+                  - cell "Web UI 变量集" [ref=e754]:
+                    - generic [ref=e755]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e756]:
+                    - generic [ref=e757]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e758]:
+                    - button "引用" [ref=e759] [cursor=pointer]:
+                      - img [ref=e761]
+                      - text: 引用
+                    - button "编辑" [ref=e764] [cursor=pointer]
+                    - button "删除" [ref=e765] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621001011 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e766]:
+                  - cell "Codex WebUI Vars 20260621001011 X-MAN" [ref=e767]:
+                    - generic [ref=e768]: Codex WebUI Vars 20260621001011
+                    - generic [ref=e769]: X-MAN
+                  - cell "0 个变量" [ref=e770]:
+                    - generic "0 个变量" [ref=e771]
+                  - cell "Web UI 变量集" [ref=e772]:
+                    - generic [ref=e773]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e774]:
+                    - generic [ref=e775]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e776]:
+                    - button "引用" [ref=e777] [cursor=pointer]:
+                      - img [ref=e779]
+                      - text: 引用
+                    - button "编辑" [ref=e782] [cursor=pointer]
+                    - button "删除" [ref=e783] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621001055 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e784]:
+                  - cell "Codex WebUI Vars 20260621001055 X-MAN" [ref=e785]:
+                    - generic [ref=e786]: Codex WebUI Vars 20260621001055
+                    - generic [ref=e787]: X-MAN
+                  - cell "0 个变量" [ref=e788]:
+                    - generic "0 个变量" [ref=e789]
+                  - cell "Web UI 变量集" [ref=e790]:
+                    - generic [ref=e791]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e792]:
+                    - generic [ref=e793]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e794]:
+                    - button "引用" [ref=e795] [cursor=pointer]:
+                      - img [ref=e797]
+                      - text: 引用
+                    - button "编辑" [ref=e800] [cursor=pointer]
+                    - button "删除" [ref=e801] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621001511 X-MAN 0 个变量 Web UI 变量集 Web UI 执行变量集 引用 编辑 删除" [ref=e802]:
+                  - cell "Codex WebUI Vars 20260621001511 X-MAN" [ref=e803]:
+                    - generic [ref=e804]: Codex WebUI Vars 20260621001511
+                    - generic [ref=e805]: X-MAN
+                  - cell "0 个变量" [ref=e806]:
+                    - generic "0 个变量" [ref=e807]
+                  - cell "Web UI 变量集" [ref=e808]:
+                    - generic [ref=e809]: Web UI 变量集
+                  - cell "Web UI 执行变量集" [ref=e810]:
+                    - generic [ref=e811]: Web UI 执行变量集
+                  - cell "引用 编辑 删除" [ref=e812]:
+                    - button "引用" [ref=e813] [cursor=pointer]:
+                      - img [ref=e815]
+                      - text: 引用
+                    - button "编辑" [ref=e818] [cursor=pointer]
+                    - button "删除" [ref=e819] [cursor=pointer]
+                - row "Codex WebUI Vars 20260621001658 X-MAN 1 个变量 Web UI 变量集 包含 CODEX_PATH_20260621001658 引用 编辑 删除" [ref=e820]:
+                  - cell "Codex WebUI Vars 20260621001658 X-MAN" [ref=e821]:
+                    - generic [ref=e822]: Codex WebUI Vars 20260621001658
+                    - generic [ref=e823]: X-MAN
+                  - cell "1 个变量" [ref=e824]:
+                    - generic "1 个变量" [ref=e825]
+                  - cell "Web UI 变量集" [ref=e826]:
+                    - generic [ref=e827]: Web UI 变量集
+                  - cell "包含 CODEX_PATH_20260621001658" [ref=e828]:
+                    - generic [ref=e829]: 包含 CODEX_PATH_20260621001658
+                  - cell "引用 编辑 删除" [ref=e830]:
+                    - button "引用" [ref=e831] [cursor=pointer]:
+                      - img [ref=e833]
+                      - text: 引用
+                    - button "编辑" [ref=e836] [cursor=pointer]
+                    - button "删除" [ref=e837] [cursor=pointer]
+                - row "测试 X-MAN 1 个变量 Web UI 变量集 包含 dsfd 引用 编辑 删除" [ref=e838]:
+                  - cell "测试 X-MAN" [ref=e839]:
+                    - generic [ref=e840]: 测试
+                    - generic [ref=e841]: X-MAN
+                  - cell "1 个变量" [ref=e842]:
+                    - generic "1 个变量" [ref=e843]
+                  - cell "Web UI 变量集" [ref=e844]:
+                    - generic [ref=e845]: Web UI 变量集
+                  - cell "包含 dsfd" [ref=e846]:
+                    - generic [ref=e847]: 包含 dsfd
+                  - cell "引用 编辑 删除" [ref=e848]:
+                    - button "引用" [ref=e849] [cursor=pointer]:
+                      - img [ref=e851]
+                      - text: 引用
+                    - button "编辑" [ref=e854] [cursor=pointer]
+                    - button "删除" [ref=e855] [cursor=pointer]
+                - row "Codex 404 API Vars X-MAN 2 个变量 接口变量集 包含 ORDER_NO、PAY_AMOUNT 引用 编辑 删除" [ref=e856]:
+                  - cell "Codex 404 API Vars X-MAN" [ref=e857]:
+                    - generic [ref=e858]: Codex 404 API Vars
+                    - generic [ref=e859]: X-MAN
+                  - cell "2 个变量" [ref=e860]:
+                    - generic "2 个变量" [ref=e861]
+                  - cell "接口变量集" [ref=e862]:
+                    - generic [ref=e863]: 接口变量集
+                  - cell "包含 ORDER_NO、PAY_AMOUNT" [ref=e864]:
+                    - generic [ref=e865]: 包含 ORDER_NO、PAY_AMOUNT
+                  - cell "引用 编辑 删除" [ref=e866]:
+                    - button "引用" [ref=e867] [cursor=pointer]:
+                      - img [ref=e869]
+                      - text: 引用
+                    - button "编辑" [ref=e872] [cursor=pointer]
+                    - button "删除" [ref=e873] [cursor=pointer]

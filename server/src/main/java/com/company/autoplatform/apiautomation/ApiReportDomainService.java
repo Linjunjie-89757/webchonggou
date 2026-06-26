@@ -432,6 +432,7 @@ public class ApiReportDomainService {
                 item.operatorName(),
                 item.createdAt(),
                 item.archived(),
+                entity.getContextSnapshotJson(),
                 List.of(),
                 List.of(),
                 listRunStepResponses(entity.getReportId())
@@ -478,6 +479,7 @@ public class ApiReportDomainService {
                 item.operatorName(),
                 item.createdAt(),
                 item.archived(),
+                entity.getContextSnapshotJson(),
                 readSuiteDataIterations(entity.getDataIterationJson()),
                 readSuiteItemSnapshots(entity.getItemSnapshotJson()),
                 readSuiteStepResults(entity)
@@ -524,6 +526,7 @@ public class ApiReportDomainService {
                 item.operatorName(),
                 item.createdAt(),
                 item.archived(),
+                entity.getContextSnapshotJson(),
                 readDataIterations(entity.getDataIterationJson()),
                 List.of(),
                 readStepResults(entity.getDetailJson(), entity.getReportId())

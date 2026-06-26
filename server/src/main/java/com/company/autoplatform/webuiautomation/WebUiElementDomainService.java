@@ -584,7 +584,34 @@ public class WebUiElementDomainService {
                 result.matched(),
                 result.matchCount(),
                 result.errorMessage(),
-                result.screenshotBase64()
+                result.screenshotBase64(),
+                null
+        );
+    }
+
+    @Transactional
+    public ValidateWebUiLocatorResponse applyLocalRunnerElementValidationResult(
+            Long id,
+            String workspaceCode,
+            ApplyLocalRunnerElementValidationResultRequest request
+    ) {
+        WebUiElementEntity entity = requireElement(id);
+        workspaceScopeSupport.validateReadable(entity.getWorkspaceId(), workspaceCode, "Current workspace cannot validate the web UI element");
+        boolean matched = Boolean.TRUE.equals(request.matched());
+        int matchCount = request.matchCount() == null ? 0 : Math.max(request.matchCount(), 0);
+        entity.setLastValidateResult(matched ? "PASSED" : "FAILED");
+        entity.setLastValidateAt(LocalDateTime.now());
+        entity.setLastValidateMessage(blankToNull(request.errorMessage()));
+        entity.setLastMatchCount(matchCount);
+        entity.setLastLocalRunnerRunId(blankToNull(request.runnerRunId()));
+        entity.setUpdatedAt(LocalDateTime.now());
+        elementMapper.updateById(entity);
+        return new ValidateWebUiLocatorResponse(
+                matched,
+                matchCount,
+                request.errorMessage(),
+                request.screenshotBase64(),
+                entity.getLastLocalRunnerRunId()
         );
     }
 
@@ -811,6 +838,7 @@ public class WebUiElementDomainService {
                 entity.getLastValidateAt(),
                 entity.getLastValidateMessage(),
                 entity.getLastMatchCount(),
+                entity.getLastLocalRunnerRunId(),
                 entity.getCollectTaskId(),
                 entity.getCollectSource(),
                 entity.getCollectConfidence(),

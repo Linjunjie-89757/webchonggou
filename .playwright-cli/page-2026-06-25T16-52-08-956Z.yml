@@ -1,0 +1,349 @@
+- generic [ref=e42]:
+  - complementary [ref=e43]:
+    - generic [ref=e44]:
+      - generic [ref=e45]: A
+      - generic [ref=e46]: 自动化测试平台
+    - navigation "主导航" [ref=e47]:
+      - link "工作台" [ref=e49] [cursor=pointer]:
+        - /url: /?workspace=ALL
+        - img [ref=e51]
+        - generic [ref=e53]: 工作台
+      - link "配置中心" [ref=e55] [cursor=pointer]:
+        - /url: /config-center?workspace=ALL
+        - img [ref=e57]
+        - generic [ref=e59]: 配置中心
+      - button "用例中心" [ref=e61] [cursor=pointer]:
+        - img [ref=e63]
+        - generic [ref=e65]: 用例中心
+      - link "缺陷管理" [ref=e67] [cursor=pointer]:
+        - /url: /bugs?workspace=ALL
+        - img [ref=e69]
+        - generic [ref=e71]: 缺陷管理
+      - button "接口自动化" [ref=e73] [cursor=pointer]:
+        - img [ref=e75]
+        - generic [ref=e78]: 接口自动化
+      - button "Web UI 自动化" [ref=e91] [cursor=pointer]:
+        - img [ref=e93]
+        - generic [ref=e95]: Web UI 自动化
+      - link "APP 自动化" [ref=e97] [cursor=pointer]:
+        - /url: /automation/app?workspace=ALL
+        - img [ref=e99]
+        - generic [ref=e101]: APP 自动化
+      - link "系统设置" [ref=e103] [cursor=pointer]:
+        - /url: /settings?workspace=ALL
+        - img [ref=e105]
+        - generic [ref=e107]: 系统设置
+  - generic [ref=e108]:
+    - generic [ref=e109]:
+      - generic [ref=e110]:
+        - generic [ref=e111]: 配置中心
+        - button "全部" [ref=e114] [cursor=pointer]:
+          - img [ref=e115]
+          - generic [ref=e119]: 全部
+          - img [ref=e120]
+      - button "超 超级管理员 SUPER_ADMIN" [ref=e124] [cursor=pointer]:
+        - generic [ref=e125]: 超
+        - generic [ref=e126]:
+          - generic [ref=e127]: 超级管理员
+          - generic [ref=e128]: SUPER_ADMIN
+        - img [ref=e130]
+    - main [ref=e132]:
+      - generic [ref=e326]:
+        - complementary [ref=e327]:
+          - button "环境配置 测试环境管理" [ref=e328] [cursor=pointer]:
+            - img [ref=e330]
+            - generic [ref=e333]:
+              - strong [ref=e334]: 环境配置
+              - generic [ref=e335]: 测试环境管理
+          - button "变量集 运行参数与敏感变量" [ref=e336] [cursor=pointer]:
+            - img [ref=e338]
+            - generic [ref=e340]:
+              - strong [ref=e341]: 变量集
+              - generic [ref=e342]: 运行参数与敏感变量
+          - button "Mock 服务 第三方响应模拟" [ref=e343] [cursor=pointer]:
+            - img [ref=e345]
+            - generic [ref=e348]:
+              - strong [ref=e349]: Mock 服务
+              - generic [ref=e350]: 第三方响应模拟
+          - button "执行器配置 远程 Runner 管理" [ref=e351] [cursor=pointer]:
+            - img [ref=e353]
+            - generic [ref=e356]:
+              - strong [ref=e357]: 执行器配置
+              - generic [ref=e358]: 远程 Runner 管理
+          - button "通知配置 失败通知与渠道" [ref=e359] [cursor=pointer]:
+            - img [ref=e361]
+            - generic [ref=e363]:
+              - strong [ref=e364]: 通知配置
+              - generic [ref=e365]: 失败通知与渠道
+          - button "网络代理 网络出口与代理" [ref=e366] [cursor=pointer]:
+            - img [ref=e368]
+            - generic [ref=e371]:
+              - strong [ref=e372]: 网络代理
+              - generic [ref=e373]: 网络出口与代理
+          - button "数据库连接 数据源配置" [ref=e374] [cursor=pointer]:
+            - img [ref=e376]
+            - generic [ref=e380]:
+              - strong [ref=e381]: 数据库连接
+              - generic [ref=e382]: 数据源配置
+          - button "AI 连接池 模型服务连接" [ref=e383] [cursor=pointer]:
+            - img [ref=e385]
+            - generic [ref=e388]:
+              - strong [ref=e389]: AI 连接池
+              - generic [ref=e390]: 模型服务连接
+        - main [ref=e391]:
+          - generic [ref=e715]:
+            - generic [ref=e716]:
+              - generic [ref=e717]:
+                - heading "Mock 服务" [level=2] [ref=e718]
+                - paragraph [ref=e719]: 维护可被接口自动化、Web UI 和外部回调复用的模拟服务。
+              - generic [ref=e720]:
+                - button "刷新" [ref=e721] [cursor=pointer]:
+                  - img [ref=e723]
+                  - generic [ref=e725]: 刷新
+                - button "新增应用" [ref=e726] [cursor=pointer]:
+                  - img [ref=e728]
+                  - generic [ref=e730]: 新增应用
+            - generic [ref=e731]:
+              - complementary [ref=e732]:
+                - generic [ref=e735]:
+                  - img [ref=e738]
+                  - textbox "搜索应用" [ref=e740]
+                - button "Disposable 微信支付 Mock 221406 codex-wechat-221406 启用" [ref=e743] [cursor=pointer]:
+                  - generic [ref=e744]:
+                    - strong [ref=e745]: Disposable 微信支付 Mock 221406
+                    - generic [ref=e746]: codex-wechat-221406
+                  - generic [ref=e747]: 启用
+              - main [ref=e748]:
+                - generic [ref=e749]:
+                  - generic [ref=e750]:
+                    - generic [ref=e751]:
+                      - heading "Disposable 微信支付 Mock 221406" [level=3] [ref=e752]
+                      - generic [ref=e753]: 启用中
+                    - paragraph [ref=e754]: Codex disposable mock smoke
+                  - generic [ref=e755]:
+                    - button "编辑应用" [ref=e756] [cursor=pointer]:
+                      - img [ref=e758]
+                      - generic [ref=e761]: 编辑应用
+                    - button "删除" [ref=e762] [cursor=pointer]:
+                      - img [ref=e764]
+                      - generic [ref=e766]: 删除
+                - generic [ref=e767]:
+                  - generic [ref=e768]: 当前接口调用地址
+                  - code [ref=e769]: /api/mock/codex-wechat-221406/pay/notify
+                  - button "复制" [ref=e770] [cursor=pointer]:
+                    - img [ref=e772]
+                    - generic [ref=e775]: 复制
+                - generic [ref=e776]:
+                  - generic [ref=e777]:
+                    - generic [ref=e778]:
+                      - heading "Mock 接口" [level=3] [ref=e779]
+                      - paragraph [ref=e780]: 按请求方法和路径匹配进入应用的请求。
+                    - button "新增接口" [ref=e781] [cursor=pointer]:
+                      - img [ref=e783]
+                      - generic [ref=e785]: 新增接口
+                  - generic [ref=e787]:
+                    - table [ref=e789]:
+                      - rowgroup [ref=e796]:
+                        - row "方法 接口名称 匹配路径 状态 操作" [ref=e797]:
+                          - columnheader "方法" [ref=e798]:
+                            - generic [ref=e799]: 方法
+                          - columnheader "接口名称" [ref=e800]:
+                            - generic [ref=e801]: 接口名称
+                          - columnheader "匹配路径" [ref=e802]:
+                            - generic [ref=e803]: 匹配路径
+                          - columnheader "状态" [ref=e804]:
+                            - generic [ref=e805]: 状态
+                          - columnheader "操作" [ref=e806]:
+                            - generic [ref=e807]: 操作
+                    - table [ref=e812]:
+                      - rowgroup [ref=e819]:
+                        - row "POST 支付回调 /pay/notify 启用 编辑 删除" [ref=e820]:
+                          - cell "POST" [ref=e821]:
+                            - generic [ref=e822]: POST
+                          - cell "支付回调" [ref=e823]:
+                            - generic [ref=e824]: 支付回调
+                          - cell "/pay/notify" [ref=e825]:
+                            - generic [ref=e826]: /pay/notify
+                          - cell "启用" [ref=e827]:
+                            - generic [ref=e829]: 启用
+                          - cell "编辑 删除" [ref=e830]:
+                            - generic [ref=e832]:
+                              - button "编辑" [ref=e833] [cursor=pointer]
+                              - button "删除" [ref=e834] [cursor=pointer]
+                - generic [ref=e835]:
+                  - generic [ref=e836]:
+                    - generic [ref=e837]:
+                      - heading "Mock 场景" [level=3] [ref=e838]
+                      - paragraph [ref=e839]: 同一接口可按 Header、Query、Body 或 JSONPath 命中不同响应。
+                    - button "新增场景" [ref=e840] [cursor=pointer]:
+                      - img [ref=e842]
+                      - generic [ref=e844]: 新增场景
+                  - generic [ref=e846]:
+                    - table [ref=e848]:
+                      - rowgroup [ref=e856]:
+                        - row "优先级 场景名称 响应码 延迟(ms) 状态 操作" [ref=e857]:
+                          - columnheader "优先级" [ref=e858]:
+                            - generic [ref=e859]: 优先级
+                          - columnheader "场景名称" [ref=e860]:
+                            - generic [ref=e861]: 场景名称
+                          - columnheader "响应码" [ref=e862]:
+                            - generic [ref=e863]: 响应码
+                          - columnheader "延迟(ms)" [ref=e864]:
+                            - generic [ref=e865]: 延迟(ms)
+                          - columnheader "状态" [ref=e866]:
+                            - generic [ref=e867]: 状态
+                          - columnheader "操作" [ref=e868]:
+                            - generic [ref=e869]: 操作
+                    - table [ref=e874]:
+                      - rowgroup [ref=e882]:
+                        - row "10 支付成功 200 0 启用 编辑 删除" [ref=e883]:
+                          - cell "10" [ref=e884]:
+                            - generic [ref=e885]: "10"
+                          - cell "支付成功" [ref=e886]:
+                            - generic [ref=e887]: 支付成功
+                          - cell "200" [ref=e888]:
+                            - generic [ref=e889]: "200"
+                          - cell "0" [ref=e890]:
+                            - generic [ref=e891]: "0"
+                          - cell "启用" [ref=e892]:
+                            - generic [ref=e894]: 启用
+                          - cell "编辑 删除" [ref=e895]:
+                            - generic [ref=e897]:
+                              - button "编辑" [ref=e898] [cursor=pointer]
+                              - button "删除" [ref=e899] [cursor=pointer]
+                - generic [ref=e900]:
+                  - generic [ref=e902]:
+                    - heading "调用日志" [level=3] [ref=e903]
+                    - paragraph [ref=e904]: 最近 100 条调用记录，包含请求、响应和命中场景。
+                  - generic [ref=e906]:
+                    - table [ref=e908]:
+                      - rowgroup [ref=e917]:
+                        - row "方法 路径 命中场景 响应码 结果 时间 操作" [ref=e918]:
+                          - columnheader "方法" [ref=e919]:
+                            - generic [ref=e920]: 方法
+                          - columnheader "路径" [ref=e921]:
+                            - generic [ref=e922]: 路径
+                          - columnheader "命中场景" [ref=e923]:
+                            - generic [ref=e924]: 命中场景
+                          - columnheader "响应码" [ref=e925]:
+                            - generic [ref=e926]: 响应码
+                          - columnheader "结果" [ref=e927]:
+                            - generic [ref=e928]: 结果
+                          - columnheader "时间" [ref=e929]:
+                            - generic [ref=e930]: 时间
+                          - columnheader "操作" [ref=e931]:
+                            - generic [ref=e932]: 操作
+                    - table [ref=e937]:
+                      - rowgroup [ref=e946]:
+                        - row "POST /pay/notify 支付成功 200 命中 2026-06-26 00:33:22 详情" [ref=e947]:
+                          - cell "POST" [ref=e948]:
+                            - generic [ref=e949]: POST
+                          - cell "/pay/notify" [ref=e950]:
+                            - generic [ref=e951]: /pay/notify
+                          - cell "支付成功" [ref=e952]:
+                            - generic [ref=e953]: 支付成功
+                          - cell "200" [ref=e954]:
+                            - generic [ref=e955]: "200"
+                          - cell "命中" [ref=e956]:
+                            - generic [ref=e958]: 命中
+                          - cell "2026-06-26 00:33:22" [ref=e959]:
+                            - generic [ref=e960]: 2026-06-26 00:33:22
+                          - cell "详情" [ref=e961]:
+                            - button "详情" [ref=e964] [cursor=pointer]
+                        - row "POST /pay/notify 支付成功 200 命中 2026-06-26 00:32:03 详情" [ref=e965]:
+                          - cell "POST" [ref=e966]:
+                            - generic [ref=e967]: POST
+                          - cell "/pay/notify" [ref=e968]:
+                            - generic [ref=e969]: /pay/notify
+                          - cell "支付成功" [ref=e970]:
+                            - generic [ref=e971]: 支付成功
+                          - cell "200" [ref=e972]:
+                            - generic [ref=e973]: "200"
+                          - cell "命中" [ref=e974]:
+                            - generic [ref=e976]: 命中
+                          - cell "2026-06-26 00:32:03" [ref=e977]:
+                            - generic [ref=e978]: 2026-06-26 00:32:03
+                          - cell "详情" [ref=e979]:
+                            - button "详情" [ref=e982] [cursor=pointer]
+                        - row "POST /pay/notify 支付成功 200 命中 2026-06-26 00:31:05 详情" [ref=e983]:
+                          - cell "POST" [ref=e984]:
+                            - generic [ref=e985]: POST
+                          - cell "/pay/notify" [ref=e986]:
+                            - generic [ref=e987]: /pay/notify
+                          - cell "支付成功" [ref=e988]:
+                            - generic [ref=e989]: 支付成功
+                          - cell "200" [ref=e990]:
+                            - generic [ref=e991]: "200"
+                          - cell "命中" [ref=e992]:
+                            - generic [ref=e994]: 命中
+                          - cell "2026-06-26 00:31:05" [ref=e995]:
+                            - generic [ref=e996]: 2026-06-26 00:31:05
+                          - cell "详情" [ref=e997]:
+                            - button "详情" [ref=e1000] [cursor=pointer]
+                        - row "POST /pay/notify 支付成功 200 命中 2026-06-26 00:20:43 详情" [ref=e1001]:
+                          - cell "POST" [ref=e1002]:
+                            - generic [ref=e1003]: POST
+                          - cell "/pay/notify" [ref=e1004]:
+                            - generic [ref=e1005]: /pay/notify
+                          - cell "支付成功" [ref=e1006]:
+                            - generic [ref=e1007]: 支付成功
+                          - cell "200" [ref=e1008]:
+                            - generic [ref=e1009]: "200"
+                          - cell "命中" [ref=e1010]:
+                            - generic [ref=e1012]: 命中
+                          - cell "2026-06-26 00:20:43" [ref=e1013]:
+                            - generic [ref=e1014]: 2026-06-26 00:20:43
+                          - cell "详情" [ref=e1015]:
+                            - button "详情" [ref=e1018] [cursor=pointer]
+                        - row "POST /pay/notify 404 未命中 2026-06-26 00:19:14 详情" [ref=e1019]:
+                          - cell "POST" [ref=e1020]:
+                            - generic [ref=e1021]: POST
+                          - cell "/pay/notify" [ref=e1022]:
+                            - generic [ref=e1023]: /pay/notify
+                          - cell [ref=e1024]
+                          - cell "404" [ref=e1025]:
+                            - generic [ref=e1026]: "404"
+                          - cell "未命中" [ref=e1027]:
+                            - generic [ref=e1029]: 未命中
+                          - cell "2026-06-26 00:19:14" [ref=e1030]:
+                            - generic [ref=e1031]: 2026-06-26 00:19:14
+                          - cell "详情" [ref=e1032]:
+                            - button "详情" [ref=e1035] [cursor=pointer]
+                        - row "POST /pay/notify 支付成功 200 命中 2026-06-25 22:14:07 详情" [ref=e1036]:
+                          - cell "POST" [ref=e1037]:
+                            - generic [ref=e1038]: POST
+                          - cell "/pay/notify" [ref=e1039]:
+                            - generic [ref=e1040]: /pay/notify
+                          - cell "支付成功" [ref=e1041]:
+                            - generic [ref=e1042]: 支付成功
+                          - cell "200" [ref=e1043]:
+                            - generic [ref=e1044]: "200"
+                          - cell "命中" [ref=e1045]:
+                            - generic [ref=e1047]: 命中
+                          - cell "2026-06-25 22:14:07" [ref=e1048]:
+                            - generic [ref=e1049]: 2026-06-25 22:14:07
+                          - cell "详情" [ref=e1050]:
+                            - button "详情" [ref=e1053] [cursor=pointer]
+            - dialog "调用日志详情" [ref=e1055]:
+              - generic [ref=e1056]:
+                - heading "调用日志详情" [level=2] [ref=e1057]
+                - button "Close this dialog" [ref=e1058] [cursor=pointer]:
+                  - img [ref=e1060]
+              - generic [ref=e1063]:
+                - generic [ref=e1064]:
+                  - term [ref=e1065]: 接口
+                  - definition [ref=e1066]: 支付回调
+                  - term [ref=e1067]: 场景
+                  - definition [ref=e1068]: 支付成功
+                  - term [ref=e1069]: 请求
+                  - definition [ref=e1070]: POST /pay/notify
+                  - term [ref=e1071]: 响应
+                  - definition [ref=e1072]: 200 / MATCHED
+                - heading "请求头" [level=4] [ref=e1073]
+                - generic [ref=e1074]: "{ \"connection\": \"Upgrade, HTTP2-Settings\", \"content-length\": \"55\", \"host\": \"localhost:8080\", \"http2-settings\": \"AAEAAEAAAAIAAAAAAAMAAAAAAAQBAAAAAAUAAEAAAAYABgAA\", \"upgrade\": \"h2c\", \"user-agent\": \"Java-http-client/21.0.11\", \"content-type\": \"application/json\", \"x-codex-env\": \"goal-404\" }"
+                - heading "请求体" [level=4] [ref=e1075]
+                - generic [ref=e1076]: "{ \"result\": \"SUCCESS\", \"orderNo\": \"ORDER404\", \"amount\": \"88\" }"
+                - heading "响应头" [level=4] [ref=e1077]
+                - generic [ref=e1078]: "{ \"Content-Type\": \"application/json;charset=UTF-8\" }"
+                - heading "响应体" [level=4] [ref=e1079]
+                - generic [ref=e1080]: "{ \"code\": \"SUCCESS\", \"tradeStatus\": \"PAID\" }"

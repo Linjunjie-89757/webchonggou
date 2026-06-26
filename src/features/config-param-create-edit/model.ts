@@ -28,7 +28,7 @@ export interface ConfigParamForm {
 export function createDefaultConfigParamForm(workspaceCode = 'ALL'): ConfigParamForm {
   return {
     workspaceCode,
-    paramType: 'GLOBAL',
+    paramType: 'API_VARIABLE_SET',
     paramName: '',
     value: '',
     description: '',
@@ -62,15 +62,21 @@ export function createConfigParamFormFromItem(item: ParamSetItem): ConfigParamFo
 }
 
 export function buildCreateParamPayload(form: ConfigParamForm): CreateParamPayload {
-  const contentJson = form.paramType === 'WEB_UI_VARIABLE_SET'
+  const contentJson = isVariableSetParamType(form.paramType)
     ? JSON.stringify(
         form.variables
-          .map(variable => ({
-            name: variable.name.trim(),
-            value: variable.value,
-            sensitive: variable.sensitive,
-            description: variable.description.trim(),
-          }))
+          .map(variable => form.paramType === 'WEB_UI_VARIABLE_SET'
+            ? {
+                name: variable.name.trim(),
+                value: variable.value,
+                sensitive: variable.sensitive,
+                description: variable.description.trim(),
+              }
+            : {
+                name: variable.name.trim(),
+                value: variable.value,
+                sensitive: variable.sensitive,
+              })
           .filter(variable => variable.name),
       )
     : JSON.stringify({
@@ -90,9 +96,9 @@ export function buildCreateParamPayload(form: ConfigParamForm): CreateParamPaylo
 
 export function validateConfigParamForm(form: ConfigParamForm) {
   if (!form.paramName.trim()) {
-    return '请输入参数名'
+    return '请输入名称'
   }
-  if (form.paramType === 'WEB_UI_VARIABLE_SET') {
+  if (isVariableSetParamType(form.paramType)) {
     const activeVariables = form.variables.filter(variable => variable.name.trim() || variable.value.trim())
     if (activeVariables.length === 0) {
       return '请至少添加一个变量'
@@ -161,6 +167,10 @@ export function parseWebUiVariables(contentJson: string): WebUiVariableItem[] {
   } catch {
     return []
   }
+}
+
+export function isVariableSetParamType(paramType: string) {
+  return paramType === 'WEB_UI_VARIABLE_SET' || paramType === 'API_VARIABLE_SET'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

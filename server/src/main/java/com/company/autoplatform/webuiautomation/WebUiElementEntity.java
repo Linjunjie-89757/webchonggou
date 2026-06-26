@@ -53,6 +53,9 @@ public class WebUiElementEntity extends BaseEntity {
     @TableField("last_match_count")
     private Integer lastMatchCount;
 
+    @TableField("last_local_runner_run_id")
+    private String lastLocalRunnerRunId;
+
     @TableField("collect_task_id")
     private Long collectTaskId;
 

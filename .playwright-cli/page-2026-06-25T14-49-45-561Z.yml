@@ -1,0 +1,598 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: A
+      - generic [ref=e7]: 自动化测试平台
+    - navigation "主导航" [ref=e8]:
+      - link "工作台" [ref=e10] [cursor=pointer]:
+        - /url: /?workspace=account-open
+        - img [ref=e12]
+        - generic [ref=e14]: 工作台
+      - link "配置中心" [ref=e16] [cursor=pointer]:
+        - /url: /config-center?workspace=account-open
+        - img [ref=e18]
+        - generic [ref=e20]: 配置中心
+      - button "用例中心" [ref=e22] [cursor=pointer]:
+        - img [ref=e24]
+        - generic [ref=e26]: 用例中心
+      - link "缺陷管理" [ref=e28] [cursor=pointer]:
+        - /url: /bugs?workspace=account-open
+        - img [ref=e30]
+        - generic [ref=e32]: 缺陷管理
+      - button "接口自动化" [ref=e34] [cursor=pointer]:
+        - img [ref=e36]
+        - generic [ref=e39]: 接口自动化
+      - generic [ref=e40]:
+        - button "Web UI 自动化" [expanded] [ref=e41] [cursor=pointer]:
+          - img [ref=e43]
+          - generic [ref=e45]: Web UI 自动化
+        - generic [ref=e46]:
+          - link "用例管理" [ref=e47] [cursor=pointer]:
+            - /url: /automation/web/cases?workspace=account-open
+            - generic [ref=e48]: 用例管理
+          - link "元素库" [ref=e49] [cursor=pointer]:
+            - /url: /automation/web/elements?workspace=account-open
+            - generic [ref=e50]: 元素库
+          - link "模板库" [ref=e51] [cursor=pointer]:
+            - /url: /automation/web/templates?workspace=account-open
+            - generic [ref=e52]: 模板库
+          - link "执行记录" [ref=e53] [cursor=pointer]:
+            - /url: /automation/web/runs?workspace=account-open
+            - generic [ref=e54]: 执行记录
+          - link "批次报告" [ref=e55] [cursor=pointer]:
+            - /url: /automation/web/batches?workspace=account-open
+            - generic [ref=e56]: 批次报告
+          - link "环境配置" [ref=e57] [cursor=pointer]:
+            - /url: /automation/web/environments?workspace=account-open
+            - generic [ref=e58]: 环境配置
+          - link "变量集设置" [ref=e59] [cursor=pointer]:
+            - /url: /automation/web/variables?workspace=account-open
+            - generic [ref=e60]: 变量集设置
+      - link "APP 自动化" [ref=e62] [cursor=pointer]:
+        - /url: /automation/app?workspace=account-open
+        - img [ref=e64]
+        - generic [ref=e66]: APP 自动化
+      - link "系统设置" [ref=e68] [cursor=pointer]:
+        - /url: /settings?workspace=account-open
+        - img [ref=e70]
+        - generic [ref=e72]: 系统设置
+  - generic [ref=e73]:
+    - generic [ref=e74]:
+      - generic [ref=e75]:
+        - generic [ref=e76]: Web UI 元素库
+        - button "X-MAN" [ref=e79] [cursor=pointer]:
+          - img [ref=e80]
+          - generic [ref=e84]: X-MAN
+          - img [ref=e85]
+      - button "超 超级管理员 SUPER_ADMIN" [ref=e89] [cursor=pointer]:
+        - generic [ref=e90]: 超
+        - generic [ref=e91]:
+          - generic [ref=e92]: 超级管理员
+          - generic [ref=e93]: SUPER_ADMIN
+        - img [ref=e95]
+    - main [ref=e97]:
+      - generic [ref=e101]:
+        - complementary [ref=e102]:
+          - button "新增元素" [ref=e103] [cursor=pointer]:
+            - img [ref=e105]
+            - generic [ref=e107]: 新增元素
+          - generic [ref=e109]:
+            - img [ref=e112]
+            - textbox "搜索模块、页面或分组名称" [ref=e114]
+          - generic [ref=e116]:
+            - strong [ref=e117]: 页面对象
+            - generic [ref=e118]: "11"
+          - tree [ref=e119]:
+            - treeitem "X-MAN 11" [expanded] [ref=e199]:
+              - generic [ref=e121] [cursor=pointer]:
+                - img [ref=e201]
+                - generic [ref=e122]:
+                  - generic [ref=e123]:
+                    - img [ref=e125]
+                    - generic [ref=e127]: X-MAN
+                    - generic [ref=e128]: "11"
+                  - button [ref=e129]:
+                    - img [ref=e131]
+              - group [ref=e203]:
+                - treeitem "登录 10" [ref=e204]:
+                  - generic [ref=e205] [cursor=pointer]:
+                    - img [ref=e207]
+                    - generic [ref=e209]:
+                      - generic [ref=e210]:
+                        - img [ref=e212]
+                        - generic [ref=e214]: 登录
+                        - generic [ref=e215]: "10"
+                      - button [ref=e216]:
+                        - img [ref=e218]
+                - treeitem "codex-trace-module-1782229314598 0" [ref=e220]:
+                  - generic [ref=e222] [cursor=pointer]:
+                    - generic [ref=e223]:
+                      - img [ref=e225]
+                      - generic [ref=e227]: codex-trace-module-1782229314598
+                      - generic [ref=e228]: "0"
+                    - button [ref=e229]:
+                      - img [ref=e231]
+                - treeitem "codex-trace-module-codextrace646523 0" [ref=e233]:
+                  - generic [ref=e235] [cursor=pointer]:
+                    - generic [ref=e236]:
+                      - img [ref=e238]
+                      - generic [ref=e240]: codex-trace-module-codextrace646523
+                      - generic [ref=e241]: "0"
+                    - button [ref=e242]:
+                      - img [ref=e244]
+                - treeitem "codex-trace-module-codextrace900630 1" [ref=e246]:
+                  - generic [ref=e247] [cursor=pointer]:
+                    - img [ref=e249]
+                    - generic [ref=e251]:
+                      - generic [ref=e252]:
+                        - img [ref=e254]
+                        - generic [ref=e256]: codex-trace-module-codextrace900630
+                        - generic [ref=e257]: "1"
+                      - button [ref=e258]:
+                        - img [ref=e260]
+        - main [ref=e137]:
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - generic [ref=e142]:
+                - img [ref=e145]
+                - textbox "搜索元素名称 / 定位值 / 备注" [ref=e147]
+              - generic [ref=e150] [cursor=pointer]:
+                - generic:
+                  - combobox [ref=e152]
+                  - generic [ref=e153]: 状态
+                - img [ref=e156]
+              - button "查询" [ref=e158] [cursor=pointer]:
+                - img [ref=e160]
+                - generic [ref=e162]: 查询
+              - button "重置" [ref=e163] [cursor=pointer]:
+                - img [ref=e165]
+                - generic [ref=e167]: 重置
+            - generic [ref=e168]:
+              - button "导入" [ref=e169] [cursor=pointer]:
+                - generic [ref=e170]: 导入
+              - button "导出" [ref=e171] [cursor=pointer]:
+                - generic [ref=e172]: 导出
+              - button "质量检查" [ref=e173] [cursor=pointer]:
+                - img [ref=e175]
+                - generic [ref=e177]: 质量检查
+              - button "采集任务" [ref=e178] [cursor=pointer]:
+                - img [ref=e180]
+                - generic [ref=e184]: 采集任务
+              - button "AI 采集" [ref=e185] [cursor=pointer]:
+                - img [ref=e187]
+                - generic [ref=e190]: AI 采集
+          - generic [ref=e191]: 当前范围：全部元素
+          - generic [ref=e833]:
+            - generic [ref=e834]: 已选 3 个元素
+            - button "批量启用" [ref=e835] [cursor=pointer]:
+              - generic [ref=e836]: 批量启用
+            - button "批量停用" [ref=e837] [cursor=pointer]:
+              - generic [ref=e838]: 批量停用
+            - button "移动分组" [ref=e839] [cursor=pointer]:
+              - generic [ref=e840]: 移动分组
+            - button "批量验证" [ref=e841] [cursor=pointer]:
+              - generic [ref=e842]: 批量验证
+            - button "本地批量验证" [disabled]:
+              - generic:
+                - img
+              - generic: 本地批量验证
+            - button "影响分析" [ref=e845] [cursor=pointer]:
+              - generic [ref=e846]: 影响分析
+            - button "批量删除" [ref=e847] [cursor=pointer]:
+              - generic [ref=e848]: 批量删除
+          - generic [ref=e263]:
+            - table [ref=e265]:
+              - rowgroup [ref=e278]:
+                - row "Select all rows 页面对象 分组 元素名称 定位方式 定位值 状态 验证结果 最近验证 引用 操作" [ref=e279]:
+                  - columnheader "Select all rows" [ref=e280]:
+                    - generic "Select all rows" [ref=e282] [cursor=pointer]:
+                      - generic [ref=e283]:
+                        - checkbox "Select all rows" [checked=mixed]
+                  - columnheader "页面对象" [ref=e285]:
+                    - generic [ref=e286]: 页面对象
+                  - columnheader "分组" [ref=e287]:
+                    - generic [ref=e288]: 分组
+                  - columnheader "元素名称" [ref=e289]:
+                    - generic [ref=e290]: 元素名称
+                  - columnheader "定位方式" [ref=e291]:
+                    - generic [ref=e292]: 定位方式
+                  - columnheader "定位值" [ref=e293]:
+                    - generic [ref=e294]: 定位值
+                  - columnheader "状态" [ref=e295]:
+                    - generic [ref=e296]: 状态
+                  - columnheader "验证结果" [ref=e297]:
+                    - generic [ref=e298]: 验证结果
+                  - columnheader "最近验证" [ref=e299]:
+                    - generic [ref=e300]: 最近验证
+                  - columnheader "引用" [ref=e301]:
+                    - generic [ref=e302]: 引用
+                  - columnheader "操作" [ref=e303]:
+                    - generic [ref=e304]: 操作
+            - table [ref=e309]:
+              - rowgroup [ref=e322]:
+                - row "Select this row codex-trace-page-codextrace900630 codex-trace-group codex-trace-button-codextrace900630 CSS [data-testid=\"codextrace900630\"] 启用 - - 0 详情 验证 编辑 删除" [ref=e323]:
+                  - cell "Select this row" [ref=e324]:
+                    - generic "Select this row" [ref=e326] [cursor=pointer]:
+                      - generic [ref=e327]:
+                        - checkbox "Select this row"
+                  - cell "codex-trace-page-codextrace900630" [ref=e329]:
+                    - generic [ref=e330]: codex-trace-page-codextrace900630
+                  - cell "codex-trace-group" [ref=e331]:
+                    - generic [ref=e332]: codex-trace-group
+                  - cell "codex-trace-button-codextrace900630" [ref=e333]:
+                    - generic [ref=e334]: codex-trace-button-codextrace900630
+                  - cell "CSS" [ref=e335]:
+                    - generic [ref=e336]: CSS
+                  - cell "[data-testid=\"codextrace900630\"]" [ref=e337]:
+                    - generic [ref=e338]: "[data-testid=\"codextrace900630\"]"
+                  - cell "启用" [ref=e339]:
+                    - generic [ref=e342]: 启用
+                  - cell "-" [ref=e343]:
+                    - generic [ref=e344]: "-"
+                  - cell "-" [ref=e345]:
+                    - generic [ref=e346]: "-"
+                  - cell "0" [ref=e347]:
+                    - generic [ref=e348]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e349]:
+                    - generic [ref=e350]:
+                      - button "详情" [ref=e351] [cursor=pointer]:
+                        - img [ref=e353]
+                        - generic [ref=e355]: 详情
+                      - button "验证" [ref=e356] [cursor=pointer]:
+                        - img [ref=e358]
+                        - generic [ref=e360]: 验证
+                      - button "编辑" [ref=e361] [cursor=pointer]:
+                        - img [ref=e363]
+                        - generic [ref=e366]: 编辑
+                      - button "删除" [ref=e367] [cursor=pointer]:
+                        - img [ref=e369]
+                        - generic [ref=e371]: 删除
+                - row "Select this row 保存闭环验证页 441869 保存闭环分组 441869 保存闭环按钮 441869 CSS [data-testid=save-loop-441869] 启用 - - 0 详情 验证 编辑 删除" [ref=e372]:
+                  - cell "Select this row" [ref=e373]:
+                    - generic "Select this row" [ref=e375] [cursor=pointer]:
+                      - generic [ref=e376]:
+                        - checkbox "Select this row"
+                  - cell "保存闭环验证页 441869" [ref=e378]:
+                    - generic [ref=e379]: 保存闭环验证页 441869
+                  - cell "保存闭环分组 441869" [ref=e380]:
+                    - generic [ref=e381]: 保存闭环分组 441869
+                  - cell "保存闭环按钮 441869" [ref=e382]:
+                    - generic [ref=e383]: 保存闭环按钮 441869
+                  - cell "CSS" [ref=e384]:
+                    - generic [ref=e385]: CSS
+                  - cell "[data-testid=save-loop-441869]" [ref=e386]:
+                    - generic [ref=e387]: "[data-testid=save-loop-441869]"
+                  - cell "启用" [ref=e388]:
+                    - generic [ref=e391]: 启用
+                  - cell "-" [ref=e392]:
+                    - generic [ref=e393]: "-"
+                  - cell "-" [ref=e394]:
+                    - generic [ref=e395]: "-"
+                  - cell "0" [ref=e396]:
+                    - generic [ref=e397]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e398]:
+                    - generic [ref=e399]:
+                      - button "详情" [ref=e400] [cursor=pointer]:
+                        - img [ref=e402]
+                        - generic [ref=e404]: 详情
+                      - button "验证" [ref=e405] [cursor=pointer]:
+                        - img [ref=e407]
+                        - generic [ref=e409]: 验证
+                      - button "编辑" [ref=e410] [cursor=pointer]:
+                        - img [ref=e412]
+                        - generic [ref=e415]: 编辑
+                      - button "删除" [ref=e416] [cursor=pointer]:
+                        - img [ref=e418]
+                        - generic [ref=e420]: 删除
+                - 'row "Select this row 测试 页面元素 Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user Password for all users: secret_sauce Test ID login-container 启用 - - 0 详情 验证 编辑 删除" [ref=e421]':
+                  - cell "Select this row" [ref=e422]:
+                    - generic "Select this row" [ref=e424] [cursor=pointer]:
+                      - generic [ref=e425]:
+                        - checkbox "Select this row"
+                  - cell "测试" [ref=e427]:
+                    - generic [ref=e428]: 测试
+                  - cell "页面元素" [ref=e429]:
+                    - generic [ref=e430]: 页面元素
+                  - 'cell "Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user Password for all users: secret_sauce" [ref=e431]':
+                    - generic [ref=e432]: "Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user Password for all users: secret_sauce"
+                  - cell "Test ID" [ref=e433]:
+                    - generic [ref=e434]: Test ID
+                  - cell "login-container" [ref=e435]:
+                    - generic [ref=e436]: login-container
+                  - cell "启用" [ref=e437]:
+                    - generic [ref=e440]: 启用
+                  - cell "-" [ref=e441]:
+                    - generic [ref=e442]: "-"
+                  - cell "-" [ref=e443]:
+                    - generic [ref=e444]: "-"
+                  - cell "0" [ref=e445]:
+                    - generic [ref=e446]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e447]:
+                    - generic [ref=e448]:
+                      - button "详情" [ref=e449] [cursor=pointer]:
+                        - img [ref=e451]
+                        - generic [ref=e453]: 详情
+                      - button "验证" [ref=e454] [cursor=pointer]:
+                        - img [ref=e456]
+                        - generic [ref=e458]: 验证
+                      - button "编辑" [ref=e459] [cursor=pointer]:
+                        - img [ref=e461]
+                        - generic [ref=e464]: 编辑
+                      - button "删除" [ref=e465] [cursor=pointer]:
+                        - img [ref=e467]
+                        - generic [ref=e469]: 删除
+                - row "Select this row 测试 页面元素 Username Test ID username 启用 - - 0 详情 验证 编辑 删除" [ref=e470]:
+                  - cell "Select this row" [ref=e471]:
+                    - generic "Select this row" [ref=e473] [cursor=pointer]:
+                      - generic [ref=e474]:
+                        - checkbox "Select this row" [checked]
+                  - cell "测试" [ref=e476]:
+                    - generic [ref=e477]: 测试
+                  - cell "页面元素" [ref=e478]:
+                    - generic [ref=e479]: 页面元素
+                  - cell "Username" [ref=e480]:
+                    - generic [ref=e481]: Username
+                  - cell "Test ID" [ref=e482]:
+                    - generic [ref=e483]: Test ID
+                  - cell "username" [ref=e484]:
+                    - generic [ref=e485]: username
+                  - cell "启用" [ref=e486]:
+                    - generic [ref=e489]: 启用
+                  - cell "-" [ref=e490]:
+                    - generic [ref=e491]: "-"
+                  - cell "-" [ref=e492]:
+                    - generic [ref=e493]: "-"
+                  - cell "0" [ref=e494]:
+                    - generic [ref=e495]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e496]:
+                    - generic [ref=e497]:
+                      - button "详情" [ref=e498] [cursor=pointer]:
+                        - img [ref=e500]
+                        - generic [ref=e502]: 详情
+                      - button "验证" [ref=e503] [cursor=pointer]:
+                        - img [ref=e505]
+                        - generic [ref=e507]: 验证
+                      - button "编辑" [ref=e508] [cursor=pointer]:
+                        - img [ref=e510]
+                        - generic [ref=e513]: 编辑
+                      - button "删除" [ref=e514] [cursor=pointer]:
+                        - img [ref=e516]
+                        - generic [ref=e518]: 删除
+                - row "Select this row 测试 页面元素 Password Test ID password 启用 - - 0 详情 验证 编辑 删除" [ref=e519]:
+                  - cell "Select this row" [ref=e520]:
+                    - generic "Select this row" [ref=e522] [cursor=pointer]:
+                      - generic [ref=e523]:
+                        - checkbox "Select this row" [checked]
+                  - cell "测试" [ref=e525]:
+                    - generic [ref=e526]: 测试
+                  - cell "页面元素" [ref=e527]:
+                    - generic [ref=e528]: 页面元素
+                  - cell "Password" [ref=e529]:
+                    - generic [ref=e530]: Password
+                  - cell "Test ID" [ref=e531]:
+                    - generic [ref=e532]: Test ID
+                  - cell "password" [ref=e533]:
+                    - generic [ref=e534]: password
+                  - cell "启用" [ref=e535]:
+                    - generic [ref=e538]: 启用
+                  - cell "-" [ref=e539]:
+                    - generic [ref=e540]: "-"
+                  - cell "-" [ref=e541]:
+                    - generic [ref=e542]: "-"
+                  - cell "0" [ref=e543]:
+                    - generic [ref=e544]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e545]:
+                    - generic [ref=e546]:
+                      - button "详情" [ref=e547] [cursor=pointer]:
+                        - img [ref=e549]
+                        - generic [ref=e551]: 详情
+                      - button "验证" [ref=e552] [cursor=pointer]:
+                        - img [ref=e554]
+                        - generic [ref=e556]: 验证
+                      - button "编辑" [ref=e557] [cursor=pointer]:
+                        - img [ref=e559]
+                        - generic [ref=e562]: 编辑
+                      - button "删除" [ref=e563] [cursor=pointer]:
+                        - img [ref=e565]
+                        - generic [ref=e567]: 删除
+                - row "Select this row 测试 页面元素 login-button Test ID login-button 启用 - - 0 详情 验证 编辑 删除" [ref=e568]:
+                  - cell "Select this row" [ref=e569]:
+                    - generic "Select this row" [ref=e571] [cursor=pointer]:
+                      - generic [ref=e572]:
+                        - checkbox "Select this row" [checked]
+                  - cell "测试" [ref=e574]:
+                    - generic [ref=e575]: 测试
+                  - cell "页面元素" [ref=e576]:
+                    - generic [ref=e577]: 页面元素
+                  - cell "login-button" [ref=e578]:
+                    - generic [ref=e579]: login-button
+                  - cell "Test ID" [ref=e580]:
+                    - generic [ref=e581]: Test ID
+                  - cell "login-button" [ref=e582]:
+                    - generic [ref=e583]: login-button
+                  - cell "启用" [ref=e584]:
+                    - generic [ref=e587]: 启用
+                  - cell "-" [ref=e588]:
+                    - generic [ref=e589]: "-"
+                  - cell "-" [ref=e590]:
+                    - generic [ref=e591]: "-"
+                  - cell "0" [ref=e592]:
+                    - generic [ref=e593]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e594]:
+                    - generic [ref=e595]:
+                      - button "详情" [ref=e596] [cursor=pointer]:
+                        - img [ref=e598]
+                        - generic [ref=e600]: 详情
+                      - button "验证" [ref=e601] [cursor=pointer]:
+                        - img [ref=e603]
+                        - generic [ref=e605]: 验证
+                      - button "编辑" [ref=e606] [cursor=pointer]:
+                        - img [ref=e608]
+                        - generic [ref=e611]: 编辑
+                      - button "删除" [ref=e612] [cursor=pointer]:
+                        - img [ref=e614]
+                        - generic [ref=e616]: 删除
+                - 'row "Select this row 测试 页面元素 Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user Test ID login-credentials 启用 - - 0 详情 验证 编辑 删除" [ref=e617]':
+                  - cell "Select this row" [ref=e618]:
+                    - generic "Select this row" [ref=e620] [cursor=pointer]:
+                      - generic [ref=e621]:
+                        - checkbox "Select this row"
+                  - cell "测试" [ref=e623]:
+                    - generic [ref=e624]: 测试
+                  - cell "页面元素" [ref=e625]:
+                    - generic [ref=e626]: 页面元素
+                  - 'cell "Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user" [ref=e627]':
+                    - generic [ref=e628]: "Accepted usernames are: standard_user locked_out_user problem_user performance_glitch_user error_user visual_user"
+                  - cell "Test ID" [ref=e629]:
+                    - generic [ref=e630]: Test ID
+                  - cell "login-credentials" [ref=e631]:
+                    - generic [ref=e632]: login-credentials
+                  - cell "启用" [ref=e633]:
+                    - generic [ref=e636]: 启用
+                  - cell "-" [ref=e637]:
+                    - generic [ref=e638]: "-"
+                  - cell "-" [ref=e639]:
+                    - generic [ref=e640]: "-"
+                  - cell "0" [ref=e641]:
+                    - generic [ref=e642]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e643]:
+                    - generic [ref=e644]:
+                      - button "详情" [ref=e645] [cursor=pointer]:
+                        - img [ref=e647]
+                        - generic [ref=e649]: 详情
+                      - button "验证" [ref=e650] [cursor=pointer]:
+                        - img [ref=e652]
+                        - generic [ref=e654]: 验证
+                      - button "编辑" [ref=e655] [cursor=pointer]:
+                        - img [ref=e657]
+                        - generic [ref=e660]: 编辑
+                      - button "删除" [ref=e661] [cursor=pointer]:
+                        - img [ref=e663]
+                        - generic [ref=e665]: 删除
+                - 'row "Select this row 测试 页面元素 Password for all users: secret_sauce Test ID login-password 启用 - - 0 详情 验证 编辑 删除" [ref=e666]':
+                  - cell "Select this row" [ref=e667]:
+                    - generic "Select this row" [ref=e669] [cursor=pointer]:
+                      - generic [ref=e670]:
+                        - checkbox "Select this row"
+                  - cell "测试" [ref=e672]:
+                    - generic [ref=e673]: 测试
+                  - cell "页面元素" [ref=e674]:
+                    - generic [ref=e675]: 页面元素
+                  - 'cell "Password for all users: secret_sauce" [ref=e676]':
+                    - generic [ref=e677]: "Password for all users: secret_sauce"
+                  - cell "Test ID" [ref=e678]:
+                    - generic [ref=e679]: Test ID
+                  - cell "login-password" [ref=e680]:
+                    - generic [ref=e681]: login-password
+                  - cell "启用" [ref=e682]:
+                    - generic [ref=e685]: 启用
+                  - cell "-" [ref=e686]:
+                    - generic [ref=e687]: "-"
+                  - cell "-" [ref=e688]:
+                    - generic [ref=e689]: "-"
+                  - cell "0" [ref=e690]:
+                    - generic [ref=e691]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e692]:
+                    - generic [ref=e693]:
+                      - button "详情" [ref=e694] [cursor=pointer]:
+                        - img [ref=e696]
+                        - generic [ref=e698]: 详情
+                      - button "验证" [ref=e699] [cursor=pointer]:
+                        - img [ref=e701]
+                        - generic [ref=e703]: 验证
+                      - button "编辑" [ref=e704] [cursor=pointer]:
+                        - img [ref=e706]
+                        - generic [ref=e709]: 编辑
+                      - button "删除" [ref=e710] [cursor=pointer]:
+                        - img [ref=e712]
+                        - generic [ref=e714]: 删除
+                - row "Select this row 登录页面 登录表单 用户名输入框 Test ID username 启用 失败 2026-06-22 16:03 0 详情 验证 编辑 删除" [ref=e715]:
+                  - cell "Select this row" [ref=e716]:
+                    - generic "Select this row" [ref=e718] [cursor=pointer]:
+                      - generic [ref=e719]:
+                        - checkbox "Select this row"
+                  - cell "登录页面" [ref=e721]:
+                    - generic [ref=e722]: 登录页面
+                  - cell "登录表单" [ref=e723]:
+                    - generic [ref=e724]: 登录表单
+                  - cell "用户名输入框" [ref=e725]:
+                    - generic [ref=e726]: 用户名输入框
+                  - cell "Test ID" [ref=e727]:
+                    - generic [ref=e728]: Test ID
+                  - cell "username" [ref=e729]:
+                    - generic [ref=e730]: username
+                  - cell "启用" [ref=e731]:
+                    - generic [ref=e734]: 启用
+                  - cell "失败" [ref=e735]:
+                    - generic [ref=e738]: 失败
+                  - cell "2026-06-22 16:03" [ref=e739]:
+                    - generic [ref=e740]: 2026-06-22 16:03
+                  - cell "0" [ref=e741]:
+                    - generic [ref=e742]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e743]:
+                    - generic [ref=e744]:
+                      - button "详情" [ref=e745] [cursor=pointer]:
+                        - img [ref=e747]
+                        - generic [ref=e749]: 详情
+                      - button "验证" [ref=e750] [cursor=pointer]:
+                        - img [ref=e752]
+                        - generic [ref=e754]: 验证
+                      - button "编辑" [ref=e755] [cursor=pointer]:
+                        - img [ref=e757]
+                        - generic [ref=e760]: 编辑
+                      - button "删除" [ref=e761] [cursor=pointer]:
+                        - img [ref=e763]
+                        - generic [ref=e765]: 删除
+                - row "Select this row 登录页面 登录表单 密码输入框 Test ID password 启用 - - 0 详情 验证 编辑 删除" [ref=e766]:
+                  - cell "Select this row" [ref=e767]:
+                    - generic "Select this row" [ref=e769] [cursor=pointer]:
+                      - generic [ref=e770]:
+                        - checkbox "Select this row"
+                  - cell "登录页面" [ref=e772]:
+                    - generic [ref=e773]: 登录页面
+                  - cell "登录表单" [ref=e774]:
+                    - generic [ref=e775]: 登录表单
+                  - cell "密码输入框" [ref=e776]:
+                    - generic [ref=e777]: 密码输入框
+                  - cell "Test ID" [ref=e778]:
+                    - generic [ref=e779]: Test ID
+                  - cell "password" [ref=e780]:
+                    - generic [ref=e781]: password
+                  - cell "启用" [ref=e782]:
+                    - generic [ref=e785]: 启用
+                  - cell "-" [ref=e786]:
+                    - generic [ref=e787]: "-"
+                  - cell "-" [ref=e788]:
+                    - generic [ref=e789]: "-"
+                  - cell "0" [ref=e790]:
+                    - generic [ref=e791]: "0"
+                  - cell "详情 验证 编辑 删除" [ref=e792]:
+                    - generic [ref=e793]:
+                      - button "详情" [ref=e794] [cursor=pointer]:
+                        - img [ref=e796]
+                        - generic [ref=e798]: 详情
+                      - button "验证" [ref=e799] [cursor=pointer]:
+                        - img [ref=e801]
+                        - generic [ref=e803]: 验证
+                      - button "编辑" [ref=e804] [cursor=pointer]:
+                        - img [ref=e806]
+                        - generic [ref=e809]: 编辑
+                      - button "删除" [ref=e810] [cursor=pointer]:
+                        - img [ref=e812]
+                        - generic [ref=e814]: 删除
+          - generic [ref=e817]:
+            - generic [ref=e818]: Total 11
+            - generic [ref=e821] [cursor=pointer]:
+              - generic:
+                - combobox [ref=e823]
+                - generic: 10/page
+              - img [ref=e826]
+            - button "Go to previous page" [disabled] [ref=e828]:
+              - generic:
+                - img
+            - list [ref=e829]:
+              - listitem "page 1" [ref=e830]: "1"
+              - listitem "page 2" [ref=e831] [cursor=pointer]: "2"
+            - button "Go to next page" [ref=e832] [cursor=pointer]:
+              - generic:
+                - img

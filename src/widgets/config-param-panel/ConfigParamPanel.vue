@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Plus, RefreshRight, Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Connection, Plus, RefreshRight, Search } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   ConfigStatCard,
@@ -12,15 +12,21 @@ import {
   getParamDescriptionText,
   getParamTypeMeta,
   getParamValueText,
+  type ConfigReferenceSummary,
   type ConfigStat,
   type ConfigStatus,
   type CreateParamPayload,
+  type ParamSetChangeHistoryItem,
   type ParamSetItem,
+  type ParamSetVersionItem,
 } from '@/entities/config'
 import { ConfigParamDialog, type ConfigParamDialogMode } from '@/features/config-param-create-edit'
 import { deleteConfigParam } from '@/features/config-param-delete'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import { debounce } from '@/shared/lib/debounce'
+import ConfigParamChangeHistoryDrawer from '@/widgets/config-param-change-history-drawer/ConfigParamChangeHistoryDrawer.vue'
+import ConfigParamVersionDrawer from '@/widgets/config-param-version-drawer/ConfigParamVersionDrawer.vue'
+import ConfigReferenceDrawer from '@/widgets/config-reference-drawer/ConfigReferenceDrawer.vue'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
@@ -42,6 +48,17 @@ const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const dialogVisible = ref(false)
+const referenceDrawerVisible = ref(false)
+const referenceLoading = ref(false)
+const referenceSummary = ref<ConfigReferenceSummary | null>(null)
+const changeHistoryDrawerVisible = ref(false)
+const changeHistoryLoading = ref(false)
+const changeHistoryItems = ref<ParamSetChangeHistoryItem[]>([])
+const versionDrawerVisible = ref(false)
+const versionLoading = ref(false)
+const versionItems = ref<ParamSetVersionItem[]>([])
+const versionParam = ref<ParamSetItem | null>(null)
+const rollbackingVersionId = ref<number | null>(null)
 const dialogMode = ref<ConfigParamDialogMode>('create')
 const editingParam = ref<ParamSetItem | null>(null)
 const deletingParamId = ref<number | null>(null)
@@ -50,13 +67,16 @@ const filterStatus = ref('')
 let suppressFilterLoad = false
 
 const filteredParams = computed(() => {
-  return params.value
+  if (!activeCategory.value) {
+    return params.value
+  }
+  return params.value.filter(item => getParamCategory(item) === activeCategory.value)
 })
 
 const stats = computed<ConfigStat[]>(() => [
   { label: '全部参数', value: params.value.length },
   { label: '全局参数', value: params.value.filter((item) => getParamCategory(item) === 'global').length, tone: 'primary' },
-  { label: '接口参数', value: params.value.filter((item) => getParamCategory(item) === 'api').length, tone: 'purple' },
+  { label: '接口变量', value: params.value.filter((item) => getParamCategory(item) === 'api').length, tone: 'purple' },
   { label: '业务参数', value: params.value.filter((item) => getParamCategory(item) === 'business').length, tone: 'success' },
   { label: 'Web UI 变量集', value: params.value.filter((item) => getParamCategory(item) === 'webUi').length, tone: 'warning' },
 ])
@@ -64,14 +84,13 @@ const stats = computed<ConfigStat[]>(() => [
 const categoryTabs: Array<{ label: string; value: ParamCategoryFilter }> = [
   { label: '全部', value: '' },
   { label: '全局参数', value: 'global' },
-  { label: '接口参数', value: 'api' },
+  { label: '接口变量', value: 'api' },
   { label: '业务参数', value: 'business' },
   { label: 'Web UI 变量集', value: 'webUi' },
 ]
 
 const paramQuery = computed(() => ({
   keyword: filterKeyword.value.trim(),
-  paramType: getParamTypeByCategory(activeCategory.value),
   status: filterStatus.value === '' ? undefined : (Number(filterStatus.value) as ConfigStatus),
 }))
 
@@ -86,13 +105,6 @@ function resetFilters() {
   activeCategory.value = ''
   suppressFilterLoad = false
   void loadParams()
-}
-
-function getParamTypeByCategory(category: ParamCategoryFilter) {
-  if (category === 'webUi') {
-    return 'WEB_UI_VARIABLE_SET'
-  }
-  return category ? category.toUpperCase() : ''
 }
 
 async function loadParams() {
@@ -125,10 +137,10 @@ async function submitParam(payload: CreateParamPayload) {
   try {
     if (dialogMode.value === 'edit' && editingParam.value) {
       await configApi.updateSettingsParam(props.workspaceCode, editingParam.value.id, payload)
-      ElMessage.success('参数配置已更新')
+      ElMessage.success('变量集/参数已更新')
     } else {
       await configApi.createSettingsParam(props.workspaceCode, payload)
-      ElMessage.success('参数配置已创建')
+      ElMessage.success('变量集/参数已创建')
     }
     dialogVisible.value = false
     await loadParams()
@@ -143,7 +155,7 @@ async function removeParam(param: ParamSetItem) {
   deletingParamId.value = param.id
   try {
     await deleteConfigParam(param, props.workspaceCode)
-    ElMessage.success('参数配置已删除')
+    ElMessage.success('变量集/参数已删除')
     await loadParams()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
@@ -151,6 +163,81 @@ async function removeParam(param: ParamSetItem) {
     }
   } finally {
     deletingParamId.value = null
+  }
+}
+
+async function openReferenceDrawer(param: ParamSetItem) {
+  referenceDrawerVisible.value = true
+  referenceLoading.value = true
+  referenceSummary.value = null
+  try {
+    referenceSummary.value = await configApi.getSettingsParamReferences(props.workspaceCode, param.id)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    referenceLoading.value = false
+  }
+}
+
+async function openChangeHistoryDrawer(param: ParamSetItem) {
+  changeHistoryDrawerVisible.value = true
+  changeHistoryLoading.value = true
+  changeHistoryItems.value = []
+  try {
+    const page = await configApi.getSettingsParamChangeHistory(props.workspaceCode, param.id)
+    changeHistoryItems.value = Array.isArray(page.items) ? page.items : []
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    changeHistoryLoading.value = false
+  }
+}
+
+async function loadVersions(param: ParamSetItem) {
+  versionLoading.value = true
+  versionItems.value = []
+  try {
+    const page = await configApi.getSettingsParamVersions(props.workspaceCode, param.id)
+    versionItems.value = Array.isArray(page.items) ? page.items : []
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+async function openVersionDrawer(param: ParamSetItem) {
+  versionParam.value = param
+  versionDrawerVisible.value = true
+  await loadVersions(param)
+}
+
+async function rollbackVersion(version: ParamSetVersionItem) {
+  if (!versionParam.value || version.latest) return
+  const latestVersion = versionItems.value.find(item => item.latest) || versionItems.value[0]
+  const nextVersionNo = (latestVersion?.versionNo || 0) + 1
+  try {
+    await ElMessageBox.confirm(
+      `确认将变量集从 v${latestVersion?.versionNo || '-'} 回滚到 v${version.versionNo}？回滚后会生成 v${nextVersionNo}。\n\n目标版本：${version.paramName || '-'}\n状态：${version.status === 0 ? '停用' : '启用'}\n变更字段：${version.changedFields || '-'}`,
+      '回滚变量集版本',
+      {
+        confirmButtonText: '确认回滚',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+  rollbackingVersionId.value = version.id
+  try {
+    await configApi.rollbackSettingsParamVersion(props.workspaceCode, versionParam.value.id, version.id)
+    ElMessage.success('变量集版本已回滚')
+    await Promise.all([loadParams(), loadVersions(versionParam.value)])
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    rollbackingVersionId.value = null
   }
 }
 
@@ -182,12 +269,12 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   <section class="config-panel">
     <header class="config-panel__header">
       <div>
-        <h2>参数配置</h2>
-        <p>管理全局配置参数和业务参数。</p>
+        <h2>变量集</h2>
+        <p>管理接口、Web UI 和业务运行时变量。</p>
       </div>
       <div class="config-panel__actions">
         <AppButton :icon="RefreshRight" :loading="loading" @click="loadParams">刷新</AppButton>
-        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增参数</AppButton>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集/参数</AppButton>
       </div>
     </header>
 
@@ -200,7 +287,7 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
         v-model="filterKeyword"
         class="config-filter-control config-filter-control--search"
         clearable
-        placeholder="搜索参数名 / 参数值 / 说明"
+        placeholder="搜索名称 / 变量值 / 说明"
         :prefix-icon="Search"
       />
       <el-select
@@ -236,11 +323,11 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       </button>
     </div>
 
-    <AppLoadingState v-if="loading && !params.length" text="正在加载参数配置..." />
+    <AppLoadingState v-if="loading && !params.length" text="正在加载变量集..." />
 
     <AppEmptyState
       v-else-if="errorMessage && !params.length"
-      title="参数配置加载失败"
+      title="变量集加载失败"
       :description="errorMessage"
     >
       <template #actions>
@@ -259,8 +346,8 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
         </colgroup>
         <thead>
           <tr>
-            <th>参数名</th>
-            <th>参数值</th>
+            <th>名称</th>
+            <th>值 / 变量数</th>
             <th>类型</th>
             <th>说明</th>
             <th>操作</th>
@@ -291,9 +378,34 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
                 type="button"
                 class="config-text-action"
                 :disabled="deletingParamId === param.id"
+                @click="openReferenceDrawer(param)"
+              >
+                <el-icon><Connection /></el-icon>
+                引用
+              </button>
+              <button
+                type="button"
+                class="config-text-action"
+                :disabled="deletingParamId === param.id"
                 @click="openEditDialog(param)"
               >
                 编辑
+              </button>
+              <button
+                type="button"
+                class="config-text-action"
+                :disabled="deletingParamId === param.id"
+                @click="openChangeHistoryDrawer(param)"
+              >
+                变更
+              </button>
+              <button
+                type="button"
+                class="config-text-action"
+                :disabled="deletingParamId === param.id"
+                @click="openVersionDrawer(param)"
+              >
+                版本
               </button>
               <button
                 type="button"
@@ -310,11 +422,11 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
 
       <AppEmptyState
         v-else
-        title="暂无参数配置"
-        description="当前筛选条件下没有参数配置。"
+        title="暂无变量集"
+        description="当前筛选条件下没有变量集或参数。"
       >
         <template #actions>
-          <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增参数</AppButton>
+          <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集/参数</AppButton>
         </template>
       </AppEmptyState>
     </div>
@@ -326,6 +438,24 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       :saving="saving"
       :default-workspace-code="workspaceCode"
       @submit="submitParam"
+    />
+    <ConfigReferenceDrawer
+      v-model="referenceDrawerVisible"
+      title="变量集引用详情"
+      :loading="referenceLoading"
+      :summary="referenceSummary"
+    />
+    <ConfigParamChangeHistoryDrawer
+      v-model="changeHistoryDrawerVisible"
+      :loading="changeHistoryLoading"
+      :items="changeHistoryItems"
+    />
+    <ConfigParamVersionDrawer
+      v-model="versionDrawerVisible"
+      :loading="versionLoading"
+      :items="versionItems"
+      :rollbacking-id="rollbackingVersionId"
+      @rollback="rollbackVersion"
     />
   </section>
 </template>

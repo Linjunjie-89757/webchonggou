@@ -155,6 +155,7 @@ public class ApiRunHistoryDomainService {
                 entity.getVariableSetName(),
                 entity.getOperatorName(),
                 entity.getCreatedAt(),
+                entity.getContextSnapshotJson(),
                 stepResults
         );
     }

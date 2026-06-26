@@ -73,6 +73,9 @@ function isAiCollectedElement(item?: WebUiElementItem | null) {
         <el-descriptions-item label="定位值">{{ target.locatorValue || '-' }}</el-descriptions-item>
         <el-descriptions-item label="最近验证时间">{{ formatWebUiDateTime(target.lastValidateAt) }}</el-descriptions-item>
         <el-descriptions-item label="最近更新时间">{{ formatWebUiDateTime(target.updatedAt) }}</el-descriptions-item>
+        <el-descriptions-item label="最近本地验证任务" :span="2">
+          {{ target.lastLocalRunnerRunId || '-' }}
+        </el-descriptions-item>
         <el-descriptions-item label="来源">
           <el-tag :type="isAiCollectedElement(target) ? 'primary' : 'info'" effect="light">
             {{ isAiCollectedElement(target) ? '智能采集' : '手工维护' }}

@@ -6,8 +6,10 @@ import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import AiProviderPanel from '@/widgets/ai-provider-panel/AiProviderPanel.vue'
+import ConfigComingSoonPanel from '@/widgets/config-coming-soon-panel/ConfigComingSoonPanel.vue'
 import ConfigDbPanel from '@/widgets/config-db-panel/ConfigDbPanel.vue'
 import ConfigEnvPanel from '@/widgets/config-env-panel/ConfigEnvPanel.vue'
+import ConfigMockPanel from '@/widgets/config-mock-panel/ConfigMockPanel.vue'
 import ConfigParamPanel from '@/widgets/config-param-panel/ConfigParamPanel.vue'
 import ConfigSidebar from '@/widgets/config-sidebar/ConfigSidebar.vue'
 
@@ -90,6 +92,25 @@ onMounted(() => {
       <main class="config-center-page__content">
         <ConfigEnvPanel v-if="activeTab === 'env'" :workspace-code="workspaceCode" />
         <ConfigParamPanel v-else-if="activeTab === 'param'" :workspace-code="workspaceCode" />
+        <ConfigMockPanel v-else-if="activeTab === 'mock'" :workspace-code="workspaceCode" />
+        <ConfigComingSoonPanel
+          v-else-if="activeTab === 'runner'"
+          title="执行器配置"
+          description="管理远程执行器、Runner 在线状态、能力标签和并发上限。"
+          :items="['执行器列表', '能力标签与心跳', '任务占用与强制终止']"
+        />
+        <ConfigComingSoonPanel
+          v-else-if="activeTab === 'notification'"
+          title="通知配置"
+          description="配置自动化运行失败、定时回归完成、连续失败等通知规则和通知渠道。"
+          :items="['通知渠道', '通知规则', '失败策略与补发记录']"
+        />
+        <ConfigComingSoonPanel
+          v-else-if="activeTab === 'proxy'"
+          title="网络代理"
+          description="维护全局代理、空间代理和环境代理引用，代理账号密码按敏感字段处理。"
+          :items="['代理地址与端口', '敏感账号密码', '环境级代理引用']"
+        />
         <ConfigDbPanel v-else-if="activeTab === 'dbConnection'" :workspace-code="workspaceCode" />
         <AiProviderPanel v-else :workspace-code="workspaceCode" />
       </main>

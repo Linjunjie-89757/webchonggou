@@ -109,4 +109,7 @@ public class ApiExecutionSuiteRunHistoryEntity extends BaseEntity {
 
     @TableField("item_snapshot_json")
     private String itemSnapshotJson;
+
+    @TableField("context_snapshot_json")
+    private String contextSnapshotJson;
 }

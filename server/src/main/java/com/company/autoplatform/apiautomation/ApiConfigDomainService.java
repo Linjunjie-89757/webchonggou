@@ -122,7 +122,7 @@ public class ApiConfigDomainService {
 
     private void fillEnvironmentEntity(EnvConfigEntity entity, WorkspaceEntity workspace, ApiEnvironmentRequest request) {
         EnvironmentConfigPayload previousConfig = ApiAutomationJsonSupport.read(entity.getConfigJson(), EnvironmentConfigPayload.class,
-                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of()));
+                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of(), null, null));
         entity.setWorkspaceId(workspace.getId());
         entity.setEnvType(API_ENV_TYPE);
         entity.setEnvName(request.name().trim());
@@ -131,7 +131,9 @@ public class ApiConfigDomainService {
                 defaultList(request.headers()),
                 normalizeAuth(request.authConfig()),
                 request.timeoutMs() == null || request.timeoutMs() <= 0 ? 10000 : request.timeoutMs(),
-                defaultList(previousConfig.variables())
+                defaultList(previousConfig.variables()),
+                request.defaultVariableSetId() == null ? previousConfig.defaultVariableSetId() : request.defaultVariableSetId(),
+                request.mockApplicationId() == null ? previousConfig.mockApplicationId() : request.mockApplicationId()
         ), "Failed to serialize environment config"));
         entity.setStatus(request.status() == null ? 1 : normalizeStatus(request.status()));
     }
@@ -147,7 +149,7 @@ public class ApiConfigDomainService {
     private ApiEnvironmentItem toEnvironmentItem(EnvConfigEntity entity) {
         WorkspaceEntity workspace = workspaceService.requireWorkspaceById(entity.getWorkspaceId());
         EnvironmentConfigPayload config = ApiAutomationJsonSupport.read(entity.getConfigJson(), EnvironmentConfigPayload.class,
-                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of()));
+                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of(), null, null));
         return new ApiEnvironmentItem(
                 entity.getId(),
                 workspace.getWorkspaceCode(),
@@ -157,6 +159,8 @@ public class ApiConfigDomainService {
                 defaultList(config.headers()),
                 normalizeAuth(config.authConfig()),
                 config.timeoutMs() == null ? 10000 : config.timeoutMs(),
+                config.defaultVariableSetId(),
+                config.mockApplicationId(),
                 entity.getStatus()
         );
     }
@@ -238,7 +242,9 @@ public class ApiConfigDomainService {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
-            List<ApiVariableItem> variables
+            List<ApiVariableItem> variables,
+            Long defaultVariableSetId,
+            Long mockApplicationId
     ) {
     }
 }

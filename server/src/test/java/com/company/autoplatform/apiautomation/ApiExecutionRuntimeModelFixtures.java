@@ -15,7 +15,7 @@ final class ApiExecutionRuntimeModelFixtures {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig
     ) {
-        return new ApiExecutionRuntimeModels.ResolvedEnvironment(null, baseUrl, headers, authConfig, 1000, List.of());
+        return new ApiExecutionRuntimeModels.ResolvedEnvironment(null, baseUrl, headers, authConfig, 1000, List.of(), null, null, null, null, null);
     }
 
     static ApiExecutionRuntimeModels.MutableRequestConfig mutableRequestConfig(

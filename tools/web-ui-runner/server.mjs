@@ -2,11 +2,12 @@ import { createServer } from 'node:http';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { buildCandidatesFromElements, normalizeLocatorValidationResult, isProbablyLoginPage } from './collector.mjs';
 import { isAllowedRunnerOrigin, parseAllowedOrigins } from './cors.mjs';
+import { createRunnerTaskPoller } from './platformTaskPoller.mjs';
 import { resolveOpenTarget } from './session.mjs';
 
 const HOST = '127.0.0.1';
@@ -31,6 +32,18 @@ let platformPoller;
 const port = Number.parseInt(process.env.WEB_UI_RUNNER_PORT || '', 10) || DEFAULT_PORT;
 const allowedOrigins = parseAllowedOrigins(process.env.WEB_UI_RUNNER_ORIGINS);
 const sessionTtlMinutes = normalizePositiveNumber(process.env.WEB_UI_RUNNER_SESSION_TTL_MINUTES, DEFAULT_SESSION_TTL_MINUTES);
+const runnerTaskPoller = createRunnerTaskPoller({
+  runnerVersion: RUNNER_VERSION,
+  defaultInstallId: process.env.WEB_UI_RUNNER_INSTALL_ID || `web-ui-runner-${hostname()}`,
+  machineHint: {
+    deviceName: hostname(),
+    runnerName: 'Web UI Local Runner',
+    source: 'node-local-runner',
+  },
+  webElementValidateExecutor: async ({ locators }) => validateCurrentPageLocators({
+    locators,
+  }),
+});
 
 const server = createServer(async (request, response) => {
   try {
@@ -90,6 +103,21 @@ const server = createServer(async (request, response) => {
 
     if (route === 'GET /platform/poll/status') {
       return sendJson(response, 200, getPlatformPollStatus());
+    }
+
+    if (route === 'POST /tasks/poll/start') {
+      const payload = await readJson(request);
+      const result = await runnerTaskPoller.start(payload);
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'POST /tasks/poll/stop') {
+      const result = runnerTaskPoller.stop('manual');
+      return sendJson(response, 200, result);
+    }
+
+    if (route === 'GET /tasks/poll/status') {
+      return sendJson(response, 200, runnerTaskPoller.status());
     }
 
     if (route === 'POST /auth/save') {
@@ -1078,6 +1106,7 @@ function normalizePositiveNumber(value, fallback) {
 }
 
 async function shutdown() {
+  runnerTaskPoller.stop('shutdown');
   await context?.close().catch(() => {});
   await browser?.close().catch(() => {});
   process.exit(0);

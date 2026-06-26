@@ -1,4 +1,12 @@
-export type ConfigCenterTab = 'env' | 'param' | 'dbConnection' | 'aiProvider'
+export type ConfigCenterTab =
+  | 'env'
+  | 'param'
+  | 'mock'
+  | 'runner'
+  | 'notification'
+  | 'proxy'
+  | 'dbConnection'
+  | 'aiProvider'
 
 export type ConfigStatus = 0 | 1
 
@@ -30,6 +38,40 @@ export interface ParamSetItem {
   paramName: string
   contentJson: string
   status: ConfigStatus
+}
+
+export interface ParamSetChangeHistoryItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  paramSetId: number
+  paramName: string
+  changeType: 'CREATE' | 'UPDATE' | 'STATUS' | string
+  beforeJson: string | null
+  afterJson: string | null
+  changedFields: string | null
+  operatorId: number | null
+  operatorName: string | null
+  createdAt: string | null
+}
+
+export interface ParamSetVersionItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  paramSetId: number
+  versionNo: number
+  paramType: string
+  paramName: string
+  contentJson: string | null
+  status: ConfigStatus
+  changeType: 'CREATE' | 'UPDATE' | 'STATUS' | 'ROLLBACK' | string
+  changedFields: string | null
+  sourceVersionId: number | null
+  operatorId: number | null
+  operatorName: string | null
+  latest: boolean
+  createdAt: string | null
 }
 
 export interface CreateParamPayload {
@@ -82,6 +124,121 @@ export interface DbConnectionTestPayload {
 
 export interface UpdateDbConnectionStatusPayload {
   status: ConfigStatus
+}
+
+export interface MockApplicationItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  appName: string
+  appCode: string
+  description: string | null
+  status: ConfigStatus
+}
+
+export interface CreateMockApplicationPayload {
+  workspaceCode?: string
+  appName: string
+  appCode: string
+  description?: string | null
+  status?: ConfigStatus
+}
+
+export interface MockEndpointItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  appId: number
+  appName: string
+  endpointName: string
+  httpMethod: string
+  pathPattern: string
+  description: string | null
+  status: ConfigStatus
+}
+
+export interface CreateMockEndpointPayload {
+  workspaceCode?: string
+  appId: number
+  endpointName: string
+  httpMethod: string
+  pathPattern: string
+  description?: string | null
+  status?: ConfigStatus
+}
+
+export interface MockScenarioItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  appId: number
+  appName: string
+  endpointId: number
+  endpointName: string
+  scenarioName: string
+  priority: number
+  matchJson: string
+  responseStatus: number
+  responseHeadersJson: string
+  responseBody: string
+  responseDelayMs: number
+  variablesJson: string
+  status: ConfigStatus
+}
+
+export interface CreateMockScenarioPayload {
+  workspaceCode?: string
+  appId: number
+  endpointId: number
+  scenarioName: string
+  priority?: number
+  matchJson?: string
+  responseStatus?: number
+  responseHeadersJson?: string
+  responseBody?: string
+  responseDelayMs?: number
+  variablesJson?: string
+  status?: ConfigStatus
+}
+
+export interface MockCallLogItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  appId: number | null
+  appName: string | null
+  endpointId: number | null
+  endpointName: string | null
+  scenarioId: number | null
+  scenarioName: string | null
+  httpMethod: string
+  requestPath: string
+  requestHeadersJson: string | null
+  requestBody: string | null
+  responseStatus: number | null
+  responseHeadersJson: string | null
+  responseBody: string | null
+  matched: boolean
+  status: string
+  createdAt: string
+}
+
+export interface ConfigReferenceItem {
+  sourceType: string
+  sourceId: number | null
+  sourceName: string | null
+  workspaceCode: string | null
+  workspaceName: string | null
+  referenceField: string | null
+  updatedAt: string | null
+}
+
+export interface ConfigReferenceSummary {
+  resourceType: string
+  resourceId: number
+  resourceName: string
+  totalCount: number
+  items: ConfigReferenceItem[]
 }
 
 export interface ConfigStat {

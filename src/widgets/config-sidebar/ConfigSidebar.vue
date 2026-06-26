@@ -14,6 +14,10 @@ const emit = defineEmits<{
 const icons = {
   env: Connection,
   param: Key,
+  mock: Connection,
+  runner: Cpu,
+  notification: Key,
+  proxy: Connection,
   dbConnection: Coin,
   aiProvider: Cpu,
 }

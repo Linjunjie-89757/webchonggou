@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Delete, Edit, Plus, RefreshRight, Search, Switch } from '@element-plus/icons-vue'
+import { Connection, Delete, Edit, Plus, RefreshRight, Search, Switch } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -13,6 +13,7 @@ import {
   isProductionEnv,
   type ConfigStat,
   type ConfigStatus,
+  type ConfigReferenceSummary,
   type CreateEnvPayload,
   type EnvConfigItem,
 } from '@/entities/config'
@@ -21,6 +22,7 @@ import { deleteConfigEnv } from '@/features/config-env-delete'
 import { toggleConfigEnvStatus } from '@/features/config-env-toggle-status'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import { debounce } from '@/shared/lib/debounce'
+import ConfigReferenceDrawer from '@/widgets/config-reference-drawer/ConfigReferenceDrawer.vue'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
@@ -39,6 +41,9 @@ const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const dialogVisible = ref(false)
+const referenceDrawerVisible = ref(false)
+const referenceLoading = ref(false)
+const referenceSummary = ref<ConfigReferenceSummary | null>(null)
 const dialogMode = ref<ConfigEnvDialogMode>('create')
 const editingEnv = ref<EnvConfigItem | null>(null)
 const deletingEnvId = ref<number | null>(null)
@@ -146,6 +151,19 @@ async function switchEnvStatus(env: EnvConfigItem) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     togglingEnvId.value = null
+  }
+}
+
+async function openReferenceDrawer(env: EnvConfigItem) {
+  referenceDrawerVisible.value = true
+  referenceLoading.value = true
+  referenceSummary.value = null
+  try {
+    referenceSummary.value = await configApi.getSettingsEnvReferences(props.workspaceCode, env.id)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    referenceLoading.value = false
   }
 }
 
@@ -274,6 +292,15 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
             <button
               type="button"
               class="config-env-card__icon-button"
+              aria-label="查看引用"
+              :disabled="isEnvOperating(env)"
+              @click="openReferenceDrawer(env)"
+            >
+              <el-icon><Connection /></el-icon>
+            </button>
+            <button
+              type="button"
+              class="config-env-card__icon-button"
               aria-label="编辑环境"
               :disabled="isEnvOperating(env)"
               @click="openEditDialog(env)"
@@ -321,6 +348,12 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
       :saving="saving"
       :default-workspace-code="workspaceCode"
       @submit="submitEnv"
+    />
+    <ConfigReferenceDrawer
+      v-model="referenceDrawerVisible"
+      title="环境引用详情"
+      :loading="referenceLoading"
+      :summary="referenceSummary"
     />
   </section>
 </template>

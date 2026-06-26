@@ -27,7 +27,9 @@ final class ApiExecutionRuntimeModels {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
-            List<ApiVariableItem> variables
+            List<ApiVariableItem> variables,
+            Long defaultVariableSetId,
+            Long mockApplicationId
     ) {
     }
 
@@ -37,13 +39,49 @@ final class ApiExecutionRuntimeModels {
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
-            List<ApiVariableItem> variables
+            List<ApiVariableItem> variables,
+            Long defaultVariableSetId,
+            Long mockApplicationId,
+            String mockApplicationName,
+            String mockApplicationCode,
+            String mockBaseUrl
     ) {
     }
 
     record ExecutionContext(
             ResolvedEnvironment environment,
+            Map<String, String> variables,
+            String contextSnapshotJson
+    ) {
+    }
+
+    record RuntimeContextSnapshot(
+            RuntimeEnvironmentSnapshot environment,
+            RuntimeVariableSetSnapshot variableSet,
+            RuntimeMockSnapshot mock,
             Map<String, String> variables
+    ) {
+    }
+
+    record RuntimeEnvironmentSnapshot(
+            Long id,
+            String baseUrl,
+            Integer timeoutMs
+    ) {
+    }
+
+    record RuntimeVariableSetSnapshot(
+            Long id,
+            String name,
+            Integer versionNo
+    ) {
+    }
+
+    record RuntimeMockSnapshot(
+            Long id,
+            String appName,
+            String appCode,
+            String baseUrl
     ) {
     }
 

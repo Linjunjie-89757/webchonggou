@@ -61,6 +61,14 @@ public class SettingsController {
         return ApiResponse.ok(settingsService.updateEnvStatus(id, workspaceCode, request), "环境状态更新成功");
     }
 
+    @GetMapping("/envs/{id}/references")
+    public ApiResponse<ConfigReferenceModels.ConfigReferenceSummary> environmentReferences(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        return ApiResponse.ok(settingsService.environmentReferences(id, workspaceCode));
+    }
+
     @DeleteMapping("/envs/{id}")
     public ApiResponse<Void> deleteEnv(
             @PathVariable Long id,
@@ -104,6 +112,39 @@ public class SettingsController {
             @Valid @RequestBody UpdateSettingStatusRequest request
     ) {
         return ApiResponse.ok(settingsService.updateParamStatus(id, workspaceCode, request), "参数集状态更新成功");
+    }
+
+    @GetMapping("/params/{id}/references")
+    public ApiResponse<ConfigReferenceModels.ConfigReferenceSummary> paramReferences(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        return ApiResponse.ok(settingsService.paramReferences(id, workspaceCode));
+    }
+
+    @GetMapping("/params/{id}/change-history")
+    public ApiResponse<PageResponse<ParamSetChangeHistoryItem>> listParamChangeHistory(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        return ApiResponse.ok(settingsService.listParamChangeHistory(id, workspaceCode));
+    }
+
+    @GetMapping("/params/{id}/versions")
+    public ApiResponse<PageResponse<ParamSetVersionItem>> listParamVersions(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        return ApiResponse.ok(settingsService.listParamVersions(id, workspaceCode));
+    }
+
+    @PostMapping("/params/{id}/versions/{versionId}/rollback")
+    public ApiResponse<ParamSetItem> rollbackParamVersion(
+            @PathVariable Long id,
+            @PathVariable Long versionId,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        return ApiResponse.ok(settingsService.rollbackParamVersion(id, versionId, workspaceCode), "参数集版本已回滚");
     }
 
     @DeleteMapping("/params/{id}")

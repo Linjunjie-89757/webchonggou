@@ -150,6 +150,7 @@ public class WebUiEnvironmentDomainService {
                 "WEB_UI",
                 entity.getDefaultVariableSetId(),
                 defaultVariableSet == null ? null : defaultVariableSet.getParamName(),
+                null,
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
@@ -175,6 +176,7 @@ public class WebUiEnvironmentDomainService {
                 "CONFIG_CENTER",
                 config.defaultVariableSetId(),
                 defaultVariableSet == null ? null : defaultVariableSet.getParamName(),
+                config.mockApplicationId(),
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );

@@ -55,4 +55,7 @@ public class ApiDefinitionCaseRunHistoryEntity extends BaseEntity {
 
     @TableField("response_size")
     private Long responseSize;
+
+    @TableField("context_snapshot_json")
+    private String contextSnapshotJson;
 }

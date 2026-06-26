@@ -18,13 +18,16 @@ public class SettingsEnvironmentDomainService {
 
     private final EnvConfigMapper envConfigMapper;
     private final WorkspaceService workspaceService;
+    private final ConfigReferenceDomainService referenceDomainService;
 
     public SettingsEnvironmentDomainService(
             EnvConfigMapper envConfigMapper,
-            WorkspaceService workspaceService
+            WorkspaceService workspaceService,
+            ConfigReferenceDomainService referenceDomainService
     ) {
         this.envConfigMapper = envConfigMapper;
         this.workspaceService = workspaceService;
+        this.referenceDomainService = referenceDomainService;
     }
 
     public PageResponse<EnvConfigItem> listEnvs(String workspaceCode, String keyword, String envType, Integer status) {
@@ -108,6 +111,7 @@ public class SettingsEnvironmentDomainService {
         EnvConfigEntity entity = requireEnv(id);
         validateReadable(entity.getWorkspaceId(), workspaceCode, "当前空间上下文不可删除该环境");
         workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(entity.getWorkspaceId()).getWorkspaceCode());
+        referenceDomainService.assertEnvironmentNotReferenced(id, entity.getWorkspaceId());
         envConfigMapper.deleteById(id);
     }
 

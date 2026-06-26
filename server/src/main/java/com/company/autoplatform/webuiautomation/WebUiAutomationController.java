@@ -445,6 +445,15 @@ public class WebUiAutomationController {
         return ApiResponse.ok(webUiAutomationService.validateElement(id, workspaceCode, request), "Web UI element validated");
     }
 
+    @PostMapping("/elements/{id}/local-runner-validation-result")
+    public ApiResponse<ValidateWebUiLocatorResponse> applyLocalRunnerElementValidationResult(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,
+            @RequestBody ApplyLocalRunnerElementValidationResultRequest request
+    ) {
+        return ApiResponse.ok(webUiAutomationService.applyLocalRunnerElementValidationResult(id, workspaceCode, request), "Web UI local runner validation result applied");
+    }
+
     @PostMapping("/cases/{id}/run")
     public ApiResponse<WebUiRunResponse> runCase(
             @PathVariable Long id,

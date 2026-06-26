@@ -6,7 +6,11 @@ export const configCenterTabs: Array<{
   description: string
 }> = [
   { id: 'env', label: '环境配置', description: '测试环境管理' },
-  { id: 'param', label: '参数配置', description: '全局参数设置' },
+  { id: 'param', label: '变量集', description: '运行参数与敏感变量' },
+  { id: 'mock', label: 'Mock 服务', description: '第三方响应模拟' },
+  { id: 'runner', label: '执行器配置', description: '远程 Runner 管理' },
+  { id: 'notification', label: '通知配置', description: '失败通知与渠道' },
+  { id: 'proxy', label: '网络代理', description: '网络出口与代理' },
   { id: 'dbConnection', label: '数据库连接', description: '数据源配置' },
   { id: 'aiProvider', label: 'AI 连接池', description: '模型服务连接' },
 ]
@@ -25,6 +29,7 @@ export const configStatusOptions = [
 
 export const configParamTypeOptions = [
   { value: 'GLOBAL', label: '全局参数' },
+  { value: 'API_VARIABLE_SET', label: '接口变量集' },
   { value: 'API', label: '接口参数' },
   { value: 'BUSINESS', label: '业务参数' },
   { value: 'WEB_UI_VARIABLE_SET', label: 'Web UI 变量集' },

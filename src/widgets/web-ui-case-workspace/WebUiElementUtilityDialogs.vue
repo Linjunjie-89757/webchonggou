@@ -30,6 +30,7 @@ defineProps<{
   validateFailureHint: string
   validateImageSrc: string
   validating: boolean
+  localRunnerValidating: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +46,7 @@ const emit = defineEmits<{
   'submit-import': []
   'preview-validate-screenshot': []
   'submit-validate': []
+  'submit-local-runner-validate': []
 }>()
 </script>
 
@@ -127,7 +129,7 @@ const emit = defineEmits<{
       <el-alert
         v-if="validateResult"
         :type="validateResult.matched ? 'success' : 'warning'"
-        :title="validateResult.matched ? `匹配到 ${validateResult.matchCount} 个元素` : '未匹配到元素'"
+        :title="validateResult.matched ? `匹配到 ${validateResult.matchCount} 个元素` : validateResult.matchCount > 0 ? `匹配到 ${validateResult.matchCount} 个元素，未通过验证` : '未匹配到元素'"
         :description="validateResult.errorMessage || ''"
         show-icon
         :closable="false"
@@ -146,7 +148,8 @@ const emit = defineEmits<{
     </div>
     <template #footer>
       <AppButton @click="emit('update:validateVisible', false)">关闭</AppButton>
-      <AppButton type="primary" :loading="validating" @click="emit('submit-validate')">开始验证</AppButton>
+      <AppButton :loading="localRunnerValidating" :disabled="validating" @click="emit('submit-local-runner-validate')">本地 Runner 验证当前页</AppButton>
+      <AppButton type="primary" :loading="validating" :disabled="localRunnerValidating" @click="emit('submit-validate')">开始验证</AppButton>
     </template>
   </el-dialog>
 </template>

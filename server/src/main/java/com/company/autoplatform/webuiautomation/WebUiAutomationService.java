@@ -304,6 +304,14 @@ public class WebUiAutomationService {
         return elementDomainService.validateElement(id, workspaceCode, request);
     }
 
+    public ValidateWebUiLocatorResponse applyLocalRunnerElementValidationResult(
+            Long id,
+            String workspaceCode,
+            ApplyLocalRunnerElementValidationResultRequest request
+    ) {
+        return elementDomainService.applyLocalRunnerElementValidationResult(id, workspaceCode, request);
+    }
+
     public WebUiRunResponse runCase(Long id, String workspaceCode, WebUiRunRequest request) {
         return executionDomainService.runCase(id, workspaceCode, request);
     }
@@ -393,7 +401,8 @@ public class WebUiAutomationService {
                 result.matched(),
                 result.matchCount(),
                 result.errorMessage(),
-                result.screenshotBytes() == null ? null : Base64.getEncoder().encodeToString(result.screenshotBytes())
+                result.screenshotBytes() == null ? null : Base64.getEncoder().encodeToString(result.screenshotBytes()),
+                null
         );
     }
 

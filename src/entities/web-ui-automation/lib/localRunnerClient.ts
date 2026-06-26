@@ -113,6 +113,39 @@ export interface LocalRunnerPlatformPollStatus {
   } | null
 }
 
+export interface LocalRunnerTaskPollPayload {
+  installId?: string
+  runnerId?: string | null
+  runnerToken?: string | null
+  capabilities?: string[]
+  workspaceCodes?: string[]
+  intervalMs?: number
+}
+
+export interface LocalRunnerTaskPollingStatus {
+  success: boolean
+  poller: {
+    apiBaseUrl: string
+    installId: string
+    runnerId: string | null
+    runnerVersion: string
+    protocolVersion: string
+    capabilities: string[]
+    workspaceCodes: string[]
+    running: boolean
+    tickRunning: boolean
+    startedAt: string | null
+    lastTickAt: string | null
+    lastSuccessAt: string | null
+    lastError: string | null
+    lastMessage: string | null
+    pulledCount: number
+    completedCount: number
+    failedCount: number
+    intervalMs: number
+  } | null
+}
+
 export interface LocalRunnerAuthStatus {
   success: boolean
   workspaceId: string
@@ -501,6 +534,31 @@ export async function stopLocalRunnerPlatformPolling() {
 
 export async function getLocalRunnerPlatformPollingStatus() {
   return requestLocalRunner<LocalRunnerPlatformPollStatus>('/platform/poll/status')
+}
+
+export async function startLocalRunnerTaskPolling(payload: LocalRunnerTaskPollPayload = {}) {
+  return requestLocalRunner<LocalRunnerTaskPollingStatus>('/tasks/poll/start', {
+    method: 'POST',
+    body: {
+      apiBaseUrl: env.apiBaseUrl,
+      installId: payload.installId,
+      runnerId: payload.runnerId || null,
+      runnerToken: payload.runnerToken || null,
+      capabilities: payload.capabilities || ['WEB_ELEMENT_VALIDATE'],
+      workspaceCodes: payload.workspaceCodes || [],
+      intervalMs: payload.intervalMs || 2000,
+    },
+  })
+}
+
+export async function stopLocalRunnerTaskPolling() {
+  return requestLocalRunner<LocalRunnerTaskPollingStatus>('/tasks/poll/stop', {
+    method: 'POST',
+  })
+}
+
+export async function getLocalRunnerTaskPollingStatus() {
+  return requestLocalRunner<LocalRunnerTaskPollingStatus>('/tasks/poll/status')
 }
 
 export function mapRunnerCandidateToCollectCandidate(input: {

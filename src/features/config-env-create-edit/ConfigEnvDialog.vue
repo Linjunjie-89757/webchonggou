@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 
-import { configApi, configEnvTypeOptions, configStatusOptions, type EnvConfigItem, type ParamSetItem } from '@/entities/config'
+import {
+  configApi,
+  configEnvTypeOptions,
+  configParamTypeOptions,
+  configStatusOptions,
+  type MockApplicationItem,
+  type EnvConfigItem,
+  type ParamSetItem,
+} from '@/entities/config'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
@@ -39,10 +47,16 @@ const formError = reactive({
   message: '',
 })
 const variableSets = ref<ParamSetItem[]>([])
+const mockApplications = ref<MockApplicationItem[]>([])
 const loadingVariableSets = ref(false)
+const loadingMockApplications = ref(false)
 let variableSetRequestSeq = 0
+let mockApplicationRequestSeq = 0
+
+const paramTypeLabelMap = new Map<string, string>(configParamTypeOptions.map(item => [item.value, item.label]))
 
 const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
+const enabledMockApplications = computed(() => mockApplications.value.filter(item => item.status !== 0))
 
 function resetForm() {
   const nextForm =
@@ -70,7 +84,6 @@ async function loadVariableSets() {
   loadingVariableSets.value = true
   try {
     const page = await configApi.getSettingsParams(props.defaultWorkspaceCode, {
-      paramType: 'WEB_UI_VARIABLE_SET',
       status: 1,
     })
     if (requestId === variableSetRequestSeq) {
@@ -87,12 +100,34 @@ async function loadVariableSets() {
   }
 }
 
+async function loadMockApplications() {
+  const requestId = ++mockApplicationRequestSeq
+  loadingMockApplications.value = true
+  try {
+    const page = await configApi.getMockApplications(props.defaultWorkspaceCode, {
+      status: 1,
+    })
+    if (requestId === mockApplicationRequestSeq) {
+      mockApplications.value = Array.isArray(page.items) ? page.items : []
+    }
+  } catch (error) {
+    if (requestId === mockApplicationRequestSeq) {
+      formError.message = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestId === mockApplicationRequestSeq) {
+      loadingMockApplications.value = false
+    }
+  }
+}
+
 watch(
   () => props.modelValue,
   (visible) => {
     if (visible) {
       resetForm()
       void loadVariableSets()
+      void loadMockApplications()
     }
   },
 )
@@ -189,7 +224,7 @@ watch(
           <el-option
             v-for="variableSet in enabledVariableSets"
             :key="variableSet.id"
-            :label="variableSet.paramName"
+            :label="`${variableSet.paramName}（${paramTypeLabelMap.get(variableSet.paramType) ?? variableSet.paramType}）`"
             :value="variableSet.id"
           />
         </el-select>
@@ -198,11 +233,58 @@ watch(
       <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__field">
         <span>描述</span>
         <el-input
-          v-model="form.configJson"
+          v-model="form.description"
           type="textarea"
           :rows="3"
           placeholder="描述该环境的用途或注意事项"
         />
+      </div>
+
+      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__field">
+        <span>默认变量集</span>
+        <el-select
+          v-model="form.defaultVariableSetId"
+          clearable
+          filterable
+          :loading="loadingVariableSets"
+          placeholder="请选择默认变量集"
+        >
+          <el-option
+            v-for="variableSet in enabledVariableSets"
+            :key="variableSet.id"
+            :label="`${variableSet.paramName}（${paramTypeLabelMap.get(variableSet.paramType) ?? variableSet.paramType}）`"
+            :value="variableSet.id"
+          />
+        </el-select>
+      </div>
+
+      <div class="config-env-dialog__field">
+        <span>关联 Mock 应用</span>
+        <el-select
+          v-model="form.mockApplicationId"
+          clearable
+          filterable
+          :loading="loadingMockApplications"
+          placeholder="请选择 Mock 应用"
+        >
+          <el-option
+            v-for="mockApplication in enabledMockApplications"
+            :key="mockApplication.id"
+            :label="`${mockApplication.appName}（${mockApplication.appCode}）`"
+            :value="mockApplication.id"
+          />
+        </el-select>
+      </div>
+
+      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__grid">
+        <label>
+          <span>默认超时</span>
+          <el-input-number v-model="form.defaultTimeoutMs" :min="1000" :max="60000" :step="1000" controls-position="right" />
+        </label>
+        <label>
+          <span>忽略 SSL</span>
+          <el-switch v-model="form.ignoreHttpsErrors" />
+        </label>
       </div>
 
       <div class="config-env-dialog__field">

@@ -6,6 +6,7 @@ import {
 } from '../lib/collectTask'
 
 import type {
+  ApplyLocalRunnerElementValidationResultPayload,
   BatchDeleteWebUiElementPayload,
   BatchMoveWebUiElementPayload,
   BatchUpdateWebUiElementStatusPayload,
@@ -78,6 +79,44 @@ import type {
   WebUiSharedReport,
 } from '../model/types'
 
+export interface LocalRunnerDebugTaskRequest {
+  runId?: string
+  taskType?: 'WEB_ELEMENT_VALIDATE' | 'WEB_CASE_RUN'
+  runnerId?: string | null
+  priority?: string | null
+  resourceCost?: number | null
+  protocolVersion?: string | null
+  deadlineAt?: string | null
+  timeoutPolicy?: Record<string, unknown>
+  environmentSnapshot?: Record<string, unknown>
+  variableSnapshot?: Record<string, unknown>
+  scriptSnapshot?: Record<string, unknown>
+  artifactRefs?: Record<string, unknown>[]
+  maskingRules?: Record<string, unknown>[]
+  screenshotPolicy?: Record<string, unknown>
+  payload?: Record<string, unknown>
+}
+
+export interface LocalRunnerTaskDetailResponse {
+  runId: string
+  taskType: string
+  runnerId: string | null
+  status: string
+  currentStage: string | null
+  progress: {
+    current: number
+    total: number
+    percent: number
+  }
+  statusMessage: string | null
+  errorMessage: string | null
+  assignedAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  lastReportedAt: string | null
+  result: Record<string, unknown>
+}
+
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
     'X-Workspace-Code': workspaceCode,
@@ -113,6 +152,29 @@ function normalizePageResponse<T>(page: PageResponse<T>, normalizeItem: (item: T
     pageNo: Number(page.pageNo || 1),
     pageSize,
     totalPages: Number(page.totalPages || (total > 0 ? Math.ceil(total / Math.max(pageSize, 1)) : 0)),
+  }
+}
+
+function normalizeLocalRunnerTaskDetail(item: LocalRunnerTaskDetailResponse): LocalRunnerTaskDetailResponse {
+  return {
+    ...item,
+    runId: item.runId || '',
+    taskType: item.taskType || '',
+    runnerId: item.runnerId || null,
+    status: item.status || 'PENDING',
+    currentStage: item.currentStage || null,
+    progress: {
+      current: Number(item.progress?.current || 0),
+      total: Number(item.progress?.total || 0),
+      percent: Number(item.progress?.percent || 0),
+    },
+    statusMessage: item.statusMessage || null,
+    errorMessage: item.errorMessage || null,
+    assignedAt: item.assignedAt || null,
+    startedAt: item.startedAt || null,
+    completedAt: item.completedAt || null,
+    lastReportedAt: item.lastReportedAt || null,
+    result: item.result || {},
   }
 }
 
@@ -265,6 +327,7 @@ function normalizeElement(item: WebUiElementItem): WebUiElementItem {
     lastValidateAt: item.lastValidateAt || null,
     lastValidateMessage: item.lastValidateMessage || null,
     lastMatchCount: item.lastMatchCount === null || item.lastMatchCount === undefined ? null : Number(item.lastMatchCount),
+    lastLocalRunnerRunId: item.lastLocalRunnerRunId || null,
     collectTaskId: item.collectTaskId === null || item.collectTaskId === undefined ? null : Number(item.collectTaskId),
     collectSource: item.collectSource || null,
     collectConfidence: item.collectConfidence === null || item.collectConfidence === undefined ? null : Number(item.collectConfidence),
@@ -336,6 +399,13 @@ function normalizeElementValidateResultItem(item: WebUiElementValidateResultItem
     matchCount: Number(item.matchCount || 0),
     errorMessage: item.errorMessage || null,
     screenshotBase64: item.screenshotBase64 || null,
+    locatorType: item.locatorType || null,
+    locatorValue: item.locatorValue || null,
+    validationSource: item.validationSource || 'SERVER',
+    runnerRunId: item.runnerRunId || null,
+    runnerPageUrl: item.runnerPageUrl || null,
+    validatedAt: item.validatedAt || null,
+    runnerTaskStatus: item.runnerTaskStatus || null,
   }
 }
 
@@ -905,6 +975,22 @@ export const webUiAutomationApi = {
     return normalizeElementCollectResponse(unwrapApiResponse(payload))
   },
 
+  async createLocalRunnerDebugTask(workspaceCode = 'ALL', data: LocalRunnerDebugTaskRequest) {
+    const payload = await httpPost<ApiResponse<LocalRunnerTaskDetailResponse>, LocalRunnerDebugTaskRequest>(
+      '/local-runner/tasks/debug',
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    return normalizeLocalRunnerTaskDetail(unwrapApiResponse(payload))
+  },
+
+  async getLocalRunnerDebugTask(runId: string) {
+    const payload = await httpGet<ApiResponse<LocalRunnerTaskDetailResponse>>(
+      `/local-runner/tasks/${encodeURIComponent(runId)}`,
+    )
+    return normalizeLocalRunnerTaskDetail(unwrapApiResponse(payload))
+  },
+
   async createLocalRunnerCollectTask(workspaceCode = 'ALL', data: LocalRunnerCollectTaskPayload) {
     const payload = await httpPost<ApiResponse<WebUiElementCollectTaskResponse>, LocalRunnerCollectTaskPayload>(
       '/automation/web/elements/collect-tasks/local-runner',
@@ -1174,6 +1260,23 @@ export const webUiAutomationApi = {
       matchCount: Number(result.matchCount || 0),
       errorMessage: result.errorMessage || null,
       screenshotBase64: result.screenshotBase64 || null,
+      runnerRunId: result.runnerRunId || null,
+    }
+  },
+
+  async applyLocalRunnerElementValidationResult(workspaceCode = 'ALL', id: number, data: ApplyLocalRunnerElementValidationResultPayload) {
+    const payload = await httpPost<ApiResponse<ValidateWebUiLocatorResponse>, ApplyLocalRunnerElementValidationResultPayload>(
+      `/automation/web/elements/${id}/local-runner-validation-result`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    const result = unwrapApiResponse(payload)
+    return {
+      matched: Boolean(result.matched),
+      matchCount: Number(result.matchCount || 0),
+      errorMessage: result.errorMessage || null,
+      screenshotBase64: result.screenshotBase64 || null,
+      runnerRunId: result.runnerRunId || null,
     }
   },
 
