@@ -3,6 +3,7 @@ package com.company.autoplatform.settings;
 import jakarta.validation.constraints.NotBlank;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public final class MockModels {
 
@@ -42,6 +43,25 @@ public final class MockModels {
             Integer responseDelayMs,
             String variablesJson,
             Integer status
+    ) {
+    }
+
+    public record MockBusinessScenarioItemRequest(
+            Long endpointId,
+            Long scenarioId,
+            Integer sortOrder,
+            Integer status
+    ) {
+    }
+
+    public record MockBusinessScenarioRequest(
+            String workspaceCode,
+            Long appId,
+            @NotBlank(message = "Mock 业务场景名称不能为空") String scenarioName,
+            String description,
+            String variablesJson,
+            Integer status,
+            List<MockBusinessScenarioItemRequest> items
     ) {
     }
 
@@ -90,6 +110,33 @@ public final class MockModels {
     ) {
     }
 
+    public record MockBusinessScenarioStepItem(
+            Long id,
+            Long businessScenarioId,
+            Long appId,
+            Long endpointId,
+            String endpointName,
+            Long scenarioId,
+            String scenarioName,
+            Integer sortOrder,
+            Integer status
+    ) {
+    }
+
+    public record MockBusinessScenarioItem(
+            Long id,
+            String workspaceCode,
+            String workspaceName,
+            Long appId,
+            String appName,
+            String scenarioName,
+            String description,
+            String variablesJson,
+            Integer status,
+            List<MockBusinessScenarioStepItem> items
+    ) {
+    }
+
     public record MockCallLogItem(
             Long id,
             String workspaceCode,
@@ -100,6 +147,8 @@ public final class MockModels {
             String endpointName,
             Long scenarioId,
             String scenarioName,
+            Long businessScenarioId,
+            String businessScenarioName,
             String httpMethod,
             String requestPath,
             String requestHeadersJson,

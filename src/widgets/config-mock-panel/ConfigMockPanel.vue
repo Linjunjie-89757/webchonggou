@@ -8,9 +8,12 @@ import {
   configApi,
   type ConfigReferenceSummary,
   type CreateMockApplicationPayload,
+  type CreateMockBusinessScenarioPayload,
   type CreateMockEndpointPayload,
   type CreateMockScenarioPayload,
+  type ConfigStatus,
   type MockApplicationItem,
+  type MockBusinessScenarioItem,
   type MockCallLogItem,
   type MockEndpointItem,
   type MockScenarioItem,
@@ -31,10 +34,26 @@ const props = withDefaults(
 )
 
 type DialogMode = 'create' | 'edit'
+interface BusinessScenarioFormItem {
+  endpointId: number | null
+  scenarioId: number | null
+  sortOrder: number
+  status: ConfigStatus
+}
+
+interface BusinessScenarioForm {
+  appId: number
+  scenarioName: string
+  description: string
+  variablesJson: string
+  status: ConfigStatus
+  items: BusinessScenarioFormItem[]
+}
 
 const applications = ref<MockApplicationItem[]>([])
 const endpoints = ref<MockEndpointItem[]>([])
 const scenarios = ref<MockScenarioItem[]>([])
+const businessScenarios = ref<MockBusinessScenarioItem[]>([])
 const logs = ref<MockCallLogItem[]>([])
 const activeAppId = ref<number | null>(null)
 const activeEndpointId = ref<number | null>(null)
@@ -47,6 +66,7 @@ const errorMessage = ref('')
 const appDialogVisible = ref(false)
 const endpointDialogVisible = ref(false)
 const scenarioDialogVisible = ref(false)
+const businessScenarioDialogVisible = ref(false)
 const referenceDrawerVisible = ref(false)
 const referenceLoading = ref(false)
 const referenceSummary = ref<ConfigReferenceSummary | null>(null)
@@ -54,9 +74,11 @@ const logDrawerVisible = ref(false)
 const appDialogMode = ref<DialogMode>('create')
 const endpointDialogMode = ref<DialogMode>('create')
 const scenarioDialogMode = ref<DialogMode>('create')
+const businessScenarioDialogMode = ref<DialogMode>('create')
 const editingAppId = ref<number | null>(null)
 const editingEndpointId = ref<number | null>(null)
 const editingScenarioId = ref<number | null>(null)
+const editingBusinessScenarioId = ref<number | null>(null)
 
 const appForm = reactive<CreateMockApplicationPayload>({
   appName: '',
@@ -88,6 +110,15 @@ const scenarioForm = reactive<CreateMockScenarioPayload>({
   status: 1,
 })
 
+const businessScenarioForm = reactive<BusinessScenarioForm>({
+  appId: 0,
+  scenarioName: '',
+  description: '',
+  variablesJson: '{}',
+  status: 1,
+  items: [],
+})
+
 const activeApp = computed(() => applications.value.find(item => item.id === activeAppId.value) || null)
 const activeEndpoint = computed(() => endpoints.value.find(item => item.id === activeEndpointId.value) || null)
 const filteredApplications = computed(() => {
@@ -103,6 +134,8 @@ const filteredApplications = computed(() => {
 })
 const appEndpoints = computed(() => endpoints.value.filter(item => item.appId === activeAppId.value))
 const endpointScenarios = computed(() => scenarios.value.filter(item => item.endpointId === activeEndpointId.value))
+const appScenarios = computed(() => scenarios.value.filter(item => item.appId === activeAppId.value))
+const appBusinessScenarios = computed(() => businessScenarios.value.filter(item => item.appId === activeAppId.value))
 const appLogs = computed(() => logs.value.filter(item => !activeAppId.value || item.appId === activeAppId.value))
 const invokePath = computed(() => {
   if (!activeApp.value || !activeEndpoint.value) {
@@ -115,15 +148,17 @@ async function loadAll() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const [appPage, endpointPage, scenarioPage, logPage] = await Promise.all([
+    const [appPage, endpointPage, scenarioPage, businessScenarioPage, logPage] = await Promise.all([
       configApi.getMockApplications(props.workspaceCode),
       configApi.getMockEndpoints(props.workspaceCode),
       configApi.getMockScenarios(props.workspaceCode),
+      configApi.getMockBusinessScenarios(props.workspaceCode),
       configApi.getMockCallLogs(props.workspaceCode),
     ])
     applications.value = appPage.items || []
     endpoints.value = endpointPage.items || []
     scenarios.value = scenarioPage.items || []
+    businessScenarios.value = businessScenarioPage.items || []
     logs.value = logPage.items || []
     normalizeActiveApp()
     normalizeActiveEndpoint()
@@ -264,6 +299,74 @@ function openEditScenarioDialog(scenario: MockScenarioItem) {
   scenarioDialogVisible.value = true
 }
 
+function openCreateBusinessScenarioDialog() {
+  if (!activeAppId.value) {
+    ElMessage.warning('请先创建或选择 Mock 应用')
+    return
+  }
+  businessScenarioDialogMode.value = 'create'
+  editingBusinessScenarioId.value = null
+  Object.assign(businessScenarioForm, {
+    appId: activeAppId.value,
+    scenarioName: '',
+    description: '',
+    variablesJson: '{}',
+    status: 1,
+    items: [],
+  })
+  businessScenarioDialogVisible.value = true
+}
+
+function openEditBusinessScenarioDialog(row: MockBusinessScenarioItem) {
+  businessScenarioDialogMode.value = 'edit'
+  editingBusinessScenarioId.value = row.id
+  Object.assign(businessScenarioForm, {
+    appId: row.appId,
+    scenarioName: row.scenarioName,
+    description: row.description || '',
+    variablesJson: row.variablesJson || '{}',
+    status: row.status,
+    items: row.items.map(item => ({
+      endpointId: item.endpointId,
+      scenarioId: item.scenarioId,
+      sortOrder: item.sortOrder,
+      status: item.status,
+    })),
+  })
+  businessScenarioDialogVisible.value = true
+}
+
+function addBusinessScenarioItem() {
+  businessScenarioForm.items.push({
+    endpointId: null,
+    scenarioId: null,
+    sortOrder: businessScenarioForm.items.length + 1,
+    status: 1,
+  })
+}
+
+function removeBusinessScenarioItem(index: number) {
+  businessScenarioForm.items.splice(index, 1)
+  businessScenarioForm.items.forEach((item, itemIndex) => {
+    item.sortOrder = itemIndex + 1
+  })
+}
+
+function findScenario(id: number | null) {
+  if (!id) {
+    return null
+  }
+  return scenarios.value.find(item => item.id === id) || null
+}
+
+function scenarioSelectLabel(scenario: MockScenarioItem) {
+  return `${scenario.endpointName} / ${scenario.scenarioName}`
+}
+
+function formatBusinessScenarioItems(row: MockBusinessScenarioItem) {
+  return row.items.map(item => `${item.endpointName}/${item.scenarioName}`).join('，') || '-'
+}
+
 function validateJson(text: string, label: string) {
   try {
     JSON.parse(text || '{}')
@@ -346,6 +449,55 @@ async function submitScenario() {
   }
 }
 
+async function submitBusinessScenario() {
+  if (!businessScenarioForm.scenarioName.trim()) {
+    ElMessage.warning('请输入业务场景名称')
+    return
+  }
+  if (!validateJson(businessScenarioForm.variablesJson || '{}', '业务场景变量')) {
+    return
+  }
+  const selectedItems = businessScenarioForm.items
+    .map((item, index) => {
+      const scenario = findScenario(item.scenarioId)
+      return scenario
+        ? {
+            endpointId: scenario.endpointId,
+            scenarioId: scenario.id,
+            sortOrder: index + 1,
+            status: item.status,
+          }
+        : null
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+  if (!selectedItems.length) {
+    ElMessage.warning('请至少选择一个 Mock 场景')
+    return
+  }
+  const payload: CreateMockBusinessScenarioPayload = {
+    appId: businessScenarioForm.appId,
+    scenarioName: businessScenarioForm.scenarioName,
+    description: businessScenarioForm.description,
+    variablesJson: businessScenarioForm.variablesJson,
+    status: businessScenarioForm.status,
+    items: selectedItems,
+  }
+  saving.value = true
+  try {
+    const saved = businessScenarioDialogMode.value === 'edit' && editingBusinessScenarioId.value
+      ? await configApi.updateMockBusinessScenario(props.workspaceCode, editingBusinessScenarioId.value, payload)
+      : await configApi.createMockBusinessScenario(props.workspaceCode, payload)
+    ElMessage.success(businessScenarioDialogMode.value === 'edit' ? '业务场景组合已更新' : '业务场景组合已创建')
+    businessScenarioDialogVisible.value = false
+    editingBusinessScenarioId.value = saved.id
+    await loadAll()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
+}
+
 async function removeApplication(row: MockApplicationItem) {
   await confirmAndRun(
     `删除 Mock 应用「${row.appName}」会同时删除下属接口、场景和调用日志。确认删除？`,
@@ -389,6 +541,12 @@ async function removeScenario(row: MockScenarioItem) {
     if (activeScenarioId.value === row.id) {
       activeScenarioId.value = null
     }
+  })
+}
+
+async function removeBusinessScenario(row: MockBusinessScenarioItem) {
+  await confirmAndRun(`确认删除业务场景组合「${row.scenarioName}」？不会删除下属单接口 Mock 场景。`, async () => {
+    await configApi.deleteMockBusinessScenario(props.workspaceCode, row.id)
   })
 }
 
@@ -494,7 +652,7 @@ onMounted(() => {
         <div class="config-mock-apps__toolbar">
           <el-input v-model="keyword" clearable placeholder="搜索应用" :prefix-icon="Search" />
         </div>
-        <div v-if="filteredApplications.length" class="config-mock-apps__list">
+        <div v-if="filteredApplications.length" class="config-mock-apps__list app-soft-scrollbar">
           <button
             v-for="app in filteredApplications"
             :key="app.id"
@@ -602,6 +760,38 @@ onMounted(() => {
           <section class="config-mock-section">
             <div class="config-mock-section__header">
               <div>
+                <h3>业务场景组合</h3>
+                <p>把多个单接口 Mock 场景组合成一条可复用业务链路，例如支付成功、支付失败或超时。</p>
+              </div>
+              <AppButton size="small" type="primary" :icon="Plus" @click="openCreateBusinessScenarioDialog">新增组合</AppButton>
+            </div>
+            <el-table :data="appBusinessScenarios" row-key="id" height="220">
+              <el-table-column prop="scenarioName" label="组合名称" min-width="180" show-overflow-tooltip />
+              <el-table-column label="包含场景" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">
+                  {{ formatBusinessScenarioItems(row) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <ConfigTypeBadge :label="row.status === 1 ? '启用' : '停用'" :tone="row.status === 1 ? 'success' : 'default'" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="150" fixed="right">
+                <template #default="{ row }">
+                  <div class="config-mock-table-actions">
+                    <button type="button" @click="openEditBusinessScenarioDialog(row)">编辑</button>
+                    <button type="button" @click="removeBusinessScenario(row)">删除</button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <section class="config-mock-section">
+            <div class="config-mock-section__header">
+              <div>
                 <h3>调用日志</h3>
                 <p>最近 100 条调用记录，包含请求、响应和命中场景。</p>
               </div>
@@ -609,6 +799,7 @@ onMounted(() => {
             <el-table :data="appLogs" row-key="id" height="240">
               <el-table-column prop="httpMethod" label="方法" width="90" />
               <el-table-column prop="requestPath" label="路径" min-width="180" show-overflow-tooltip />
+              <el-table-column prop="businessScenarioName" label="业务组合" min-width="150" show-overflow-tooltip />
               <el-table-column prop="scenarioName" label="命中场景" min-width="160" show-overflow-tooltip />
               <el-table-column prop="responseStatus" label="响应码" width="90" />
               <el-table-column label="结果" width="90">
@@ -747,6 +938,59 @@ onMounted(() => {
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="businessScenarioDialogVisible"
+      :title="businessScenarioDialogMode === 'edit' ? '编辑业务场景组合' : '新增业务场景组合'"
+      width="780px"
+    >
+      <div class="config-mock-form">
+        <div class="config-mock-form__grid">
+          <label>
+            <span>组合名称 *</span>
+            <el-input v-model="businessScenarioForm.scenarioName" placeholder="例如：微信支付成功全链路" />
+          </label>
+          <label>
+            <span>状态</span>
+            <el-switch v-model="businessScenarioForm.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用" />
+          </label>
+        </div>
+        <label>
+          <span>描述</span>
+          <el-input v-model="businessScenarioForm.description" type="textarea" :rows="2" placeholder="说明这个组合适用的业务链路" />
+        </label>
+        <label>
+          <span>组合变量 JSON</span>
+          <el-input v-model="businessScenarioForm.variablesJson" type="textarea" :rows="3" placeholder='{"payStatus":"SUCCESS"}' />
+        </label>
+        <div class="config-mock-combo-items">
+          <div class="config-mock-combo-items__header">
+            <span>包含的 Mock 场景</span>
+            <AppButton size="small" :icon="Plus" @click="addBusinessScenarioItem">添加场景</AppButton>
+          </div>
+          <div v-if="businessScenarioForm.items.length" class="config-mock-combo-items__list app-soft-scrollbar">
+            <div v-for="(item, index) in businessScenarioForm.items" :key="index" class="config-mock-combo-item">
+              <span class="config-mock-combo-item__order">{{ index + 1 }}</span>
+              <el-select v-model="item.scenarioId" filterable placeholder="选择单接口 Mock 场景">
+                <el-option
+                  v-for="scenario in appScenarios"
+                  :key="scenario.id"
+                  :label="scenarioSelectLabel(scenario)"
+                  :value="scenario.id"
+                />
+              </el-select>
+              <el-switch v-model="item.status" :active-value="1" :inactive-value="0" active-text="启用" inactive-text="停用" />
+              <button type="button" class="config-mock-combo-item__remove" @click="removeBusinessScenarioItem(index)">删除</button>
+            </div>
+          </div>
+          <AppEmptyState v-else title="暂无组合场景" description="添加已有单接口 Mock 场景后即可组成支付成功、失败或超时链路。" />
+        </div>
+      </div>
+      <template #footer>
+        <AppButton :disabled="saving" @click="businessScenarioDialogVisible = false">取消</AppButton>
+        <AppButton type="primary" :loading="saving" @click="submitBusinessScenario">保存</AppButton>
+      </template>
+    </el-dialog>
+
     <el-drawer v-model="logDrawerVisible" title="调用日志详情" size="560px">
       <div v-if="activeLog" class="config-mock-log-detail">
         <dl>
@@ -754,6 +998,8 @@ onMounted(() => {
           <dd>{{ activeLog.endpointName || '-' }}</dd>
           <dt>场景</dt>
           <dd>{{ activeLog.scenarioName || '-' }}</dd>
+          <dt>业务组合</dt>
+          <dd>{{ activeLog.businessScenarioName || '-' }}</dd>
           <dt>请求</dt>
           <dd>{{ activeLog.httpMethod }} {{ activeLog.requestPath }}</dd>
           <dt>响应</dt>
@@ -972,6 +1218,67 @@ onMounted(() => {
 .config-mock-form :deep(.el-select),
 .config-mock-form :deep(.el-input-number) {
   width: 100%;
+}
+
+.config-mock-combo-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.config-mock-combo-items__header,
+.config-mock-combo-item {
+  display: flex;
+  align-items: center;
+  gap: var(--app-space-3);
+}
+
+.config-mock-combo-items__header {
+  justify-content: space-between;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.config-mock-combo-items__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+}
+
+.config-mock-combo-item {
+  padding: var(--app-space-2);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-muted);
+}
+
+.config-mock-combo-item__order {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-xs);
+  font-weight: 700;
+}
+
+.config-mock-combo-item__remove {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-danger);
+  cursor: pointer;
+  font-size: var(--app-font-size-sm);
+}
+
+.config-mock-combo-item__remove:hover {
+  color: var(--app-danger-hover);
 }
 
 .config-mock-log-detail {

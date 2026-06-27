@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>配置中心 - 环境/变量/Mock</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus/dist/index.full.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f5f7fa;
+      color: #303133;
+    }
+    .layout { display: flex; height: 100vh; }
+
+    /* 左侧菜单 */
+    .sidebar {
+      width: 220px;
+      background: #fff;
+      border-right: 1px solid #e4e7ed;
+      padding: 24px 0;
+    }
+    .sidebar-title {
+      font-size: 16px;
+      font-weight: 600;
+      padding: 0 20px 20px;
+      border-bottom: 1px solid #f0f0f0;
+      margin-bottom: 8px;
+    }
+    .menu-item {
+      height: 48px;
+      line-height: 48px;
+      padding: 0 20px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.2s;
+    }
+    .menu-item.active {
+      background: #ecf5ff;
+      color: #409eff;
+      border-right: 3px solid #409eff;
+      font-weight: 500;
+    }
+    .menu-item:hover { background: #f5f7fa; }
+
+    /* 右侧内容 */
+    .content {
+      flex: 1;
+      padding: 20px 28px;
+      overflow-y: auto;
+    }
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .page-title { font-size: 18px; font-weight: 600; }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .section-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-left: 8px;
+      border-left: 3px solid #409eff;
+    }
+    .tip {
+      font-size: 12px;
+      color: #909399;
+      background: #f4f4f5;
+      padding: 8px 12px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      line-height: 1.6;
+    }
+    .code-inline {
+      font-family: Consolas, Monaco, monospace;
+      background: #f0f2f5;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #606266;
+    }
+    .var-table .el-input { width: 100%; }
+    .drawer-footer {
+      text-align: right;
+      padding-top: 16px;
+      border-top: 1px solid #ebeef5;
+      margin-top: 16px;
+    }
+    .sub-tab { margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+<div id="app" class="layout">
+  <!-- 左侧菜单 -->
+  <div class="sidebar">
+    <div class="sidebar-title">配置中心</div>
+    <div class="menu-item" :class="{active: currentMenu === 'env'}" @click="currentMenu = 'env'">
+      🌍 环境配置
+    </div>
+    <div class="menu-item" :class="{active: currentMenu === 'var'}" @click="currentMenu = 'var'">
+      🔧 变量参数
+    </div>
+    <div class="menu-item" :class="{active: currentMenu === 'mock'}" @click="currentMenu = 'mock'">
+      📦 Mock服务
+    </div>
+  </div>
+
+  <!-- 右侧内容 -->
+  <div class="content">
+    <!-- ========== 1. 环境配置页面 ========== -->
+    <div v-show="currentMenu === 'env'">
+      <div class="page-header">
+        <div class="page-title">环境配置</div>
+        <el-button type="primary" @click="openEnvEdit">新增环境</el-button>
+      </div>
+      <div class="toolbar">
+        <el-input v-model="envSearch" placeholder="搜索环境名称" style="width:240px" clearable></el-input>
+        <el-select v-model="envTypeFilter" placeholder="环境类型" style="width:140px" clearable>
+          <el-option label="测试环境" value="test"></el-option>
+          <el-option label="预发环境" value="pre"></el-option>
+          <el-option label="生产环境" value="prod"></el-option>
+          <el-option label="沙箱环境" value="sandbox"></el-option>
+        </el-select>
+      </div>
+      <div class="card">
+        <el-table :data="filteredEnvList" border stripe>
+          <el-table-column prop="name" label="环境名称" width="180"></el-table-column>
+          <el-table-column label="环境类型" width="110">
+            <template #default="{row}">
+              <el-tag size="small" :type="envTypeTag[row.type]">
+                {{ envTypeText[row.type] }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="默认服务" prop="defaultService">
+            <template #default="{row}">
+              {{ getDefaultService(row).name }}
+              <span class="code-inline">{{ getDefaultService(row).url }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="默认变量集" width="160">
+            <template #default="{row}">{{ getVarSetName(row.defaultVarSetId) }}</template>
+          </el-table-column>
+          <el-table-column label="默认Mock应用" width="160">
+            <template #default="{row}">{{ getMockAppName(row.defaultMockAppId) }}</template>
+          </el-table-column>
+          <el-table-column label="超时(ms)" width="100" align="center" prop="timeout"></el-table-column>
+          <el-table-column label="状态" width="80" align="center">
+            <template #default="{row}">
+              <el-switch v-model="row.enabled" size="small"></el-switch>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="180" fixed="right">
+            <template #default="{row}">
+              <el-button link size="small" @click="openEnvEdit(row)">编辑</el-button>
+              <el-button link size="small">复制</el-button>
+              <el-button link type="danger" size="small" @click="delEnv(row.id)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </div>
+
+    <!-- ========== 2. 变量参数页面 ========== -->
+    <div v-show="currentMenu === 'var'">
+      <div class="page-header">
+        <div class="page-title">变量参数</div>
+      </div>
+      <el-tabs v-model="varTab" class="sub-tab">
+        <!-- 全局参数 -->
+        <el-tab-pane label="全局参数" name="global">
+          <div class="tip">
+            全局参数全站所有环境、所有用例自动生效，优先级最低；仅管理员可编辑。
+          </div>
+          <div class="card">
+            <div style="margin-bottom: 12px; text-align: right;">
+              <el-button size="small" type="primary" @click="addGlobalVar">新增全局参数</el-button>
+            </div>
+            <el-table :data="globalVars" border size="default">
+              <el-table-column prop="key" label="参数名" width="220"></el-table-column>
+              <el-table-column prop="value" label="参数值">
+                <template #default="{row}">
+                  <span v-if="!row.sensitive">{{ row.value }}</span>
+                  <span v-else>******</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="敏感字段" width="100" align="center">
+                <template #default="{row}">
+                  <el-tag v-if="row.sensitive" type="warning" size="small">是</el-tag>
+                  <span v-else class="code-inline">否</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="description" label="说明"></el-table-column>
+              <el-table-column label="操作" width="150" align="center">
+                <template #default="{row}">
+                  <el-button link size="small" @click="editGlobalVar(row)">编辑</el-button>
+                  <el-button link type="danger" size="small" @click="delGlobalVar(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
+        <!-- 自定义变量集 -->
+        <el-tab-pane label="变量集管理" name="set">
+          <div class="toolbar">
+            <el-input v-model="varSetSearch" placeholder="搜索变量集名称" style="width:240px" clearable></el-input>
+            <el-select v-model="varSetTypeFilter" placeholder="类型筛选" style="width:140px" clearable>
+              <el-option label="接口变量集" value="API"></el-option>
+              <el-option label="Web UI变量集" value="WEB_UI"></el-option>
+              <el-option label="业务参数集" value="BUSINESS"></el-option>
+            </el-select>
+          </div>
+          <div class="card">
+            <div style="margin-bottom: 12px; text-align: right;">
+              <el-button size="small" type="primary" @click="openVarSetEdit">新增变量集</el-button>
+            </div>
+            <el-table :data="filteredVarSetList" border stripe>
+              <el-table-column prop="name" label="变量集名称" width="220"></el-table-column>
+              <el-table-column label="类型" width="130">
+                <template #default="{row}">
+                  <el-tag size="small">{{ varSetTypeText[row.type] }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="变量数量" width="100" align="center">
+                {{ row.items.length }}
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{row}">
+                  <el-switch v-model="row.enabled" size="small"></el-switch>
+                </template>
+              </el-table-column>
+              <el-table-column prop="description" label="说明"></el-table-column>
+              <el-table-column label="操作" width="220" align="center">
+                <template #default="{row}">
+                  <el-button link size="small" type="primary" @click="openVarDetail(row)">管理变量</el-button>
+                  <el-button link size="small" @click="openVarSetEdit(row)">编辑</el-button>
+                  <el-button link type="danger" size="small" @click="delVarSet(row.id)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+
+    <!-- ========== 3. Mock服务页面 ========== -->
+    <div v-show="currentMenu === 'mock'">
+      <div class="page-header">
+        <div class="page-title">Mock服务</div>
+      </div>
+      <el-tabs v-model="mockTab" class="sub-tab">
+        <!-- Mock应用 -->
+        <el-tab-pane label="Mock应用" name="app">
+          <div class="tip">
+            Mock应用对应一整个第三方系统（如微信支付、支付宝），每个应用下包含多条Mock接口规则。
+          </div>
+          <div class="card">
+            <div style="margin-bottom: 12px; text-align: right;">
+              <el-button size="small" type="primary" @click="openMockAppEdit">新增应用</el-button>
+            </div>
+            <el-table :data="mockApps" border stripe>
+              <el-table-column prop="name" label="应用名称" width="180"></el-table-column>
+              <el-table-column prop="code" label="应用编码" width="160"></el-table-column>
+              <el-table-column prop="basePath" label="BasePath"></el-table-column>
+              <el-table-column label="接口数量" width="100" align="center">
+                {{ row.endpoints.length }}
+              </el-table-column>
+              <el-table-column label="绑定环境" width="140">
+                <template #default="{row}">{{ getEnvName(row.bindEnvId) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{row}">
+                  <el-switch v-model="row.enabled" size="small"></el-switch>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="220" align="center">
+                <template #default="{row}">
+                  <el-button link size="small" type="primary" @click="openMockEndpoint(row)">接口管理</el-button>
+                  <el-button link size="small" @click="openMockAppEdit(row)">编辑</el-button>
+                  <el-button link type="danger" size="small">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
+        <!-- Mock场景 -->
+        <el-tab-pane label="Mock场景" name="scenario">
+          <div class="tip">
+            将多条Mock接口打包成业务场景（如微信支付成功、支付失败），运行时一键切换整条链路。
+          </div>
+          <div class="card">
+            <div style="margin-bottom: 12px; text-align: right;">
+              <el-button size="small" type="primary">新增场景</el-button>
+            </div>
+            <el-table :data="mockScenarios" border stripe>
+              <el-table-column prop="name" label="场景名称" width="200"></el-table-column>
+              <el-table-column label="关联应用" width="140">
+                <template #default="{row}">{{ getMockAppName(row.appId) }}</template>
+              </el-table-column>
+              <el-table-column label="包含接口数" width="100" align="center">{{ row.endpointCount }}</el-table-column>
+              <el-table-column prop="description" label="说明"></el-table-column>
+              <el-table-column label="状态" width="80" align="center">
+                <template #default="{row}">
+                  <el-switch v-model="row.enabled" size="small"></el-switch>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="180" align="center">
+                <el-button link size="small">编辑</el-button>
+                <el-button link type="danger" size="small">删除</el-button>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </div>
+
+  <!-- ========== 抽屉：环境编辑 ========== -->
+  <el-drawer v-model="envDrawerVisible" title="编辑环境" size="720px" destroy-on-close>
+    <template v-if="currEnv">
+      <div class="section-title">基础信息</div>
+      <el-form label-width="100px" :model="currEnv">
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="环境名称">
+              <el-input v-model="currEnv.name"></el-input>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="环境类型">
+              <el-select v-model="currEnv.type" style="width:100%">
+                <el-option label="测试环境" value="test"></el-option>
+                <el-option label="预发环境" value="pre"></el-option>
+                <el-option label="生产环境" value="prod"></el-option>
+                <el-option label="沙箱环境" value="sandbox"></el-option>
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="环境描述">
+          <el-input v-model="currEnv.description" type="textarea" :rows="2"></el-input>
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch v-model="currEnv.enabled"></el-switch>
+        </el-form-item>
+      </el-form>
+
+      <div class="section-title" style="margin-top:24px">多服务地址</div>
+      <div class="tip">
+        一个环境可配置多个后端服务，设置默认服务作为全局 Base URL；用例中可通过 <span class="code-inline">service.服务key.url</span> 引用其他服务地址。
+      </div>
+      <el-table :data="currEnv.services" border size="small">
+        <el-table-column label="服务Key" width="160">
+          <template #default="{row}">
+            <el-input v-model="row.key" size="small" placeholder="如 order_api"></el-input>
+          </template>
+        </el-table-column>
+        <el-table-column label="服务名称" width="160">
+          <template #default="{row}">
+            <el-input v-model="row.name" size="small" placeholder="如 订单服务"></el-input>
+          </template>
+        </el-table-column>
+        <el-table-column label="服务URL">
+          <template #default="{row}">
+            <el-input v-model="row.url" size="small" placeholder="https://api.test.com"></el-input>
+          </template>
+        </el-table-column>
+        <el-table-column label="默认服务" width="100" align="center">
+          <template #default="{row}">
+            <el-radio v-model="currEnv.defaultService" :label="row.key">设为默认</el-radio>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{row, $index}">
+            <el-button link type="danger" size="small" @click="currEnv.services.splice($index,1)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-button size="small" style="margin-top: 10px;" @click="addService">+ 添加服务</el-button>
+
+      <div class="section-title" style="margin-top:24px">默认关联配置</div>
+      <el-form label-width="100px" :model="currEnv">
+        <el-form-item label="默认变量集">
+          <el-select v-model="currEnv.defaultVarSetId" style="width:100%" placeholder="选择默认变量集">
+            <el-option v-for="item in varSets" :key="item.id" :label="item.name" :value="item.id"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="默认Mock应用">
+          <el-select v-model="currEnv.defaultMockAppId" style="width:100%" placeholder="选择默认Mock应用">
+            <el-option v-for="item in mockApps" :key="item.id" :label="item.name" :value="item.id"></el-option>
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <div class="section-title" style="margin-top:24px">执行配置</div>
+      <el-form label-width="100px" :model="currEnv">
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="默认超时(ms)">
+              <el-input-number v-model="currEnv.timeout" :min="1000" :step="1000" style="width:100%"></el-input-number>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="忽略SSL">
+              <el-switch v-model="currEnv.ignoreSsl"></el-switch>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="绑定代理">
+              <el-select v-model="currEnv.proxyId" style="width:100%" clearable placeholder="无代理">
+                <el-option label="内网测试代理" value="1"></el-option>
+                <el-option label="出口代理" value="2"></el-option>
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+
+      <div class="drawer-footer">
+        <el-button @click="envDrawerVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveEnv">保存</el-button>
+      </div>
+    </template>
+  </el-drawer>
+
+  <!-- ========== 抽屉：变量集详情（管理变量） ========== -->
+  <el-drawer v-model="varDetailVisible" title="变量管理" size="80%" destroy-on-close>
+    <template v-if="currVarSet">
+      <div style="margin-bottom: 16px;">
+        <el-tag size="large">{{ varSetTypeText[currVarSet.type] }}</el-tag>
+        <span style="margin-left: 12px; font-size: 16px; font-weight: 600;">{{ currVarSet.name }}</span>
+      </div>
+
+      <div class="toolbar">
+        <el-input v-model="varSearchKey" placeholder="搜索变量名" style="width:240px" clearable></el-input>
+        <div style="flex:1"></div>
+        <el-button size="small">导入</el-button>
+        <el-button size="small">导出</el-button>
+        <el-button size="small" type="primary" @click="addVarItem">新增变量</el-button>
+      </div>
+
+      <div class="card var-table">
+        <el-table :data="filteredVarItems" border stripe>
+          <el-table-column label="变量名" width="200">
+            <template #default="{row}">
+              <el-input v-model="row.name" size="small"></el-input>
+            </template>
+          </el-table-column>
+          <el-table-column label="变量值">
+            <template #default="{row}">
+              <el-input v-if="!row.sensitive" v-model="row.value" size="small" type="textarea" :rows="1"></el-input>
+              <el-input v-else v-model="row.value" size="small" show-password></el-input>
+            </template>
+          </el-table-column>
+          <el-table-column label="敏感字段" width="100" align="center">
+            <template #default="{row}">
+              <el-switch v-model="row.sensitive" size="small"></el-switch>
+            </template>
+          </el-table-column>
+          <el-table-column label="启用" width="80" align="center">
+            <template #default="{row}">
+              <el-switch v-model="row.enabled" size="small"></el-switch>
+            </template>
+          </el-table-column>
+          <el-table-column label="说明" width="200">
+            <template #default="{row}">
+              <el-input v-model="row.description" size="small"></el-input>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" align="center">
+            <template #default="{row}">
+              <el-button link type="danger" size="small" @click="delVarItem(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
+      <div class="drawer-footer">
+        <el-button @click="varDetailVisible = false">关闭</el-button>
+        <el-button type="primary" @click="saveVarItems">保存变更</el-button>
+      </div>
+    </template>
+  </el-drawer>
+
+  <!-- ========== 抽屉：Mock接口管理 ========== -->
+  <el-drawer v-model="endpointDrawerVisible" title="Mock接口管理" size="70%" destroy-on-close>
+    <template v-if="currMockApp">
+      <div style="margin-bottom: 16px; font-size: 16px; font-weight: 600;">
+        应用：{{ currMockApp.name }}
+      </div>
+      <div style="margin-bottom: 12px; text-align: right;">
+        <el-button size="small" type="primary">新增接口</el-button>
+      </div>
+      <el-table :data="currMockApp.endpoints" border stripe>
+        <el-table-column prop="method" label="请求方法" width="100">
+          <template #default="{row}">
+            <el-tag size="small" type="primary">{{ row.method }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="path" label="接口路径"></el-table-column>
+        <el-table-column prop="responseStatus" label="响应状态码" width="120" align="center"></el-table-column>
+        <el-table-column prop="delayMs" label="延迟(ms)" width="100" align="center"></el-table-column>
+        <el-table-column label="状态" width="80" align="center">
+          <template #default="{row}">
+            <el-switch v-model="row.enabled" size="small"></el-switch>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150" align="center">
+          <el-button link size="small">编辑</el-button>
+          <el-button link type="danger" size="small">删除</el-button>
+        </el-table-column>
+      </el-table>
+    </template>
+  </el-drawer>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, computed } = Vue
+const { ElMessage, ElMessageBox } = ElementPlus
+
+const app = createApp({
+  setup() {
+    // ========== 菜单控制 ==========
+    const currentMenu = ref('env')
+
+    // ========== 通用映射 ==========
+    const envTypeText = { test:'测试环境', pre:'预发环境', prod:'生产环境', sandbox:'沙箱环境' }
+    const envTypeTag = { test:'info', pre:'warning', prod:'danger', sandbox:'success' }
+    const varSetTypeText = { API:'接口变量集', WEB_UI:'Web UI变量集', BUSINESS:'业务参数集' }
+
+    // ========== 1. 环境配置 ==========
+    const envSearch = ref('')
+    const envTypeFilter = ref('')
+    const envDrawerVisible = ref(false)
+    const currEnv = ref(null)
+
+    const envList = reactive([
+      {
+        id: 1, name: '业务测试环境', type: 'test',
+        defaultService: 'order_api',
+        defaultVarSetId: 101, defaultMockAppId: 201,
+        timeout: 10000, ignoreSsl: true, proxyId: '1', enabled: true,
+        description: '主业务日常测试环境',
+        services: [
+          { key: 'order_api', name: '订单服务', url: 'https://test-order.xxx.com' },
+          { key: 'pay_api', name: '支付服务', url: 'https://test-pay.xxx.com' },
+          { key: 'admin_web', name: '运营后台', url: 'https://test-admin.xxx.com' }
+        ]
+      },
+      {
+        id: 2, name: '微信支付沙箱环境', type: 'sandbox',
+        defaultService: 'pay_api',
+        defaultVarSetId: 102, defaultMockAppId: 201,
+        timeout: 15000, ignoreSsl: true, proxyId: '', enabled: true,
+        description: '微信支付官方沙箱联调环境',
+        services: [
+          { key: 'order_api', name: '订单服务', url: 'https://sandbox-order.xxx.com' },
+          { key: 'pay_api', name: '微信沙箱网关', url: 'https://api.mch.weixin.qq.com/sandboxnew' }
+        ]
+      }
+    ])
+
+    const filteredEnvList = computed(() => {
+      return envList.filter(item => {
+        const matchName = !envSearch.value || item.name.includes(envSearch.value)
+        const matchType = !envTypeFilter.value || item.type === envTypeFilter.value
+        return matchName && matchType
+      })
+    })
+
+    const getDefaultService = (row) => {
+      return row.services.find(s => s.key === row.defaultService) || row.services[0]
+    }
+
+    const openEnvEdit = (row = null) => {
+      currEnv.value = row ? JSON.parse(JSON.stringify(row)) : {
+        id: Date.now(), name: '', type: 'test',
+        defaultService: '', defaultVarSetId: '', defaultMockAppId: '',
+        timeout: 10000, ignoreSsl: false, proxyId: '', enabled: true,
+        description: '', services: []
+      }
+      envDrawerVisible.value = true
+    }
+
+    const saveEnv = () => {
+      const idx = envList.findIndex(i => i.id === currEnv.value.id)
+      idx > -1 ? envList[idx] = JSON.parse(JSON.stringify(currEnv.value))
+               : envList.unshift(JSON.parse(JSON.stringify(currEnv.value)))
+      envDrawerVisible.value = false
+      ElMessage.success('保存成功')
+    }
+
+    const delEnv = (id) => {
+      ElMessageBox.confirm('确定删除该环境？删除后不可恢复。', '提示', { type: 'warning' })
+        .then(() => {
+          const idx = envList.findIndex(i => i.id === id)
+          if (idx > -1) envList.splice(idx, 1)
+          ElMessage.success('删除成功')
+        })
+    }
+
+    const addService = () => {
+      currEnv.value.services.push({ key: '', name: '', url: '' })
+    }
+
+    // ========== 2. 变量参数 ==========
+    const varTab = ref('global')
+    const varSetSearch = ref('')
+    const varSetTypeFilter = ref('')
+    const varDetailVisible = ref(false)
+    const currVarSet = ref(null)
+    const varSearchKey = ref('')
+
+    // 全局参数
+    const globalVars = reactive([
+      { key: 'system_default_timeout', value: '10000', sensitive: false, description: '系统默认请求超时时间' },
+      { key: 'system_retry_count', value: '1', sensitive: false, description: '请求失败默认重试次数' },
+      { key: 'global_sign_salt', value: 'xxx_salt_2024', sensitive: true, description: '全局签名盐值' }
+    ])
+
+    // 变量集列表
+    const varSets = reactive([
+      {
+        id: 101, name: '通用业务参数集', type: 'BUSINESS', enabled: true,
+        description: '通用业务基础参数，全环境复用',
+        items: [
+          { name: 'goods_id', value: '10086', sensitive: false, enabled: true, description: '默认测试商品ID' },
+          { name: 'test_user_id', value: 'u_001', sensitive: false, enabled: true, description: '测试用户ID' }
+        ]
+      },
+      {
+        id: 102, name: '微信沙箱支付参数集', type: 'API', enabled: true,
+        description: '微信支付沙箱环境专用商户参数',
+        items: [
+          { name: 'wechat_appid', value: 'wx1234567890abcdef', sensitive: false, enabled: true, description: '沙箱公众号AppID' },
+          { name: 'wechat_mch_id', value: '1234567890', sensitive: false, enabled: true, description: '沙箱商户号' },
+          { name: 'wechat_api_key', value: 'sandbox_secret_key_xxx', sensitive: true, enabled: true, description: '沙箱API密钥' },
+          { name: 'wechat_notify_url', value: '/api/pay/wechat/notify', sensitive: false, enabled: true, description: '支付回调地址' }
+        ]
+      },
+      {
+        id: 103, name: 'Web UI测试账号集', type: 'WEB_UI', enabled: true,
+        description: 'UI自动化测试账号',
+        items: [
+          { name: 'admin_account', value: 'admin@test.com', sensitive: false, enabled: true, description: '运营后台账号' },
+          { name: 'admin_password', value: 'test123456', sensitive: true, enabled: true, description: '后台密码' }
+        ]
+      }
+    ])
+
+    const filteredVarSetList = computed(() => {
+      return varSets.filter(item => {
+        const matchName = !varSetSearch.value || item.name.includes(varSetSearch.value)
+        const matchType = !varSetTypeFilter.value || item.type === varSetTypeFilter.value
+        return matchName && matchType
+      })
+    })
+
+    const getVarSetName = (id) => {
+      const item = varSets.find(i => i.id === id)
+      return item ? item.name : '未绑定'
+    }
+
+    const addGlobalVar = () => {
+      globalVars.push({ key: '', value: '', sensitive: false, description: '' })
+    }
+    const editGlobalVar = (row) => {
+      ElMessage.info('编辑全局参数')
+    }
+    const delGlobalVar = (row) => {
+      ElMessageBox.confirm('确定删除该全局参数？', '提示', { type: 'warning' }).then(() => {
+        const idx = globalVars.indexOf(row)
+        if (idx > -1) globalVars.splice(idx, 1)
+        ElMessage.success('删除成功')
+      })
+    }
+
+    const openVarSetEdit = (row = null) => {
+      ElMessage.info('编辑变量集基础信息')
+    }
+    const delVarSet = (id) => {
+      ElMessageBox.confirm('确定删除该变量集？', '提示', { type: 'warning' }).then(() => {
+        const idx = varSets.findIndex(i => i.id === id)
+        if (idx > -1) varSets.splice(idx, 1)
+        ElMessage.success('删除成功')
+      })
+    }
+
+    const openVarDetail = (row) => {
+      currVarSet.value = JSON.parse(JSON.stringify(row))
+      varDetailVisible.value = true
+    }
+
+    const filteredVarItems = computed(() => {
+      if (!currVarSet.value) return []
+      return currVarSet.value.items.filter(item =>
+        !varSearchKey.value || item.name.includes(varSearchKey.value)
+      )
+    })
+
+    const addVarItem = () => {
+      currVarSet.value.items.push({ name: '', value: '', sensitive: false, enabled: true, description: '' })
+    }
+    const delVarItem = (row) => {
+      const idx = currVarSet.value.items.indexOf(row)
+      if (idx > -1) currVarSet.value.items.splice(idx, 1)
+    }
+    const saveVarItems = () => {
+      const idx = varSets.findIndex(i => i.id === currVarSet.value.id)
+      if (idx > -1) varSets[idx] = JSON.parse(JSON.stringify(currVarSet.value))
+      varDetailVisible.value = false
+      ElMessage.success('保存成功')
+    }
+
+    // ========== 3. Mock服务 ==========
+    const mockTab = ref('app')
+    const endpointDrawerVisible = ref(false)
+    const currMockApp = ref(null)
+
+    const mockApps = reactive([
+      {
+        id: 201, name: '微信支付', code: 'wechat_pay', basePath: '/mock/wechat',
+        bindEnvId: 2, enabled: true,
+        endpoints: [
+          { method: 'POST', path: '/pay/unifiedorder', responseStatus: 200, delayMs: 200, enabled: true },
+          { method: 'POST', path: '/pay/orderquery', responseStatus: 200, delayMs: 100, enabled: true },
+          { method: 'POST', path: '/pay/refund', responseStatus: 200, delayMs: 500, enabled: true }
+        ]
+      },
+      {
+        id: 202, name: '支付宝支付', code: 'alipay', basePath: '/mock/alipay',
+        bindEnvId: '', enabled: true,
+        endpoints: [
+          { method: 'POST', path: '/gateway.do', responseStatus: 200, delayMs: 300, enabled: true }
+        ]
+      }
+    ])
+
+    const mockScenarios = reactive([
+      { id: 301, name: '微信支付成功全链路', appId: 201, endpointCount: 3, enabled: true, description: '统一下单+查询+回调全部成功' },
+      { id: 302, name: '微信支付失败-余额不足', appId: 201, endpointCount: 2, enabled: true, description: '统一下单返回余额不足错误码' },
+      { id: 303, name: '支付超时异常', appId: 201, endpointCount: 1, enabled: true, description: '统一下单接口5秒超时' }
+    ])
+
+    const getMockAppName = (id) => {
+      const item = mockApps.find(i => i.id === id)
+      return item ? item.name : '未绑定'
+    }
+
+    const getEnvName = (id) => {
+      const item = envList.find(i => i.id === id)
+      return item ? item.name : '全部环境'
+    }
+
+    const openMockAppEdit = (row = null) => {
+      ElMessage.info('编辑Mock应用')
+    }
+
+    const openMockEndpoint = (row) => {
+      currMockApp.value = JSON.parse(JSON.stringify(row))
+      endpointDrawerVisible.value = true
+    }
+
+    return {
+      // 菜单
+      currentMenu,
+      // 映射
+      envTypeText, envTypeTag, varSetTypeText,
+      // 环境
+      envSearch, envTypeFilter, envList, filteredEnvList,
+      envDrawerVisible, currEnv,
+      getDefaultService, openEnvEdit, saveEnv, delEnv, addService,
+      // 变量
+      varTab, varSetSearch, varSetTypeFilter,
+      globalVars, addGlobalVar, editGlobalVar, delGlobalVar,
+      varSets, filteredVarSetList, getVarSetName,
+      openVarSetEdit, delVarSet, openVarDetail,
+      varDetailVisible, currVarSet, varSearchKey, filteredVarItems,
+      addVarItem, delVarItem, saveVarItems,
+      // Mock
+      mockTab, mockApps, mockScenarios,
+      getMockAppName, getEnvName, openMockAppEdit, openMockEndpoint,
+      endpointDrawerVisible, currMockApp
+    }
+  }
+})
+
+app.use(ElementPlus)
+app.mount('#app')
+</script>
+</body>
+</html>

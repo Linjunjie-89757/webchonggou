@@ -72,7 +72,8 @@ public final class ApiAutomationModels {
             Integer minLength,
             Integer maxLength,
             String minimum,
-            String maximum
+            String maximum,
+            String responseCode
     ) {
     }
 
@@ -214,8 +215,19 @@ public final class ApiAutomationModels {
             String inputType,
             String url,
             String content,
-            String directoryName
+            String directoryName,
+            Boolean groupByTags
     ) {
+        public ApiDefinitionImportRequest(
+                String workspaceCode,
+                String mode,
+                String inputType,
+                String url,
+                String content,
+                String directoryName
+        ) {
+            this(workspaceCode, mode, inputType, url, content, directoryName, null);
+        }
     }
 
     public record ApiDefinitionImportItem(
@@ -1074,10 +1086,11 @@ public final class ApiAutomationModels {
             Integer threadCount,
             Boolean mockEnabled,
             Long mockApplicationId,
+            Long mockBusinessScenarioId,
             Map<String, String> rowVariables
     ) {
         public ApiRunRequest(String workspaceCode, Long environmentId, Long variableSetId, String branchName, String triggerSource) {
-            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null);
+            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null, null);
         }
     }
 
@@ -1093,8 +1106,26 @@ public final class ApiAutomationModels {
             Long environmentId,
             Long variableSetId,
             Boolean mockEnabled,
-            Long mockApplicationId
+            Long mockApplicationId,
+            Long mockBusinessScenarioId
     ) {
+        public ApiDebugDefinitionRequest(
+                String workspaceCode,
+                Long definitionId,
+                String name,
+                ApiRequestConfigInput requestConfig,
+                List<ApiAssertionInput> assertions,
+                List<ApiExtractorInput> extractors,
+                List<ApiProcessorInput> preProcessors,
+                List<ApiProcessorInput> postProcessors,
+                Long environmentId,
+                Long variableSetId,
+                Boolean mockEnabled,
+                Long mockApplicationId
+        ) {
+            this(workspaceCode, definitionId, name, requestConfig, assertions, extractors, preProcessors, postProcessors,
+                    environmentId, variableSetId, mockEnabled, mockApplicationId, null);
+        }
     }
 
     public record ApiDebugCaseRequest(
@@ -1109,8 +1140,26 @@ public final class ApiAutomationModels {
             Long environmentId,
             Long variableSetId,
             Boolean mockEnabled,
-            Long mockApplicationId
+            Long mockApplicationId,
+            Long mockBusinessScenarioId
     ) {
+        public ApiDebugCaseRequest(
+                String workspaceCode,
+                Long caseId,
+                Long definitionId,
+                String name,
+                ApiRequestConfigInput requestConfig,
+                List<ApiAssertionInput> assertions,
+                List<ApiProcessorInput> preProcessors,
+                List<ApiProcessorInput> postProcessors,
+                Long environmentId,
+                Long variableSetId,
+                Boolean mockEnabled,
+                Long mockApplicationId
+        ) {
+            this(workspaceCode, caseId, definitionId, name, requestConfig, assertions, preProcessors, postProcessors,
+                    environmentId, variableSetId, mockEnabled, mockApplicationId, null);
+        }
     }
 
     public record ApiRequestSnapshot(

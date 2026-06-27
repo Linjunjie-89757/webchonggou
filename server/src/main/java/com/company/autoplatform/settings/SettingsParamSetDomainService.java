@@ -25,6 +25,7 @@ import java.util.Objects;
 public class SettingsParamSetDomainService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String GLOBAL_PARAM_TYPE = "GLOBAL";
 
     private final ParamSetMapper paramSetMapper;
     private final ParamSetChangeHistoryMapper changeHistoryMapper;
@@ -81,6 +82,7 @@ public class SettingsParamSetDomainService {
     public ParamSetItem createParam(String headerWorkspaceCode, CreateParamSetRequest request) {
         WorkspaceEntity workspace = workspaceService.requireWritableWorkspace(
                 workspaceService.resolveTargetWorkspace(headerWorkspaceCode, request.workspaceCode()));
+        ensureSingleGlobalParamSet(workspace.getId(), null, request.paramType());
         ParamSetEntity entity = new ParamSetEntity();
         entity.setWorkspaceId(workspace.getId());
         entity.setParamType(request.paramType());
@@ -103,6 +105,7 @@ public class SettingsParamSetDomainService {
         if (!entity.getWorkspaceId().equals(workspace.getId())) {
             throw new BadRequestException("不允许修改参数集归属空间");
         }
+        ensureSingleGlobalParamSet(workspace.getId(), entity.getId(), request.paramType());
         Map<String, Object> before = snapshot(entity);
         String changedFields = changedFields(entity, request);
         entity.setParamType(request.paramType());
@@ -194,6 +197,21 @@ public class SettingsParamSetDomainService {
             throw new NotFoundException("参数集不存在");
         }
         return entity;
+    }
+
+    private void ensureSingleGlobalParamSet(Long workspaceId, Long currentId, String paramType) {
+        if (!GLOBAL_PARAM_TYPE.equalsIgnoreCase(blankToNull(paramType))) {
+            return;
+        }
+        LambdaQueryWrapper<ParamSetEntity> query = new LambdaQueryWrapper<ParamSetEntity>()
+                .eq(ParamSetEntity::getWorkspaceId, workspaceId)
+                .eq(ParamSetEntity::getParamType, GLOBAL_PARAM_TYPE);
+        if (currentId != null) {
+            query.ne(ParamSetEntity::getId, currentId);
+        }
+        if (paramSetMapper.selectCount(query) > 0) {
+            throw new BadRequestException("当前空间已存在全局公共变量集");
+        }
     }
 
     private void validateReadable(Long workspaceId, String workspaceCode, String message) {

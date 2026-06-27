@@ -9,6 +9,9 @@ export function createRunnerTaskPoller(options = {}) {
   const webElementValidateExecutor = typeof options.webElementValidateExecutor === 'function'
     ? options.webElementValidateExecutor
     : null;
+  const webCaseRunExecutor = typeof options.webCaseRunExecutor === 'function'
+    ? options.webCaseRunExecutor
+    : null;
   let poller;
 
   async function start(payload = {}) {
@@ -100,6 +103,7 @@ export function createRunnerTaskPoller(options = {}) {
         resource: {
           mode: 'LOCAL_NODE_RUNNER',
           validationMode: webElementValidateExecutor ? 'LOCAL_PLAYWRIGHT' : 'UNCONFIGURED',
+          executionMode: webCaseRunExecutor ? 'LOCAL_PLAYWRIGHT' : 'UNCONFIGURED',
         },
       });
 
@@ -141,10 +145,16 @@ export function createRunnerTaskPoller(options = {}) {
     });
     await appendLog(current, task, 'INFO', `开始执行 ${taskType || 'UNKNOWN'} 任务`, {
       validationMode: taskType === 'WEB_ELEMENT_VALIDATE' ? 'LOCAL_PLAYWRIGHT' : 'UNKNOWN',
+      executionMode: taskType === 'WEB_CASE_RUN' ? 'LOCAL_PLAYWRIGHT' : 'UNKNOWN',
     });
 
     if (taskType === 'WEB_ELEMENT_VALIDATE') {
       await executeWebElementValidateTask(current, task);
+      return;
+    }
+
+    if (taskType === 'WEB_CASE_RUN') {
+      await executeWebCaseRunTask(current, task);
       return;
     }
 
@@ -244,6 +254,140 @@ export function createRunnerTaskPoller(options = {}) {
           validationMode: 'LOCAL_PLAYWRIGHT',
           pageUrl: task.payload?.pageUrl || '',
           results: [],
+        },
+      });
+    }
+  }
+
+  async function executeWebCaseRunTask(current, task) {
+    const caseSnapshot = normalizeCaseSnapshot(task.payload);
+    const steps = normalizeCaseSteps(caseSnapshot.steps);
+    const startedAt = Date.now();
+    const reportedStepIds = new Set();
+
+    try {
+      if (!webCaseRunExecutor) {
+        throw new Error('WEB_CASE_RUN executor is not configured');
+      }
+
+      await reportStatus(current, task, {
+        status: 'RUNNING',
+        currentStage: 'EXECUTING',
+        progress: { current: 0, total: steps.length, percent: 0 },
+        message: `本地用例执行开始：共 ${steps.length} 个步骤`,
+      });
+
+      const execution = await webCaseRunExecutor({
+        task,
+        caseSnapshot,
+        steps,
+        runOptions: task.payload?.runOptions || {},
+        onStepResult: async (stepResult) => {
+          const normalized = normalizeCaseStepResult(stepResult);
+          reportedStepIds.add(normalized.stepId);
+          const completed = reportedStepIds.size;
+          await appendLog(current, task, normalized.status === 'SUCCESS' ? 'INFO' : 'ERROR', `步骤执行${normalized.status === 'SUCCESS' ? '成功' : '失败'}：${normalized.stepName || normalized.stepId}`, {
+            stepType: normalized.stepType,
+            errorMessage: normalized.errorMessage || null,
+          });
+          await reportStepResult(current, task, {
+            stepId: normalized.stepId,
+            status: normalized.status,
+            durationMs: normalized.durationMs,
+            errorMessage: normalized.errorMessage || null,
+            screenshotRef: normalized.screenshotRef || null,
+            extra: normalized.extra || {},
+          });
+          await reportStatus(current, task, {
+            status: 'RUNNING',
+            currentStage: 'EXECUTING',
+            progress: buildProgress(completed, steps.length),
+            message: `本地用例执行中：${completed}/${steps.length}`,
+          });
+        },
+      });
+
+      const rawStepResults = Array.isArray(execution?.stepResults) ? execution.stepResults : [];
+      const stepResults = rawStepResults.map(normalizeCaseStepResult);
+      for (const result of stepResults) {
+        if (reportedStepIds.has(result.stepId)) {
+          continue;
+        }
+        await reportStepResult(current, task, {
+          stepId: result.stepId,
+          status: result.status,
+          durationMs: result.durationMs,
+          errorMessage: result.errorMessage || null,
+          screenshotRef: result.screenshotRef || null,
+          extra: result.extra || {},
+        });
+      }
+
+      const failed = stepResults.filter(item => item.status === 'FAILED').length;
+      const skipped = stepResults.filter(item => item.status === 'SKIPPED').length;
+      const passed = stepResults.filter(item => item.status === 'SUCCESS').length;
+      const durationMs = Date.now() - startedAt;
+      const finalStatus = failed > 0 ? 'FAILED' : 'SUCCESS';
+
+      await reportStatus(current, task, {
+        status: finalStatus,
+        currentStage: 'COMPLETED',
+        progress: buildProgress(stepResults.length, steps.length),
+        message: `本地用例执行完成：成功 ${passed} 步，失败 ${failed} 步`,
+      });
+      await reportFinalResult(current, task, {
+        status: finalStatus,
+        durationMs,
+        summary: {
+          mode: 'LOCAL_PLAYWRIGHT',
+          total: steps.length,
+          passed,
+          failed,
+          skipped,
+        },
+        errorMessage: execution?.errorMessage || (failed > 0 ? 'Web UI case run failed' : null),
+        reportData: {
+          executionMode: 'LOCAL_PLAYWRIGHT',
+          caseId: caseSnapshot.caseId ?? null,
+          caseName: caseSnapshot.caseName || caseSnapshot.name || '',
+          page: execution?.page || null,
+          stepResults,
+        },
+      });
+    } catch (error) {
+      const message = humanizeRunnerError(error);
+      const durationMs = Date.now() - startedAt;
+      const stepResults = buildFailedCaseStepResults(steps, message);
+
+      await appendLog(current, task, 'ERROR', 'WEB_CASE_RUN 本地用例执行失败', {
+        errorMessage: message,
+      });
+      for (const result of stepResults) {
+        await reportStepResult(current, task, {
+          stepId: result.stepId,
+          status: result.status,
+          durationMs: result.durationMs,
+          errorMessage: result.errorMessage || null,
+          screenshotRef: result.screenshotRef || null,
+          extra: result.extra || {},
+        });
+      }
+      await reportFinalResult(current, task, {
+        status: 'FAILED',
+        durationMs,
+        summary: {
+          mode: 'LOCAL_PLAYWRIGHT',
+          total: steps.length,
+          passed: 0,
+          failed: stepResults.filter(item => item.status === 'FAILED').length,
+          skipped: stepResults.filter(item => item.status === 'SKIPPED').length,
+        },
+        errorMessage: message,
+        reportData: {
+          executionMode: 'LOCAL_PLAYWRIGHT',
+          caseId: caseSnapshot.caseId ?? null,
+          caseName: caseSnapshot.caseName || caseSnapshot.name || '',
+          stepResults,
         },
       });
     }
@@ -385,4 +529,88 @@ function normalizeIntervalMs(value) {
 
 function optionalString(value) {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeCaseSnapshot(payload) {
+  if (payload?.caseSnapshot && typeof payload.caseSnapshot === 'object') {
+    return payload.caseSnapshot;
+  }
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
+function normalizeCaseSteps(value) {
+  return Array.isArray(value)
+    ? value
+      .filter(step => step && typeof step === 'object')
+      .filter(step => step.enabled !== false)
+      .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+    : [];
+}
+
+function normalizeCaseStepResult(value) {
+  const raw = value && typeof value === 'object' ? value : {};
+  return {
+    stepId: optionalString(raw.stepId) || optionalString(raw.id) || 'step',
+    stepName: optionalString(raw.stepName) || optionalString(raw.name) || '',
+    stepType: optionalString(raw.stepType) || optionalString(raw.type) || '',
+    status: optionalString(raw.status).toUpperCase() || 'UNKNOWN',
+    durationMs: Number.isFinite(Number(raw.durationMs)) ? Number(raw.durationMs) : null,
+    errorMessage: optionalString(raw.errorMessage) || null,
+    screenshotRef: optionalString(raw.screenshotRef) || null,
+    extra: raw.extra && typeof raw.extra === 'object' ? raw.extra : {},
+  };
+}
+
+function buildFailedCaseStepResults(steps, message) {
+  const safeSteps = Array.isArray(steps) ? steps : [];
+  if (safeSteps.length === 0) {
+    return [{
+      stepId: 'case-run',
+      stepName: '本地用例执行',
+      stepType: 'UNKNOWN',
+      status: 'FAILED',
+      durationMs: 0,
+      errorMessage: message,
+      screenshotRef: null,
+      extra: { sortOrder: 1 },
+    }];
+  }
+  return safeSteps.map((step, index) => ({
+    stepId: optionalString(step.stepId) || optionalString(step.id) || String(index + 1),
+    stepName: optionalString(step.stepName) || optionalString(step.name) || `第 ${index + 1} 步`,
+    stepType: optionalString(step.stepType) || optionalString(step.type) || '',
+    status: index === 0 ? 'FAILED' : 'SKIPPED',
+    durationMs: 0,
+    errorMessage: index === 0 ? message : '前置步骤失败，当前步骤未执行',
+    screenshotRef: null,
+    extra: { sortOrder: Number(step.sortOrder || index + 1) },
+  }));
+}
+
+function humanizeRunnerError(error) {
+  const rawMessage = error instanceof Error ? error.message : String(error || '');
+  const message = rawMessage.trim() || '本地 Runner 执行失败';
+  if (/page\.goto/i.test(message) && /Protocol error/i.test(message)) {
+    return `目标页面打开失败：浏览器导航协议异常。请检查 URL 是否可访问、协议是否正确，原始错误：${message}`;
+  }
+  if (/net::ERR_NAME_NOT_RESOLVED/i.test(message)) {
+    return `目标页面打开失败：域名无法解析。请检查本机网络、DNS 或目标环境配置，原始错误：${message}`;
+  }
+  if (/net::ERR_CONNECTION_REFUSED/i.test(message)) {
+    return `目标页面打开失败：连接被拒绝。请确认目标服务已启动且本机可访问，原始错误：${message}`;
+  }
+  if (/Timeout/i.test(message)) {
+    return `本地执行超时：页面加载或步骤等待超过限制。请检查页面响应速度、登录态和定位器，原始错误：${message}`;
+  }
+  return message;
+}
+
+function buildProgress(current, total) {
+  const safeTotal = Math.max(Number(total) || 0, 0);
+  const safeCurrent = Math.max(Number(current) || 0, 0);
+  return {
+    current: safeCurrent,
+    total: safeTotal,
+    percent: safeTotal > 0 ? Math.min(100, Math.round((safeCurrent / safeTotal) * 100)) : 100,
+  };
 }

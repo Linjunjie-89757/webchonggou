@@ -6,6 +6,9 @@ import com.company.autoplatform.auth.CurrentUserContext;
 import com.company.autoplatform.common.BadRequestException;
 import com.company.autoplatform.common.NotFoundException;
 import com.company.autoplatform.common.PageResponse;
+import com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
+import com.company.autoplatform.runner.LocalRunnerService;
+import com.company.autoplatform.runner.LocalRunnerTaskFinalResultEvent;
 import com.company.autoplatform.settings.EnvConfigEntity;
 import com.company.autoplatform.settings.EnvConfigMapper;
 import com.company.autoplatform.settings.MockApplicationEntity;
@@ -16,6 +19,7 @@ import com.company.autoplatform.workspace.WorkspaceEntity;
 import com.company.autoplatform.workspace.WorkspaceService;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +29,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -54,6 +59,11 @@ public class WebUiExecutionDomainService {
     private static final String MANUAL = "MANUAL";
     private static final String CI = "CI";
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final String EXECUTION_LOCATION_SERVER = "SERVER";
+    private static final String EXECUTION_LOCATION_LOCAL_RUNNER = "LOCAL_RUNNER";
+    private static final String GLOBAL_VARIABLE_SET_TYPE = "GLOBAL";
+    private static final String BUSINESS_VARIABLE_SET_TYPE = "BUSINESS";
+    private static final String PAYMENT_CHANNEL_VARIABLE_SET_TYPE = "PAYMENT_CHANNEL";
 
     private final WebUiRunBatchMapper runBatchMapper;
     private final WebUiCiTokenMapper ciTokenMapper;
@@ -69,6 +79,7 @@ public class WebUiExecutionDomainService {
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
     private final ObjectProvider<WebUiBrowserRunner> browserRunnerProvider;
+    private final LocalRunnerService localRunnerService;
     private final WebUiArtifactStorageService artifactStorageService;
     private final WebUiExecutionContextSupport executionContextSupport;
     private final String mockPublicBaseUrl;
@@ -88,6 +99,7 @@ public class WebUiExecutionDomainService {
             WorkspaceService workspaceService,
             ApiWorkspaceScopeSupport workspaceScopeSupport,
             ObjectProvider<WebUiBrowserRunner> browserRunnerProvider,
+            LocalRunnerService localRunnerService,
             WebUiArtifactStorageService artifactStorageService,
             WebUiExecutionContextSupport executionContextSupport,
             @Value("${autoplatform.mock.public-base-url:http://localhost:${server.port:8080}/api/mock}") String mockPublicBaseUrl
@@ -106,6 +118,7 @@ public class WebUiExecutionDomainService {
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
         this.browserRunnerProvider = browserRunnerProvider;
+        this.localRunnerService = localRunnerService;
         this.artifactStorageService = artifactStorageService;
         this.executionContextSupport = executionContextSupport;
         this.mockPublicBaseUrl = trimTrailingSlash(mockPublicBaseUrl);
@@ -131,6 +144,99 @@ public class WebUiExecutionDomainService {
                 request == null ? null : request.runtimeVariables()
         );
         return execute(webCase, enabledSteps, profile, true, null, null, CurrentUserContext.require().displayName());
+    }
+
+    @Transactional
+    public WebUiLocalRunnerRunResponse createLocalRunnerRun(Long id, String workspaceCode, WebUiRunRequest request) {
+        WebUiCaseEntity webCase = requireCase(id);
+        workspaceScopeSupport.validateReadable(webCase.getWorkspaceId(), workspaceCode, "Current workspace cannot run the web UI case");
+        WorkspaceEntity workspace = workspaceService.requireWritableWorkspace(
+                workspaceService.requireWorkspaceById(webCase.getWorkspaceId()).getWorkspaceCode());
+        List<WebUiCaseStepEntity> enabledSteps = listEnabledSteps(webCase.getId());
+        if (enabledSteps.isEmpty()) {
+            throw new BadRequestException("Web UI case has no enabled steps");
+        }
+        EnvironmentResolution environment = resolveEnvironment(request == null ? null : request.environmentId(), webCase.getWorkspaceId());
+        RunProfile profile = resolveRunProfile(
+                webCase,
+                environment,
+                request == null ? null : request.headless(),
+                request == null ? null : request.variableSetId(),
+                request == null ? null : request.mockApplicationId(),
+                request == null ? null : request.mockEnabled(),
+                request == null ? null : request.runtimeVariables()
+        );
+        List<WebUiCaseStepEntity> runtimeSteps = resolveRuntimeSteps(enabledSteps, profile.variables());
+        WebUiRunEntity run = createRun(webCase, profile, runtimeSteps.size(), null, null, CurrentUserContext.require().displayName());
+        run.setContextSnapshotJson(profile.contextSnapshotJson());
+        runMapper.updateById(run);
+
+        CreateRunnerTaskCommand command = new CreateRunnerTaskCommand(
+                workspace.getId(),
+                workspace.getWorkspaceCode(),
+                null,
+                "WEB_CASE_RUN",
+                "LOCAL_RUNNER",
+                null,
+                String.valueOf(CurrentUserContext.require().userId()),
+                "1.0",
+                MANUAL,
+                5,
+                null,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of(
+                        "screenshotPolicy", "ON_FAILURE",
+                        "screenshotUploadMode", "FAILURE_ONLY",
+                        "format", "WEBP",
+                        "quality", 75
+                ),
+                Map.of(
+                        "caseSnapshot", buildLocalRunnerCaseSnapshot(run, webCase, profile, runtimeSteps),
+                        "runOptions", Map.of(
+                                "debugMode", false,
+                                "formalReport", true
+                        )
+                )
+        );
+        var runnerTask = localRunnerService.createDebugTask(command);
+        WebUiExecutionContextSupport.ExecutionContextSnapshot snapshot =
+                executionContextSupport.readExecutionContextSnapshot(profile.contextSnapshotJson());
+        if (snapshot != null) {
+            run.setContextSnapshotJson(executionContextSupport.toJson(new WebUiExecutionContextSupport.ExecutionContextSnapshot(
+                    snapshot.environment(),
+                    snapshot.variableSetId(),
+                    snapshot.variableSetName(),
+                    snapshot.variableSets(),
+                    snapshot.mock(),
+                    snapshot.variables(),
+                    EXECUTION_LOCATION_LOCAL_RUNNER,
+                    runnerTask.runId()
+            ), "Failed to serialize Web UI local runner execution context snapshot"));
+            run.setUpdatedAt(LocalDateTime.now());
+            runMapper.updateById(run);
+        }
+        return new WebUiLocalRunnerRunResponse(
+                new WebUiRunResponse(
+                        run.getId(),
+                        run.getBatchId(),
+                        run.getCaseId(),
+                        run.getCaseName(),
+                        RUNNING,
+                        null,
+                        null,
+                        runtimeSteps.size(),
+                        0,
+                        0,
+                        0,
+                        List.of()
+                ),
+                runnerTask
+        );
     }
 
     @Transactional
@@ -469,6 +575,41 @@ public class WebUiExecutionDomainService {
         return run;
     }
 
+    private Map<String, Object> buildLocalRunnerCaseSnapshot(
+            WebUiRunEntity run,
+            WebUiCaseEntity webCase,
+            RunProfile profile,
+            List<WebUiCaseStepEntity> runtimeSteps
+    ) {
+        return Map.of(
+                "formalRunId", run.getId(),
+                "caseId", webCase.getId(),
+                "caseName", webCase.getCaseName(),
+                "baseUrl", profile.baseUrl() == null ? "" : profile.baseUrl(),
+                "browserType", profile.browserType(),
+                "headless", profile.headless(),
+                "defaultTimeoutMs", profile.defaultTimeoutMs(),
+                "steps", runtimeSteps.stream()
+                        .map(step -> {
+                            Map<String, Object> item = new LinkedHashMap<>();
+                            item.put("id", step.getId());
+                            item.put("stepId", String.valueOf(step.getId() == null ? step.getSortOrder() : step.getId()));
+                            item.put("stepName", step.getStepName());
+                            item.put("stepType", step.getStepType());
+                            item.put("locatorType", step.getLocatorType());
+                            item.put("locatorValue", step.getLocatorValue());
+                            item.put("inputValue", step.getInputValue());
+                            item.put("timeoutMs", step.getTimeoutMs());
+                            item.put("continueOnFailure", Boolean.TRUE.equals(step.getContinueOnFailure()));
+                            item.put("screenshotPolicy", step.getScreenshotPolicy());
+                            item.put("enabled", true);
+                            item.put("sortOrder", step.getSortOrder());
+                            return item;
+                        })
+                        .toList()
+        );
+    }
+
     private WebUiRunBatchEntity createBatch(
             WorkspaceEntity workspace,
             String batchName,
@@ -660,6 +801,70 @@ public class WebUiExecutionDomainService {
         return loadArtifact(run, artifactId);
     }
 
+    @EventListener
+    @Transactional
+    public void handleLocalRunnerTaskFinalResult(LocalRunnerTaskFinalResultEvent event) {
+        if (!"WEB_CASE_RUN".equals(event.taskType())) {
+            return;
+        }
+        Map<String, Object> caseSnapshot = mapValue(event.payload().get("caseSnapshot"));
+        Long formalRunId = longValue(caseSnapshot.get("formalRunId"));
+        if (formalRunId == null) {
+            return;
+        }
+        WebUiRunEntity run = requireRun(formalRunId);
+        if (run.getFinishedAt() != null) {
+            return;
+        }
+
+        Map<String, Object> reportData = mapValue(event.result().get("reportData"));
+        List<Map<String, Object>> stepResults = listMapValue(reportData.get("stepResults"));
+        List<Map<String, Object>> stepSnapshots = listMapValue(caseSnapshot.get("steps"));
+        if (stepResults.isEmpty() && "FAILED".equals(event.status())) {
+            stepResults = buildFailedLocalRunnerStepResults(stepSnapshots, stringValue(event.result().get("errorMessage")));
+        }
+        LocalDateTime finishedAt = LocalDateTime.now();
+        List<WebUiRunStepResult> persistedSteps = new ArrayList<>();
+        for (Map<String, Object> stepResult : stepResults) {
+            Map<String, Object> stepSnapshot = findLocalRunnerStepSnapshot(stepSnapshots, stepResult);
+            persistedSteps.add(persistLocalRunnerStep(run, stepSnapshot, stepResult, finishedAt));
+        }
+
+        int passedSteps = (int) persistedSteps.stream().filter(step -> PASSED.equals(step.status())).count();
+        int failedSteps = (int) persistedSteps.stream().filter(step -> FAILED.equals(step.status())).count();
+        int skippedSteps = (int) persistedSteps.stream().filter(step -> SKIPPED.equals(step.status())).count();
+        String status = failedSteps > 0 || "FAILED".equals(event.status()) ? FAILED : SUCCESS;
+        String failureSummary = persistedSteps.stream()
+                .filter(step -> FAILED.equals(step.status()))
+                .map(WebUiRunStepResult::errorMessage)
+                .filter(message -> message != null && !message.isBlank())
+                .findFirst()
+                .orElse("FAILED".equals(event.status()) ? stringValue(event.result().get("errorMessage")) : null);
+        long durationMs = longValue(event.result().get("durationMs")) == null
+                ? Math.max(0L, Duration.between(run.getStartedAt(), finishedAt).toMillis())
+                : longValue(event.result().get("durationMs"));
+
+        run.setStatus(status);
+        run.setPassedSteps(passedSteps);
+        run.setFailedSteps(failedSteps);
+        run.setSkippedSteps(skippedSteps);
+        run.setDurationMs(durationMs);
+        run.setFailureSummary(failureSummary);
+        run.setFinishedAt(finishedAt);
+        run.setUpdatedAt(finishedAt);
+        runMapper.updateById(run);
+
+        if (run.getCaseId() != null) {
+            WebUiCaseEntity webCase = caseMapper.selectById(run.getCaseId());
+            if (webCase != null) {
+                webCase.setLastRunResult(status);
+                webCase.setLastRunAt(finishedAt);
+                webCase.setUpdatedAt(finishedAt);
+                caseMapper.updateById(webCase);
+            }
+        }
+    }
+
     WebUiArtifactFileDownload downloadSharedArtifact(Long runId, Long artifactId, Long workspaceId) {
         WebUiRunEntity run = requireRun(runId);
         if (!workspaceId.equals(run.getWorkspaceId())) {
@@ -701,6 +906,67 @@ public class WebUiExecutionDomainService {
         return toRunStepResult(entity);
     }
 
+    private WebUiRunStepResult persistLocalRunnerStep(
+            WebUiRunEntity run,
+            Map<String, Object> stepSnapshot,
+            Map<String, Object> stepResult,
+            LocalDateTime fallbackFinishedAt
+    ) {
+        Long durationMs = longValue(stepResult.get("durationMs"));
+        LocalDateTime finishedAt = fallbackFinishedAt;
+        Long caseStepId = longValue(firstPresent(stepSnapshot.get("id"), stepSnapshot.get("caseStepId")));
+        byte[] screenshotBytes = screenshotBytes(stepResult);
+        WebUiRunArtifactEntity artifact = persistScreenshotArtifact(run, caseStepId, screenshotBytes, finishedAt);
+
+        WebUiRunStepEntity entity = new WebUiRunStepEntity();
+        entity.setRunId(run.getId());
+        entity.setCaseStepId(caseStepId);
+        entity.setStepName(firstText(stepSnapshot.get("stepName"), stepSnapshot.get("name"), stepResult.get("stepName"), stepResult.get("stepId")));
+        entity.setStepType(firstText(stepSnapshot.get("stepType"), stepSnapshot.get("type"), stepResult.get("stepType")));
+        entity.setStatus(toFormalStepStatus(stepResult.get("status")));
+        entity.setLocatorType(stringValue(stepSnapshot.get("locatorType")));
+        entity.setLocatorValue(stringValue(stepSnapshot.get("locatorValue")));
+        entity.setInputValueSnapshot(stringValue(stepSnapshot.get("inputValue")));
+        entity.setDurationMs(durationMs == null ? 0L : durationMs);
+        entity.setErrorMessage(stringValue(stepResult.get("errorMessage")));
+        entity.setScreenshotArtifactId(artifact == null ? null : artifact.getId());
+        entity.setSortOrder(intValue(firstPresent(stepSnapshot.get("sortOrder"), mapValue(stepResult.get("extra")).get("sortOrder"))));
+        entity.setStartedAt(finishedAt.minusNanos(Math.max(0L, entity.getDurationMs()) * 1_000_000L));
+        entity.setFinishedAt(finishedAt);
+        entity.setCreatedAt(finishedAt);
+        entity.setUpdatedAt(finishedAt);
+        runStepMapper.insert(entity);
+        return toRunStepResult(entity);
+    }
+
+    private List<Map<String, Object>> buildFailedLocalRunnerStepResults(
+            List<Map<String, Object>> stepSnapshots,
+            String errorMessage
+    ) {
+        String message = errorMessage == null || errorMessage.isBlank() ? "本地 Runner 执行失败" : errorMessage;
+        if (stepSnapshots.isEmpty()) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("stepId", "case-run");
+            result.put("status", FAILED);
+            result.put("durationMs", 0);
+            result.put("errorMessage", message);
+            result.put("extra", Map.of("sortOrder", 1));
+            return List.of(result);
+        }
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (int index = 0; index < stepSnapshots.size(); index++) {
+            Map<String, Object> snapshot = stepSnapshots.get(index);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("stepId", firstText(snapshot.get("stepId"), snapshot.get("id"), String.valueOf(index + 1)));
+            result.put("status", index == 0 ? FAILED : SKIPPED);
+            result.put("durationMs", 0);
+            result.put("errorMessage", index == 0 ? message : "前置步骤失败，当前步骤未执行");
+            result.put("extra", Map.of("sortOrder", intValue(snapshot.get("sortOrder")) == null ? index + 1 : intValue(snapshot.get("sortOrder"))));
+            results.add(result);
+        }
+        return results;
+    }
+
     private WebUiRunArtifactEntity persistScreenshotArtifact(
             WebUiRunEntity run,
             WebUiCaseStepEntity step,
@@ -720,6 +986,36 @@ public class WebUiExecutionDomainService {
         artifact.setWorkspaceId(run.getWorkspaceId());
         artifact.setRunId(run.getId());
         artifact.setStepId(step.getId());
+        artifact.setArtifactType("SCREENSHOT");
+        artifact.setFileName(stored.fileName());
+        artifact.setContentType(stored.contentType());
+        artifact.setFileSize(stored.fileSize());
+        artifact.setStoragePath(stored.storagePath());
+        artifact.setCreatedAt(now);
+        artifact.setUpdatedAt(now);
+        runArtifactMapper.insert(artifact);
+        return artifact;
+    }
+
+    private WebUiRunArtifactEntity persistScreenshotArtifact(
+            WebUiRunEntity run,
+            Long stepId,
+            byte[] screenshotBytes,
+            LocalDateTime now
+    ) {
+        if (screenshotBytes == null || screenshotBytes.length == 0) {
+            return null;
+        }
+        WebUiArtifactStorageService.StoredArtifact stored = artifactStorageService.storeScreenshot(
+                run.getWorkspaceId(),
+                run.getId(),
+                stepId,
+                screenshotBytes
+        );
+        WebUiRunArtifactEntity artifact = new WebUiRunArtifactEntity();
+        artifact.setWorkspaceId(run.getWorkspaceId());
+        artifact.setRunId(run.getId());
+        artifact.setStepId(stepId);
         artifact.setArtifactType("SCREENSHOT");
         artifact.setFileName(stored.fileName());
         artifact.setContentType(stored.contentType());
@@ -771,6 +1067,111 @@ public class WebUiExecutionDomainService {
         return expected == actual;
     }
 
+    private Map<String, Object> findLocalRunnerStepSnapshot(
+            List<Map<String, Object>> stepSnapshots,
+            Map<String, Object> stepResult
+    ) {
+        String stepId = stringValue(stepResult.get("stepId"));
+        Integer sortOrder = intValue(mapValue(stepResult.get("extra")).get("sortOrder"));
+        return stepSnapshots.stream()
+                .filter(step -> {
+                    String candidateStepId = firstText(step.get("stepId"), step.get("id"));
+                    Integer candidateSortOrder = intValue(step.get("sortOrder"));
+                    return (stepId != null && stepId.equals(candidateStepId))
+                            || (sortOrder != null && sortOrder.equals(candidateSortOrder));
+                })
+                .findFirst()
+                .orElse(Map.of());
+    }
+
+    private String toFormalStepStatus(Object value) {
+        String normalized = stringValue(value);
+        if ("SUCCESS".equals(normalized) || "PASSED".equals(normalized)) {
+            return PASSED;
+        }
+        if ("SKIPPED".equals(normalized)) {
+            return SKIPPED;
+        }
+        return FAILED;
+    }
+
+    private byte[] screenshotBytes(Map<String, Object> stepResult) {
+        Map<String, Object> extra = mapValue(stepResult.get("extra"));
+        String screenshotBase64 = stringValue(extra.get("screenshotBase64"));
+        if (screenshotBase64 == null) {
+            return null;
+        }
+        int commaIndex = screenshotBase64.indexOf(',');
+        String raw = commaIndex >= 0 ? screenshotBase64.substring(commaIndex + 1) : screenshotBase64;
+        try {
+            return Base64.getDecoder().decode(raw);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> mapValue(Object value) {
+        return value instanceof Map<?, ?> map ? (Map<String, Object>) map : Map.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> listMapValue(Object value) {
+        return value instanceof List<?> list
+                ? list.stream()
+                .filter(Map.class::isInstance)
+                .map(item -> (Map<String, Object>) item)
+                .toList()
+                : List.of();
+    }
+
+    private Object firstPresent(Object... values) {
+        for (Object value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String firstText(Object... values) {
+        for (Object value : values) {
+            String text = stringValue(value);
+            if (text != null) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private String stringValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isBlank() ? null : text;
+    }
+
+    private Long longValue(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        String text = stringValue(value);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(text);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private Integer intValue(Object value) {
+        Long number = longValue(value);
+        return number == null ? null : number.intValue();
+    }
+
     private RunProfile resolveRunProfile(
             WebUiCaseEntity webCase,
             EnvironmentResolution environment,
@@ -784,21 +1185,29 @@ public class WebUiExecutionDomainService {
         Boolean headless = requestHeadless != null ? requestHeadless : (environment == null ? webCase.getHeadless() : environment.headless());
         String baseUrl = environment == null ? webCase.getBaseUrl() : environment.baseUrl();
         Integer timeoutMs = environment == null ? webCase.getDefaultTimeoutMs() : environment.defaultTimeoutMs();
-        VariableSetResolution variableSet = resolveVariableSet(
-                requestVariableSetId == null && environment != null ? environment.defaultVariableSetId() : requestVariableSetId,
-                webCase.getWorkspaceId()
-        );
+        VariableSetResolution defaultVariableSet = resolveVariableSet(environment == null ? null : environment.defaultVariableSetId(), webCase.getWorkspaceId());
+        VariableSetResolution runtimeVariableSet = requestVariableSetId == null
+                || defaultVariableSet != null && requestVariableSetId.equals(defaultVariableSet.id())
+                ? null
+                : resolveVariableSet(requestVariableSetId, webCase.getWorkspaceId());
+        VariableSetResolution effectiveVariableSet = runtimeVariableSet == null ? defaultVariableSet : runtimeVariableSet;
         MockResolution mock = resolveMockApplication(
                 Boolean.FALSE.equals(mockEnabled) ? null : (requestMockApplicationId == null && environment != null ? environment.mockApplicationId() : requestMockApplicationId),
                 webCase.getWorkspaceId()
         );
+        List<WebUiExecutionContextSupport.VariableSetSnapshot> variableSetSnapshots = new ArrayList<>();
         Map<String, WebUiExecutionContextSupport.RuntimeVariable> variables = executionContextSupport.mergeVariables(
                 executionContextSupport.builtInVariables(),
-                environment == null ? List.of() : environment.variables(),
-                variableSet == null ? List.of() : variableSet.variables(),
+                List.of(),
+                List.of(),
                 null
         );
+        applyVariableSets(variables, listGlobalVariableSets(webCase.getWorkspaceId()), variableSetSnapshots);
+        executionContextSupport.putVariableItems(variables, environment == null ? List.of() : environment.variables());
+        putServiceRuntimeVariables(variables, environment);
         putMockRuntimeVariables(variables, mock);
+        applyVariableSet(variables, defaultVariableSet, variableSetSnapshots);
+        applyVariableSet(variables, runtimeVariableSet, variableSetSnapshots);
         putRuntimeVariables(variables, runtimeVariables);
         String normalizedBrowserType = normalizeBrowserType(browserType);
         boolean normalizedHeadless = headless == null || headless;
@@ -811,8 +1220,8 @@ public class WebUiExecutionDomainService {
                 normalizedHeadless,
                 resolvedBaseUrl,
                 normalizedTimeoutMs,
-                variableSet == null ? null : variableSet.id(),
-                variableSet == null ? null : variableSet.name(),
+                effectiveVariableSet == null ? null : effectiveVariableSet.id(),
+                effectiveVariableSet == null ? null : effectiveVariableSet.name(),
                 variables,
                 executionContextSupport.toJson(new WebUiExecutionContextSupport.ExecutionContextSnapshot(
                         environment == null ? null : new WebUiExecutionContextSupport.EnvironmentSnapshot(
@@ -821,17 +1230,22 @@ public class WebUiExecutionDomainService {
                                 resolvedBaseUrl,
                                 normalizedBrowserType,
                                 normalizedHeadless,
-                                normalizedTimeoutMs
+                                normalizedTimeoutMs,
+                                environment.defaultServiceKey(),
+                                environment.services()
                         ),
-                        variableSet == null ? null : variableSet.id(),
-                        variableSet == null ? null : variableSet.name(),
+                        effectiveVariableSet == null ? null : effectiveVariableSet.id(),
+                        effectiveVariableSet == null ? null : effectiveVariableSet.name(),
+                        variableSetSnapshots,
                         mock == null ? null : new WebUiExecutionContextSupport.MockSnapshot(
                                 mock.id(),
                                 mock.appName(),
                                 mock.appCode(),
                                 mock.baseUrl()
                         ),
-                        executionContextSupport.maskVariables(variables)
+                        executionContextSupport.maskVariables(variables),
+                        null,
+                        null
                 ), "Failed to serialize Web UI execution context snapshot")
         );
     }
@@ -860,6 +1274,8 @@ public class WebUiExecutionDomainService {
                     legacyEnvironment.getDefaultTimeoutMs(),
                     legacyEnvironment.getDefaultVariableSetId(),
                     null,
+                    List.of(),
+                    "default",
                     List.of()
             );
         }
@@ -868,7 +1284,7 @@ public class WebUiExecutionDomainService {
 
     private EnvironmentResolution resolvePublicEnvironment(Long environmentId, Long workspaceId) {
         EnvConfigEntity environment = envConfigMapper.selectById(environmentId);
-        if (environment == null || !WebUiExecutionContextSupport.WEB_UI_ENV_TYPE.equals(environment.getEnvType())
+        if (environment == null || !WebUiEnvironmentTypeSupport.isWebUiUsable(environment.getEnvType())
                 || !workspaceId.equals(environment.getWorkspaceId())) {
             throw new NotFoundException("Web UI environment not found");
         }
@@ -877,16 +1293,25 @@ public class WebUiExecutionDomainService {
         }
         WebUiExecutionContextSupport.WebUiEnvironmentConfig config =
                 executionContextSupport.readEnvironmentConfig(environment.getConfigJson());
+        List<WebUiExecutionContextSupport.ServiceEndpoint> services = normalizeServices(config.services(), environment.getBaseUrl());
+        String defaultServiceKey = normalizeDefaultServiceKey(config.defaultServiceKey(), services);
+        String baseUrl = services.stream()
+                .filter(service -> service.key().equals(defaultServiceKey))
+                .findFirst()
+                .map(WebUiExecutionContextSupport.ServiceEndpoint::baseUrl)
+                .orElse(environment.getBaseUrl());
         return new EnvironmentResolution(
                 -environment.getId(),
                 environment.getEnvName(),
-                environment.getBaseUrl(),
+                baseUrl,
                 config.browserType(),
                 config.headless(),
                 config.defaultTimeoutMs(),
                 config.defaultVariableSetId(),
                 config.mockApplicationId(),
-                config.variables() == null ? List.of() : config.variables()
+                config.variables() == null ? List.of() : config.variables(),
+                defaultServiceKey,
+                services
         );
     }
 
@@ -909,6 +1334,46 @@ public class WebUiExecutionDomainService {
         );
     }
 
+    private List<WebUiExecutionContextSupport.ServiceEndpoint> normalizeServices(
+            List<WebUiExecutionContextSupport.ServiceEndpoint> services,
+            String fallbackBaseUrl
+    ) {
+        List<WebUiExecutionContextSupport.ServiceEndpoint> normalized = defaultList(services).stream()
+                .filter(service -> service != null
+                        && service.key() != null && !service.key().isBlank()
+                        && service.baseUrl() != null && !service.baseUrl().isBlank())
+                .map(service -> new WebUiExecutionContextSupport.ServiceEndpoint(
+                        service.key().trim(),
+                        service.name() == null || service.name().isBlank() ? service.key().trim() : service.name().trim(),
+                        service.baseUrl().trim()
+                ))
+                .toList();
+        if (!normalized.isEmpty()) {
+            return normalized;
+        }
+        return List.of(new WebUiExecutionContextSupport.ServiceEndpoint("default", "默认服务", fallbackBaseUrl == null ? "" : fallbackBaseUrl.trim()));
+    }
+
+    private String normalizeDefaultServiceKey(String defaultServiceKey, List<WebUiExecutionContextSupport.ServiceEndpoint> services) {
+        String normalized = defaultServiceKey == null ? "" : defaultServiceKey.trim();
+        if (!normalized.isBlank() && services.stream().anyMatch(service -> service.key().equals(normalized))) {
+            return normalized;
+        }
+        return services.isEmpty() ? "default" : services.getFirst().key();
+    }
+
+    private void putServiceRuntimeVariables(Map<String, WebUiExecutionContextSupport.RuntimeVariable> variables, EnvironmentResolution environment) {
+        if (variables == null || environment == null) {
+            return;
+        }
+        variables.put("BASE_URL", new WebUiExecutionContextSupport.RuntimeVariable(environment.baseUrl() == null ? "" : environment.baseUrl(), false));
+        variables.put("DEFAULT_SERVICE_URL", new WebUiExecutionContextSupport.RuntimeVariable(environment.baseUrl() == null ? "" : environment.baseUrl(), false));
+        variables.put("DEFAULT_SERVICE_KEY", new WebUiExecutionContextSupport.RuntimeVariable(environment.defaultServiceKey() == null ? "" : environment.defaultServiceKey(), false));
+        for (WebUiExecutionContextSupport.ServiceEndpoint service : defaultList(environment.services())) {
+            variables.put(service.key(), new WebUiExecutionContextSupport.RuntimeVariable(service.baseUrl() == null ? "" : service.baseUrl(), false));
+        }
+    }
+
     private void putMockRuntimeVariables(Map<String, WebUiExecutionContextSupport.RuntimeVariable> variables, MockResolution mock) {
         if (variables == null || mock == null) {
             return;
@@ -929,12 +1394,49 @@ public class WebUiExecutionDomainService {
         });
     }
 
+    private List<ParamSetEntity> listGlobalVariableSets(Long workspaceId) {
+        if (workspaceId == null) {
+            return List.of();
+        }
+        return paramSetMapper.selectList(new LambdaQueryWrapper<ParamSetEntity>()
+                .eq(ParamSetEntity::getWorkspaceId, workspaceId)
+                .eq(ParamSetEntity::getParamType, GLOBAL_VARIABLE_SET_TYPE)
+                .eq(ParamSetEntity::getStatus, 1)
+                .orderByAsc(ParamSetEntity::getId));
+    }
+
+    private void applyVariableSets(
+            Map<String, WebUiExecutionContextSupport.RuntimeVariable> variables,
+            List<ParamSetEntity> variableSets,
+            List<WebUiExecutionContextSupport.VariableSetSnapshot> snapshots
+    ) {
+        for (ParamSetEntity variableSet : defaultList(variableSets)) {
+            applyVariableSet(
+                    variables,
+                    new VariableSetResolution(variableSet.getId(), variableSet.getParamName(), executionContextSupport.readVariables(variableSet.getContentJson())),
+                    snapshots
+            );
+        }
+    }
+
+    private void applyVariableSet(
+            Map<String, WebUiExecutionContextSupport.RuntimeVariable> variables,
+            VariableSetResolution variableSet,
+            List<WebUiExecutionContextSupport.VariableSetSnapshot> snapshots
+    ) {
+        if (variableSet == null) {
+            return;
+        }
+        executionContextSupport.putVariableItems(variables, variableSet.variables());
+        snapshots.add(new WebUiExecutionContextSupport.VariableSetSnapshot(variableSet.id(), variableSet.name()));
+    }
+
     private VariableSetResolution resolveVariableSet(Long variableSetId, Long workspaceId) {
         if (variableSetId == null) {
             return null;
         }
         ParamSetEntity variableSet = paramSetMapper.selectById(variableSetId);
-        if (variableSet == null || !WebUiExecutionContextSupport.WEB_UI_VARIABLE_SET_TYPE.equals(variableSet.getParamType())) {
+        if (variableSet == null || !isWebUiRuntimeVariableSet(variableSet.getParamType())) {
             throw new NotFoundException("Web UI variable set not found");
         }
         if (!workspaceId.equals(variableSet.getWorkspaceId())) {
@@ -948,6 +1450,12 @@ public class WebUiExecutionDomainService {
                 variableSet.getParamName(),
                 executionContextSupport.readVariables(variableSet.getContentJson())
         );
+    }
+
+    private boolean isWebUiRuntimeVariableSet(String paramType) {
+        return WebUiExecutionContextSupport.WEB_UI_VARIABLE_SET_TYPE.equals(paramType)
+                || BUSINESS_VARIABLE_SET_TYPE.equals(paramType)
+                || PAYMENT_CHANNEL_VARIABLE_SET_TYPE.equals(paramType);
     }
 
     private String trimTrailingSlash(String value) {
@@ -1061,6 +1569,11 @@ public class WebUiExecutionDomainService {
 
     private WebUiRunSummary toRunSummary(WebUiRunEntity entity) {
         WorkspaceEntity workspace = workspaceService.requireWorkspaceById(entity.getWorkspaceId());
+        WebUiExecutionContextSupport.ExecutionContextSnapshot contextSnapshot =
+                executionContextSupport.readExecutionContextSnapshot(entity.getContextSnapshotJson());
+        String executionLocation = contextSnapshot == null || contextSnapshot.executionLocation() == null
+                ? EXECUTION_LOCATION_SERVER
+                : contextSnapshot.executionLocation();
         return new WebUiRunSummary(
                 entity.getId(),
                 workspace.getWorkspaceCode(),
@@ -1082,6 +1595,8 @@ public class WebUiExecutionDomainService {
                 entity.getFailedSteps(),
                 entity.getSkippedSteps(),
                 entity.getOperatorName(),
+                executionLocation,
+                contextSnapshot == null ? null : contextSnapshot.localRunnerRunId(),
                 entity.getStartedAt(),
                 entity.getFinishedAt(),
                 entity.getCreatedAt()
@@ -1185,7 +1700,9 @@ public class WebUiExecutionDomainService {
             Integer defaultTimeoutMs,
             Long defaultVariableSetId,
             Long mockApplicationId,
-            List<WebUiExecutionContextSupport.VariableItem> variables
+            List<WebUiExecutionContextSupport.VariableItem> variables,
+            String defaultServiceKey,
+            List<WebUiExecutionContextSupport.ServiceEndpoint> services
     ) {
     }
 

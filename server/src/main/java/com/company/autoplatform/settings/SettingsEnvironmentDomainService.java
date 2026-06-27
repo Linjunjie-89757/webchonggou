@@ -53,7 +53,7 @@ public class SettingsEnvironmentDomainService {
         }
         String trimmedEnvType = blankToNull(envType);
         if (trimmedEnvType != null) {
-            query.eq(EnvConfigEntity::getEnvType, trimmedEnvType.trim().toUpperCase(Locale.ROOT));
+            query.eq(EnvConfigEntity::getEnvType, normalizeEnvType(trimmedEnvType));
         }
         if (status != null) {
             query.eq(EnvConfigEntity::getStatus, normalizeStatus(status));
@@ -69,7 +69,7 @@ public class SettingsEnvironmentDomainService {
                 workspaceService.resolveTargetWorkspace(headerWorkspaceCode, request.workspaceCode()));
         EnvConfigEntity entity = new EnvConfigEntity();
         entity.setWorkspaceId(workspace.getId());
-        entity.setEnvType(request.envType());
+        entity.setEnvType(normalizeEnvType(request.envType()));
         entity.setEnvName(request.envName());
         entity.setBaseUrl(request.baseUrl());
         entity.setConfigJson(request.configJson());
@@ -88,7 +88,7 @@ public class SettingsEnvironmentDomainService {
         if (!entity.getWorkspaceId().equals(workspace.getId())) {
             throw new BadRequestException("不允许修改环境归属空间");
         }
-        entity.setEnvType(request.envType());
+        entity.setEnvType(normalizeEnvType(request.envType()));
         entity.setEnvName(request.envName());
         entity.setBaseUrl(request.baseUrl());
         entity.setConfigJson(request.configJson());
@@ -162,5 +162,13 @@ public class SettingsEnvironmentDomainService {
 
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String normalizeEnvType(String value) {
+        String normalized = blankToNull(value);
+        if (normalized == null) {
+            return "TEST";
+        }
+        return normalized.toUpperCase(Locale.ROOT);
     }
 }

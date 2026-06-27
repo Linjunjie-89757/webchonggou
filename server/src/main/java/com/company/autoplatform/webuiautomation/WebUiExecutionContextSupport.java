@@ -134,7 +134,7 @@ public class WebUiExecutionContextSupport {
         }
     }
 
-    private void putVariableItems(Map<String, RuntimeVariable> target, List<VariableItem> variables) {
+    void putVariableItems(Map<String, RuntimeVariable> target, List<VariableItem> variables) {
         if (variables == null) {
             return;
         }
@@ -166,11 +166,21 @@ public class WebUiExecutionContextSupport {
             Boolean ignoreHttpsErrors,
             Long defaultVariableSetId,
             Long mockApplicationId,
-            List<VariableItem> variables
+            List<VariableItem> variables,
+            String defaultServiceKey,
+            List<ServiceEndpoint> services
     ) {
         static WebUiEnvironmentConfig defaults() {
-            return new WebUiEnvironmentConfig(null, null, null, null, null, null, null, List.of());
+            return new WebUiEnvironmentConfig(null, null, null, null, null, null, null, List.of(), null, List.of());
         }
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record ServiceEndpoint(
+            String key,
+            String name,
+            String baseUrl
+    ) {
     }
 
     public record Viewport(
@@ -197,8 +207,17 @@ public class WebUiExecutionContextSupport {
             EnvironmentSnapshot environment,
             Long variableSetId,
             String variableSetName,
+            List<VariableSetSnapshot> variableSets,
             MockSnapshot mock,
-            Map<String, String> variables
+            Map<String, String> variables,
+            String executionLocation,
+            String localRunnerRunId
+    ) {
+    }
+
+    public record VariableSetSnapshot(
+            Long id,
+            String name
     ) {
     }
 
@@ -208,7 +227,9 @@ public class WebUiExecutionContextSupport {
             String baseUrl,
             String browserType,
             Boolean headless,
-            Integer defaultTimeoutMs
+            Integer defaultTimeoutMs,
+            String defaultServiceKey,
+            List<ServiceEndpoint> services
     ) {
     }
 

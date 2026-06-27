@@ -747,6 +747,8 @@ export interface WebUiRunSummary {
   failedSteps: number
   skippedSteps: number
   operatorName: string | null
+  executionLocation: string | null
+  localRunnerRunId: string | null
   startedAt: string | null
   finishedAt: string | null
   createdAt: string | null
@@ -764,6 +766,8 @@ export interface WebUiExecutionContextSnapshot {
   variableSetId: number | null
   variableSetName: string | null
   variables: Record<string, string>
+  executionLocation?: string | null
+  localRunnerRunId?: string | null
 }
 
 export interface WebUiRunDetail {

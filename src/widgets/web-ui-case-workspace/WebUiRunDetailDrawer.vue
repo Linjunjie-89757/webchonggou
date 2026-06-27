@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   CopyDocument,
@@ -12,6 +12,7 @@ import { ElMessage } from 'element-plus'
 import {
   formatBrowserType,
   formatDurationMs,
+  formatExecutionLocation,
   formatLocatorType,
   formatStepType,
   formatWebUiDateTime,
@@ -45,11 +46,33 @@ const loading = ref(false)
 const errorMessage = ref('')
 const detail = ref<WebUiRunDetail | null>(null)
 let requestSeq = 0
+let refreshTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const failedSteps = computed(() => detail.value?.steps.filter(step => step.status === 'FAILED') ?? [])
 const contextVariables = computed(() => Object.entries(detail.value?.context?.variables ?? {}))
+const executionLocation = computed(() => detail.value?.context?.executionLocation || detail.value?.summary.executionLocation || 'SERVER')
+const localRunnerRunId = computed(() => detail.value?.context?.localRunnerRunId || detail.value?.summary.localRunnerRunId || null)
+const isRunning = computed(() => detail.value?.summary.status === 'RUNNING')
 
-async function loadDetail() {
+function stopAutoRefresh() {
+  if (refreshTimer) {
+    window.clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function scheduleAutoRefresh() {
+  stopAutoRefresh()
+  if (!props.modelValue || !props.runId || !isRunning.value) {
+    return
+  }
+  refreshTimer = window.setTimeout(() => {
+    refreshTimer = null
+    void loadDetail(true)
+  }, 2000)
+}
+
+async function loadDetail(silent = false) {
   const requestId = ++requestSeq
   const workspaceCode = props.workspaceCode
   const runId = props.runId
@@ -57,19 +80,24 @@ async function loadDetail() {
   if (!props.modelValue || !runId) {
     loading.value = false
     detail.value = null
+    stopAutoRefresh()
     return
   }
 
-  loading.value = true
+  if (!silent) {
+    loading.value = true
+  }
   errorMessage.value = ''
   try {
     const result = await webUiAutomationApi.getRunDetail(workspaceCode, runId)
     if (requestId === requestSeq && props.modelValue && props.workspaceCode === workspaceCode && props.runId === runId) {
       detail.value = result
+      scheduleAutoRefresh()
     }
   } catch (error) {
     if (requestId === requestSeq && props.modelValue && props.workspaceCode === workspaceCode && props.runId === runId) {
       errorMessage.value = getRequestErrorMessage(error)
+      stopAutoRefresh()
     }
   } finally {
     if (requestId === requestSeq && props.modelValue && props.workspaceCode === workspaceCode && props.runId === runId) {
@@ -80,6 +108,7 @@ async function loadDetail() {
 
 function closeDrawer() {
   requestSeq += 1
+  stopAutoRefresh()
   visible.value = false
 }
 
@@ -121,6 +150,7 @@ function buildRunReportSummary() {
     `- Run ID：${summary.id}`,
     `- 批次 ID：${summary.batchId || '-'}`,
     `- 结果：${summary.status}`,
+    `- 执行位置：${formatExecutionLocation(current.context?.executionLocation || summary.executionLocation)}`,
     `- 环境：${summary.environmentName || current.context?.environment?.name || '-'}`,
     `- Base URL：${summary.baseUrl || current.context?.environment?.baseUrl || '-'}`,
     `- 浏览器：${formatBrowserType(summary.browserType)}`,
@@ -166,10 +196,15 @@ function locateStep(row: WebUiRunStepResult) {
 watch(
   () => [props.modelValue, props.runId, props.workspaceCode] as const,
   () => {
+    stopAutoRefresh()
     void loadDetail()
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  stopAutoRefresh()
+})
 </script>
 
 <template>
@@ -210,9 +245,17 @@ watch(
             <span>结果</span>
             <WebUiRunStatusBadge :status="detail.summary.status" />
           </div>
+          <div v-if="isRunning">
+            <span>刷新状态</span>
+            <strong>自动刷新中</strong>
+          </div>
           <div>
             <span>浏览器</span>
             <strong>{{ formatBrowserType(detail.summary.browserType) }}</strong>
+          </div>
+          <div>
+            <span>执行位置</span>
+            <strong>{{ formatExecutionLocation(executionLocation) }}</strong>
           </div>
           <div>
             <span>耗时</span>
@@ -252,6 +295,14 @@ watch(
             <div>
               <dt>变量集</dt>
               <dd>{{ detail.context?.variableSetName || '未使用变量集' }}</dd>
+            </div>
+            <div>
+              <dt>执行位置</dt>
+              <dd>{{ formatExecutionLocation(executionLocation) }}</dd>
+            </div>
+            <div>
+              <dt>Runner 任务</dt>
+              <dd>{{ localRunnerRunId || '-' }}</dd>
             </div>
             <div>
               <dt>浏览器</dt>

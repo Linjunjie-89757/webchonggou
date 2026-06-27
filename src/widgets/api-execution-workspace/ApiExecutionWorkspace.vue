@@ -1375,7 +1375,7 @@ function showPending(message: string) {
           highlight-current
           :expand-on-click-node="false"
           :current-node-key="activeSuiteId !== EXECUTION_SUITE_LIST_KEY ? activeSuiteId : undefined"
-          class="ms-like-directory-tree execution-suite-list"
+          class="ms-like-directory-tree execution-suite-list app-soft-scrollbar"
           @current-change="handleSuiteTreeSelect"
           @node-expand="handleSuiteTreeExpand"
           @node-collapse="handleSuiteTreeCollapse"
@@ -1574,7 +1574,7 @@ function showPending(message: string) {
             </div>
           </div>
 
-          <div v-if="activeExecutionSubTab === 'arrange'" class="execution-case-list">
+          <div v-if="activeExecutionSubTab === 'arrange'" class="execution-case-list app-soft-scrollbar">
             <div class="execution-case-toolbar">
               <span>共 {{ visibleExecutionSuiteCases.length }} 个编排项</span>
               <div>
@@ -1608,7 +1608,7 @@ function showPending(message: string) {
             </div>
           </div>
           <div v-else-if="activeExecutionSubTab === 'result'" v-loading="suiteRunHistoryLoading" class="execution-result-panel">
-            <div class="execution-result-list">
+            <div class="execution-result-list app-soft-scrollbar">
               <button
                 v-for="history in suiteRunHistories"
                 :key="history.id"
@@ -1632,7 +1632,7 @@ function showPending(message: string) {
                 <span>{{ isActiveSuiteDraft ? '保存套件并运行后，这里会展示最近运行结果。' : '运行套件后，最近 10 次运行结果会显示在这里。' }}</span>
               </div>
             </div>
-            <div class="execution-result-detail">
+            <div class="execution-result-detail app-soft-scrollbar">
               <template v-if="suiteRunHistoryDetail">
                 <div class="execution-result-detail-head">
                   <div class="execution-result-title-line">
@@ -1787,7 +1787,7 @@ function showPending(message: string) {
                 </el-button>
               </div>
             </div>
-            <div class="execution-config-body">
+            <div class="execution-config-body app-soft-scrollbar">
               <label>
                 <span><b>*</b> 套件名称</span>
                 <el-input
@@ -1863,7 +1863,7 @@ function showPending(message: string) {
             新建套件
           </el-button>
         </div>
-        <div class="execution-suite-list-table">
+        <div class="execution-suite-list-table app-soft-scrollbar">
           <div class="execution-suite-list-row is-head">
             <span>套件名称</span>
             <span>优先级</span>
@@ -1953,7 +1953,7 @@ function showPending(message: string) {
               highlight-current
               :expand-on-click-node="false"
               current-node-key="execution-arrange-all"
-              class="scenario-import-tree"
+              class="scenario-import-tree app-soft-scrollbar"
               default-expand-all
             >
               <template #default="{ data }">

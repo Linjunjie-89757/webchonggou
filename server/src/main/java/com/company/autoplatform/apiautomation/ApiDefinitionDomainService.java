@@ -174,7 +174,8 @@ public class ApiDefinitionDomainService {
                         counts.merge(moduleId, 1L, Long::sum);
                     }
                 });
-        return buildDefinitionModuleTree(modules, pathMap, counts, null);
+        List<ApiDefinitionModuleItem> tree = buildDefinitionModuleTree(modules, pathMap, counts, null);
+        return withDefinitionModuleDescendantCounts(tree);
     }
 
     public ApiDefinitionModuleItem createDefinitionModule(String headerWorkspaceCode, ApiDefinitionModuleRequest request) {
@@ -269,16 +270,10 @@ public class ApiDefinitionDomainService {
     private ApiDefinitionEntity findImportDuplicate(Long workspaceId, SaveApiDefinitionRequest request) {
         String method = request.requestConfig().method().trim().toUpperCase();
         String path = request.requestConfig().path().trim();
-        String directoryName = blankToNull(request.directoryName());
         LambdaQueryWrapper<ApiDefinitionEntity> query = new LambdaQueryWrapper<ApiDefinitionEntity>()
                 .eq(ApiDefinitionEntity::getWorkspaceId, workspaceId)
                 .eq(ApiDefinitionEntity::getHttpMethod, method)
                 .eq(ApiDefinitionEntity::getPath, path);
-        if (directoryName == null) {
-            query.isNull(ApiDefinitionEntity::getDirectoryName);
-        } else {
-            query.eq(ApiDefinitionEntity::getDirectoryName, directoryName);
-        }
         return definitionMapper.selectList(query.orderByDesc(ApiDefinitionEntity::getUpdatedAt))
                 .stream()
                 .findFirst()
@@ -378,6 +373,32 @@ public class ApiDefinitionDomainService {
                 path,
                 entity.getSortOrder(),
                 definitionCount,
+                children
+        );
+    }
+
+    private List<ApiDefinitionModuleItem> withDefinitionModuleDescendantCounts(List<ApiDefinitionModuleItem> modules) {
+        return modules.stream()
+                .map(this::withDefinitionModuleDescendantCount)
+                .toList();
+    }
+
+    private ApiDefinitionModuleItem withDefinitionModuleDescendantCount(ApiDefinitionModuleItem item) {
+        List<ApiDefinitionModuleItem> children = withDefinitionModuleDescendantCounts(item.children());
+        long childCount = children.stream()
+                .map(ApiDefinitionModuleItem::definitionCount)
+                .filter(java.util.Objects::nonNull)
+                .mapToLong(Long::longValue)
+                .sum();
+        return new ApiDefinitionModuleItem(
+                item.id(),
+                item.workspaceCode(),
+                item.workspaceName(),
+                item.parentId(),
+                item.name(),
+                item.fullPath(),
+                item.sortOrder(),
+                Optional.ofNullable(item.definitionCount()).orElse(0L) + childCount,
                 children
         );
     }

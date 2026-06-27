@@ -6,6 +6,7 @@ import com.company.autoplatform.common.NotFoundException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,17 +39,20 @@ public class LocalRunnerService {
     private final LocalRunnerTaskMapper taskMapper;
     private final LocalRunnerTaskLogMapper taskLogMapper;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public LocalRunnerService(
             LocalRunnerNodeMapper nodeMapper,
             LocalRunnerTaskMapper taskMapper,
             LocalRunnerTaskLogMapper taskLogMapper,
-            ObjectMapper objectMapper
+            ObjectMapper objectMapper,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.nodeMapper = nodeMapper;
         this.taskMapper = taskMapper;
         this.taskLogMapper = taskLogMapper;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -241,6 +245,15 @@ public class LocalRunnerService {
         task.setLastReportedAt(now);
         task.setUpdatedAt(now);
         taskMapper.updateById(task);
+        eventPublisher.publishEvent(new LocalRunnerTaskFinalResultEvent(
+                task.getRunId(),
+                task.getTaskType(),
+                task.getStatus(),
+                task.getWorkspaceCode(),
+                task.getRunnerId(),
+                readMap(task.getPayloadJson()),
+                result
+        ));
         return new RunnerTaskAckResponse(runId, task.getStatus(), true, "Final result accepted");
     }
 

@@ -173,9 +173,10 @@ public class ApiAutomationService {
             String bodyWorkspaceCode,
             String mode,
             String directoryName,
+            Boolean groupByTags,
             org.springframework.web.multipart.MultipartFile file
     ) {
-        return definitionImportDomainService.importFile(headerWorkspaceCode, bodyWorkspaceCode, mode, directoryName, file);
+        return definitionImportDomainService.importFile(headerWorkspaceCode, bodyWorkspaceCode, mode, directoryName, groupByTags, file);
     }
 
     public ApiDefinitionDetail updateDefinition(Long id, String headerWorkspaceCode, SaveApiDefinitionRequest request) {

@@ -2,6 +2,7 @@ package com.company.autoplatform.apiautomation;
 
 import com.company.autoplatform.execution.ReportEntity;
 import com.company.autoplatform.execution.TaskEntity;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
@@ -23,13 +24,24 @@ final class ApiExecutionRuntimeModels {
     private ApiExecutionRuntimeModels() {
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     record EnvironmentConfigPayload(
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,
             Integer timeoutMs,
             List<ApiVariableItem> variables,
             Long defaultVariableSetId,
-            Long mockApplicationId
+            Long mockApplicationId,
+            String defaultServiceKey,
+            List<EnvironmentServiceEndpoint> services
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record EnvironmentServiceEndpoint(
+            String key,
+            String name,
+            String baseUrl
     ) {
     }
 
@@ -44,8 +56,31 @@ final class ApiExecutionRuntimeModels {
             Long mockApplicationId,
             String mockApplicationName,
             String mockApplicationCode,
-            String mockBaseUrl
+            String mockBaseUrl,
+            Long mockBusinessScenarioId,
+            String mockBusinessScenarioName,
+            String defaultServiceKey,
+            List<EnvironmentServiceEndpoint> services
     ) {
+        ResolvedEnvironment(
+                Long environmentId,
+                String baseUrl,
+                List<ApiKeyValueInput> headers,
+                ApiAuthConfigInput authConfig,
+                Integer timeoutMs,
+                List<ApiVariableItem> variables,
+                Long defaultVariableSetId,
+                Long mockApplicationId,
+                String mockApplicationName,
+                String mockApplicationCode,
+                String mockBaseUrl,
+                String defaultServiceKey,
+                List<EnvironmentServiceEndpoint> services
+        ) {
+            this(environmentId, baseUrl, headers, authConfig, timeoutMs, variables, defaultVariableSetId,
+                    mockApplicationId, mockApplicationName, mockApplicationCode, mockBaseUrl, null, null,
+                    defaultServiceKey, services);
+        }
     }
 
     record ExecutionContext(
@@ -58,6 +93,7 @@ final class ApiExecutionRuntimeModels {
     record RuntimeContextSnapshot(
             RuntimeEnvironmentSnapshot environment,
             RuntimeVariableSetSnapshot variableSet,
+            List<RuntimeVariableSetSnapshot> variableSets,
             RuntimeMockSnapshot mock,
             Map<String, String> variables
     ) {
@@ -66,7 +102,9 @@ final class ApiExecutionRuntimeModels {
     record RuntimeEnvironmentSnapshot(
             Long id,
             String baseUrl,
-            Integer timeoutMs
+            Integer timeoutMs,
+            String defaultServiceKey,
+            List<EnvironmentServiceEndpoint> services
     ) {
     }
 
@@ -81,7 +119,9 @@ final class ApiExecutionRuntimeModels {
             Long id,
             String appName,
             String appCode,
-            String baseUrl
+            String baseUrl,
+            Long businessScenarioId,
+            String businessScenarioName
     ) {
     }
 

@@ -83,10 +83,11 @@ public class ApiAutomationController {
             @RequestParam(value = "workspaceCode", required = false) String bodyWorkspaceCode,
             @RequestParam("mode") String mode,
             @RequestParam(required = false) String directoryName,
+            @RequestParam(required = false) Boolean groupByTags,
             @RequestParam("file") MultipartFile file
     ) {
         return ApiResponse.ok(
-                apiAutomationService.importDefinitionFile(workspaceCode, bodyWorkspaceCode, mode, directoryName, file),
+                apiAutomationService.importDefinitionFile(workspaceCode, bodyWorkspaceCode, mode, directoryName, groupByTags, file),
                 "API definitions imported"
         );
     }

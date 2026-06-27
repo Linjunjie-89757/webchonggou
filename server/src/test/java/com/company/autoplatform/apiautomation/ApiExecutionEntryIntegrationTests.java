@@ -1,6 +1,9 @@
 package com.company.autoplatform.apiautomation;
 
 import com.company.autoplatform.IntegrationTestSupport;
+import com.company.autoplatform.settings.CreateEnvConfigRequest;
+import com.company.autoplatform.settings.EnvConfigItem;
+import com.company.autoplatform.settings.SettingsService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
@@ -21,6 +24,9 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
 
     @Autowired
     private ApiAutomationService apiAutomationService;
+
+    @Autowired
+    private SettingsService settingsService;
 
     private HttpServer server;
     private String baseUrl;
@@ -76,6 +82,31 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
         ApiDefinitionDetail refreshed = apiAutomationService.getDefinition(definition.id(), WORKSPACE_CODE);
         assertThat(refreshed.lastRunResult()).isEqualTo("SUCCESS");
         assertThat(refreshed.lastRunAt()).isNotNull();
+    }
+
+    @Test
+    void debugRunDefinitionCanUseSharedEnvironmentServiceEndpointVariable() {
+        EnvConfigItem environment = settingsService.createEnv(WORKSPACE_CODE, new CreateEnvConfigRequest(
+                null,
+                "TEST",
+                "shared service env " + System.nanoTime(),
+                baseUrl,
+                """
+                        {"envGroup":"TEST","defaultServiceKey":"order-api","services":[{"key":"order-api","name":"订单服务","baseUrl":"%s"}]}
+                        """.formatted(baseUrl)
+        ));
+        ApiDefinitionDetail definition = createDefinition(
+                "shared service endpoint definition " + System.nanoTime(),
+                "${order-api}/ok"
+        );
+
+        ApiRunResponse run = apiAutomationService.debugRunDefinition(
+                definition.id(),
+                WORKSPACE_CODE,
+                new ApiRunRequest(WORKSPACE_CODE, environment.id(), null, null, null)
+        );
+
+        assertSuccessfulRun(run);
     }
 
     @Test
@@ -224,13 +255,17 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
     }
 
     private ApiDefinitionDetail createDefinition(String name) {
+        return createDefinition(name, baseUrl + "/ok");
+    }
+
+    private ApiDefinitionDetail createDefinition(String name, String path) {
         return apiAutomationService.createDefinition(WORKSPACE_CODE, new SaveApiDefinitionRequest(
                 WORKSPACE_CODE,
                 name,
                 null,
                 "entry smoke",
                 List.of("entry-smoke"),
-                requestConfig(),
+                requestConfig(path),
                 List.of(statusCodeAssertion()),
                 List.of(),
                 List.of(),
@@ -239,9 +274,13 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
     }
 
     private ApiRequestConfigInput requestConfig() {
+        return requestConfig(baseUrl + "/ok");
+    }
+
+    private ApiRequestConfigInput requestConfig(String path) {
         return new ApiRequestConfigInput(
                 "GET",
-                baseUrl + "/ok",
+                path,
                 5000,
                 List.of(),
                 List.of(),

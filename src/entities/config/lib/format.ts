@@ -1,20 +1,21 @@
 import type { DbConnectionItem, EnvConfigItem, ParamSetItem } from '../model/types'
 
 export function isProductionEnv(item: Pick<EnvConfigItem, 'envType' | 'envName' | 'configJson'>) {
-  const text = `${item.envType} ${item.envName} ${item.configJson ?? ''}`.toLowerCase()
+  const envGroup = getEnvGroup(item)
+  const text = `${envGroup} ${item.envType} ${item.envName} ${item.configJson ?? ''}`.toLowerCase()
   return text.includes('prod') || text.includes('生产')
 }
 
 export function getEnvVisualMeta(item: Pick<EnvConfigItem, 'envType' | 'envName' | 'configJson'>) {
-  if (item.envType === 'WEB_UI') {
+  const envGroup = getEnvGroup(item)
+  const text = `${envGroup} ${item.envType} ${item.envName} ${item.configJson ?? ''}`.toLowerCase()
+  if (envGroup === 'SANDBOX' || text.includes('sandbox') || text.includes('沙箱')) {
     return {
-      typeLabel: 'Web UI 环境',
+      typeLabel: '沙箱环境',
       tone: 'purple' as const,
-      description: getWebUiEnvDescription(item.configJson),
+      description: getEnvDescription(item.configJson, '沙箱联调和支付验证环境'),
     }
   }
-
-  const text = `${item.envType} ${item.envName} ${item.configJson ?? ''}`.toLowerCase()
   if (text.includes('prod') || text.includes('生产')) {
     return {
       typeLabel: '生产环境',
@@ -59,10 +60,76 @@ export function getEnvDescription(configJson: string, fallback: string) {
   return fallback
 }
 
+export function getEnvServiceSummary(item: Pick<EnvConfigItem, 'baseUrl' | 'configJson'>) {
+  const parsed = parseEnvConfigObject(item.configJson)
+  const services = getEnvServiceDetails(item)
+  const defaultServiceKey = typeof parsed?.defaultServiceKey === 'string' ? parsed.defaultServiceKey.trim() : ''
+  const defaultService = services.find(service => service.key === defaultServiceKey) ?? services[0]
+
+  return {
+    defaultLabel: defaultService?.name || defaultService?.key || '默认服务',
+    defaultBaseUrl: defaultService?.baseUrl || item.baseUrl,
+    serviceCount: services.length || 1,
+  }
+}
+
+export function getEnvServiceDetails(item: Pick<EnvConfigItem, 'baseUrl' | 'configJson'>) {
+  const parsed = parseEnvConfigObject(item.configJson)
+  const services = Array.isArray(parsed?.services)
+    ? parsed.services
+      .filter((service): service is { key?: unknown; name?: unknown; baseUrl?: unknown } => typeof service === 'object' && service !== null)
+      .map(service => ({
+        key: typeof service.key === 'string' ? service.key.trim() : '',
+        name: typeof service.name === 'string' ? service.name.trim() : '',
+        baseUrl: typeof service.baseUrl === 'string' ? service.baseUrl.trim() : '',
+      }))
+      .filter(service => service.key && service.baseUrl)
+    : []
+  const defaultServiceKey = typeof parsed?.defaultServiceKey === 'string' ? parsed.defaultServiceKey.trim() : ''
+  const normalized = services.length > 0
+    ? services
+    : [{ key: 'default', name: '默认服务', baseUrl: item.baseUrl }]
+
+  return normalized.map((service, index) => ({
+    ...service,
+    name: service.name || service.key || `服务 ${index + 1}`,
+    isDefault: defaultServiceKey ? service.key === defaultServiceKey : index === 0,
+  }))
+}
+
+export function getEnvDefaultVariableSetId(item: Pick<EnvConfigItem, 'configJson'>) {
+  return readNumericEnvConfig(item.configJson, 'defaultVariableSetId')
+}
+
+export function getEnvMockApplicationId(item: Pick<EnvConfigItem, 'configJson'>) {
+  return readNumericEnvConfig(item.configJson, 'mockApplicationId')
+}
+
+export function getEnvTimeoutMs(item: Pick<EnvConfigItem, 'configJson'>) {
+  return readNumericEnvConfig(item.configJson, 'timeoutMs') ?? readNumericEnvConfig(item.configJson, 'defaultTimeoutMs')
+}
+
+export function getEnvBuiltInVariableHints(item: Pick<EnvConfigItem, 'baseUrl' | 'configJson'>) {
+  const services = getEnvServiceDetails(item)
+  const serviceKeys = services.map(service => service.key).filter(Boolean)
+  return [
+    'BASE_URL',
+    'DEFAULT_SERVICE_URL',
+    'DEFAULT_SERVICE_KEY',
+    ...serviceKeys,
+  ]
+}
+
 export function getParamCategory(item: Pick<ParamSetItem, 'paramType' | 'paramName'>) {
   const text = `${item.paramType} ${item.paramName}`.toLowerCase()
+  if (item.paramType === 'APP_UI_VARIABLE_SET') {
+    return 'appUi'
+  }
   if (item.paramType === 'WEB_UI_VARIABLE_SET') {
     return 'webUi'
+  }
+  if (item.paramType === 'PAYMENT_CHANNEL' || ['payment', 'pay', 'wechat', 'alipay', '支付', '微信', '支付宝'].some((keyword) => text.includes(keyword))) {
+    return 'payment'
   }
   if (item.paramType === 'BUSINESS' || ['business', '业务'].some((keyword) => text.includes(keyword))) {
     return 'business'
@@ -75,16 +142,22 @@ export function getParamCategory(item: Pick<ParamSetItem, 'paramType' | 'paramNa
 
 export function getParamTypeMeta(item: Pick<ParamSetItem, 'paramType' | 'paramName'>) {
   const category = getParamCategory(item)
+  if (category === 'appUi') {
+    return { label: 'APP UI变量', tone: 'purple' as const }
+  }
   if (category === 'webUi') {
-    return { label: 'Web UI 变量集', tone: 'purple' as const }
+    return { label: 'Web UI变量', tone: 'purple' as const }
   }
   if (category === 'api') {
-    return { label: item.paramType === 'API_VARIABLE_SET' ? '接口变量集' : '接口参数', tone: 'purple' as const }
+    return { label: '接口变量', tone: 'purple' as const }
+  }
+  if (category === 'payment') {
+    return { label: '支付渠道变量集', tone: 'warning' as const }
   }
   if (category === 'business') {
-    return { label: '业务参数', tone: 'success' as const }
+    return { label: '通用业务变量', tone: 'success' as const }
   }
-  return { label: '全局参数', tone: 'primary' as const }
+  return { label: '全局公共变量', tone: 'primary' as const }
 }
 
 export function parseParamContent(contentJson: string) {
@@ -136,42 +209,56 @@ export function getParamDescriptionText(item: Pick<ParamSetItem, 'contentJson' |
     if (variables.length > 0) {
       return `包含 ${variables.slice(0, 3).join('、')}${variables.length > 3 ? ' 等' : ''}`
     }
-    return item.paramType === 'WEB_UI_VARIABLE_SET' ? 'Web UI 执行变量集' : '接口自动化变量集'
+    if (item.paramType === 'GLOBAL') {
+      return '所有环境默认生效，优先级最低'
+    }
+    if (item.paramType === 'BUSINESS') {
+      return '接口和 UI 可复用的业务变量集'
+    }
+    if (item.paramType === 'PAYMENT_CHANNEL') {
+      return '微信、支付宝、沙箱支付等渠道参数'
+    }
+    if (item.paramType === 'APP_UI_VARIABLE_SET') {
+      return 'APP UI 自动化专用变量'
+    }
+    return item.paramType === 'WEB_UI_VARIABLE_SET' ? 'Web UI 自动化专用变量' : '接口自动化专用变量'
   }
 
   const parsed = parseParamContent(item.contentJson)
   return parsed.description || item.paramType || '-'
 }
 
-function getWebUiEnvDescription(configJson: string) {
+function getEnvGroup(item: Pick<EnvConfigItem, 'envType' | 'configJson'>) {
+  const parsed = parseEnvConfigObject(item.configJson)
+  if (parsed) {
+    if (typeof parsed.envGroup === 'string' && parsed.envGroup.trim()) {
+      return parsed.envGroup.trim().toUpperCase()
+    }
+  }
+  return item.envType?.trim().toUpperCase() || 'TEST'
+}
+
+function parseEnvConfigObject(configJson: string) {
   const raw = configJson?.trim()
   if (!raw) {
-    return '浏览器执行环境'
+    return null
   }
-
   try {
-    const parsed = JSON.parse(raw) as {
-      browserType?: unknown
-      defaultTimeoutMs?: unknown
-      viewport?: {
-        width?: unknown
-        height?: unknown
-      }
-    }
-    const browserType = typeof parsed.browserType === 'string' ? parsed.browserType : 'CHROMIUM'
-    const timeout = typeof parsed.defaultTimeoutMs === 'number' ? `${parsed.defaultTimeoutMs}ms` : ''
-    const width = typeof parsed.viewport?.width === 'number' ? parsed.viewport.width : null
-    const height = typeof parsed.viewport?.height === 'number' ? parsed.viewport.height : null
-    const viewport = width && height ? `${width}x${height}` : ''
-
-    return [browserType, viewport, timeout].filter(Boolean).join(' / ') || '浏览器执行环境'
+    const parsed = JSON.parse(raw) as unknown
+    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : null
   } catch {
-    return '浏览器执行环境'
+    return null
   }
 }
 
+function readNumericEnvConfig(configJson: string, key: string) {
+  const parsed = parseEnvConfigObject(configJson)
+  const value = parsed?.[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 function isVariableSetType(paramType: string) {
-  return paramType === 'WEB_UI_VARIABLE_SET' || paramType === 'API_VARIABLE_SET'
+  return ['GLOBAL', 'BUSINESS', 'PAYMENT_CHANNEL', 'WEB_UI_VARIABLE_SET', 'APP_UI_VARIABLE_SET', 'API_VARIABLE_SET'].includes(paramType)
 }
 
 function parseVariableSummary(contentJson: string) {

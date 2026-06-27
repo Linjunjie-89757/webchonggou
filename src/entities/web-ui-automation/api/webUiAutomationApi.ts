@@ -117,6 +117,11 @@ export interface LocalRunnerTaskDetailResponse {
   result: Record<string, unknown>
 }
 
+export interface WebUiLocalRunnerRunResponse {
+  run: WebUiRunResponse
+  runnerTask: LocalRunnerTaskDetailResponse
+}
+
 function workspaceHeaders(workspaceCode = 'ALL') {
   return {
     'X-Workspace-Code': workspaceCode,
@@ -616,6 +621,8 @@ function normalizeRunSummary(item: WebUiRunSummary): WebUiRunSummary {
     failedSteps: Number(item.failedSteps || 0),
     skippedSteps: Number(item.skippedSteps || 0),
     operatorName: item.operatorName || null,
+    executionLocation: item.executionLocation || 'SERVER',
+    localRunnerRunId: item.localRunnerRunId || null,
     startedAt: item.startedAt || null,
     finishedAt: item.finishedAt || null,
     createdAt: item.createdAt || null,
@@ -648,6 +655,8 @@ function normalizeRunDetail(item: WebUiRunDetail): WebUiRunDetail {
             : Number(item.context.variableSetId),
           variableSetName: item.context.variableSetName || null,
           variables: item.context.variables || {},
+          executionLocation: item.context.executionLocation || item.summary.executionLocation || null,
+          localRunnerRunId: item.context.localRunnerRunId || item.summary.localRunnerRunId || null,
         }
       : null,
     steps: Array.isArray(item.steps) ? item.steps.map(normalizeRunStep) : [],
@@ -1287,6 +1296,19 @@ export const webUiAutomationApi = {
       { headers: workspaceHeaders(workspaceCode) },
     )
     return normalizeRunResponse(unwrapApiResponse(payload))
+  },
+
+  async createLocalRunnerRun(workspaceCode = 'ALL', id: number, data: WebUiRunRequest = {}) {
+    const payload = await httpPost<ApiResponse<WebUiLocalRunnerRunResponse>, WebUiRunRequest>(
+      `/automation/web/cases/${id}/local-runner-run`,
+      data,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+    const response = unwrapApiResponse(payload)
+    return {
+      run: normalizeRunResponse(response.run),
+      runnerTask: normalizeLocalRunnerTaskDetail(response.runnerTask),
+    }
   },
 
   async runBatch(workspaceCode = 'ALL', data: WebUiBatchRunRequest) {

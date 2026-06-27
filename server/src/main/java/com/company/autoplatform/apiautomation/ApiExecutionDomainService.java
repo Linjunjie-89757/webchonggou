@@ -62,7 +62,7 @@ public class ApiExecutionDomainService {
         workspaceScopeSupport.validateReadable(definition.getWorkspaceId(), workspaceCode, "Current workspace cannot run the definition");
         workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(definition.getWorkspaceId()).getWorkspaceCode());
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(definition.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(definition.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled(), request.mockBusinessScenarioId());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(definition.getWorkspaceId(), "API", "接口调试", definition.getDefinitionName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeDefinition(definition, definition.getDefinitionName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), definition.getWorkspaceId(), step);
@@ -84,7 +84,7 @@ public class ApiExecutionDomainService {
         workspaceScopeSupport.validateReadable(apiCase.getWorkspaceId(), workspaceCode, "Current workspace cannot run the case");
         workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(apiCase.getWorkspaceId()).getWorkspaceCode());
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(apiCase.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(apiCase.getWorkspaceId(), request.environmentId(), request.variableSetId(), request.rowVariables(), request.mockApplicationId(), request.mockEnabled(), request.mockBusinessScenarioId());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(apiCase.getWorkspaceId(), "API", "接口用例调试", apiCase.getCaseName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeCase(apiCase, apiCase.getCaseName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), apiCase.getWorkspaceId(), step);
@@ -110,7 +110,7 @@ public class ApiExecutionDomainService {
     }
 
     String buildExecutionContextSnapshot(Long workspaceId, Long environmentId, Long variableSetId, Long mockApplicationId, Boolean mockEnabled) {
-        return executionEngine.buildExecutionContext(workspaceId, environmentId, variableSetId, null, mockApplicationId, mockEnabled).contextSnapshotJson();
+        return executionEngine.buildExecutionContext(workspaceId, environmentId, variableSetId, null, mockApplicationId, mockEnabled, null).contextSnapshotJson();
     }
 
     public ApiRunResponse debugRunDefinitionDraft(String workspaceCode, ApiDebugDefinitionRequest request) {
@@ -151,7 +151,7 @@ public class ApiExecutionDomainService {
         draftDefinition.setPostprocessorsJson(ApiAutomationJsonSupport.toJson(normalizePostProcessors(request.postProcessors(), request.extractors()),
                 "Failed to serialize post-processors"));
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled(), request.mockBusinessScenarioId());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(workspace.getId(), "API", "接口调试", draftDefinition.getDefinitionName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeDefinition(draftDefinition, draftDefinition.getDefinitionName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), workspace.getId(), step);
@@ -213,7 +213,7 @@ public class ApiExecutionDomainService {
         draftCase.setPostprocessorsJson(ApiAutomationJsonSupport.toJson(normalizeProcessors(request.postProcessors(), "POST"),
                 "Failed to serialize case postprocessors"));
 
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(workspace.getId(), request.environmentId(), request.variableSetId(), null, request.mockApplicationId(), request.mockEnabled(), request.mockBusinessScenarioId());
         ApiExecutionRuntimeModels.RunEnvelope envelope = executionEngine.createRunEnvelope(workspace.getId(), "API", "接口用例调试", draftCase.getCaseName());
         ApiExecutionRuntimeModels.RunStepComputation step = executionEngine.executeCase(draftCase, draftCase.getCaseName(), 1, context.variables(), context.environment());
         executionEngine.persistStep(envelope.report(), workspace.getId(), step);
@@ -441,6 +441,7 @@ public class ApiExecutionDomainService {
                 request.threadCount(),
                 request.mockEnabled(),
                 request.mockApplicationId(),
+                request.mockBusinessScenarioId(),
                 rowValues
         );
         ScenarioRunAggregate aggregate = runScenarioOnce(scenario, rowRequest, rowValues, plan.sequence());
@@ -481,7 +482,7 @@ public class ApiExecutionDomainService {
     ) {
         Long environmentId = request.environmentId() != null ? request.environmentId() : scenario.getDefaultEnvId();
         Long variableSetId = request.variableSetId() != null ? request.variableSetId() : scenario.getVariableSetId();
-        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(scenario.getWorkspaceId(), environmentId, variableSetId, request.rowVariables(), request.mockApplicationId(), request.mockEnabled());
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(scenario.getWorkspaceId(), environmentId, variableSetId, request.rowVariables(), request.mockApplicationId(), request.mockEnabled(), request.mockBusinessScenarioId());
         for (ApiVariableItem variable : readVariables(scenario.getScenarioVariablesJson())) {
             if (variable.name() != null && !variable.name().isBlank()) {
                 context.variables().putIfAbsent(variable.name().trim(), Optional.ofNullable(variable.value()).orElse(""));

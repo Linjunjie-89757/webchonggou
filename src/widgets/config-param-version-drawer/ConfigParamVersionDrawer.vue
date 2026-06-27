@@ -119,7 +119,7 @@ function versionMetaJson(row: ParamSetVersionItem) {
     title="变量集版本"
     size="860px"
   >
-    <div v-loading="loading" class="config-param-version-drawer__body">
+    <div v-loading="loading" class="config-param-version-drawer__body app-soft-scrollbar">
       <el-table
         v-if="rows.length"
         :data="rows"

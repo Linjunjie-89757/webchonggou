@@ -2,11 +2,19 @@ import type { ConfigStatus, CreateEnvPayload, EnvConfigItem } from '@/entities/c
 
 export type ConfigEnvDialogMode = 'create' | 'edit'
 
+export interface ConfigEnvServiceEndpointForm {
+  key: string
+  name: string
+  baseUrl: string
+}
+
 export interface ConfigEnvForm {
   workspaceCode: string
   envType: string
   envName: string
   baseUrl: string
+  defaultServiceKey: string
+  services: ConfigEnvServiceEndpointForm[]
   configJson: string
   description: string
   browserType: 'CHROMIUM' | 'FIREFOX' | 'WEBKIT'
@@ -21,7 +29,14 @@ export interface ConfigEnvForm {
 }
 
 interface WebUiEnvConfig {
+  envGroup?: string
   description?: string
+  defaultServiceKey?: string
+  services?: Array<{
+    key?: unknown
+    name?: unknown
+    baseUrl?: unknown
+  }>
   browserType?: string
   headless?: boolean
   defaultTimeoutMs?: number
@@ -40,6 +55,8 @@ export function createDefaultConfigEnvForm(workspaceCode = 'ALL'): ConfigEnvForm
     envType: 'TEST',
     envName: '',
     baseUrl: '',
+    defaultServiceKey: 'default',
+    services: [createDefaultServiceEndpoint()],
     configJson: '',
     description: '',
     browserType: 'CHROMIUM',
@@ -56,11 +73,16 @@ export function createDefaultConfigEnvForm(workspaceCode = 'ALL'): ConfigEnvForm
 
 export function createConfigEnvFormFromItem(item: EnvConfigItem): ConfigEnvForm {
   const envConfig = parseEnvConfig(item.configJson)
+  const services = normalizeServiceEndpoints(envConfig.services, item.baseUrl)
+  const defaultServiceKey = normalizeDefaultServiceKey(envConfig.defaultServiceKey, services)
+  const defaultService = services.find(service => service.key === defaultServiceKey) ?? services[0]
   return {
     workspaceCode: item.workspaceCode || 'ALL',
-    envType: item.envType || 'TEST',
+    envType: normalizeEnvGroup(envConfig.envGroup ?? item.envType),
     envName: item.envName,
-    baseUrl: item.baseUrl,
+    baseUrl: defaultService?.baseUrl || item.baseUrl,
+    defaultServiceKey,
+    services,
     configJson: item.configJson ?? '',
     description: envConfig.description || '',
     browserType: normalizeBrowserType(envConfig.browserType),
@@ -76,33 +98,25 @@ export function createConfigEnvFormFromItem(item: EnvConfigItem): ConfigEnvForm 
 }
 
 export function buildCreateEnvPayload(form: ConfigEnvForm): CreateEnvPayload {
-  const configJson = form.envType === 'WEB_UI'
-    ? JSON.stringify({
-        description: form.description.trim(),
-        browserType: form.browserType,
-        headless: form.headless,
-        defaultTimeoutMs: clampNumber(form.defaultTimeoutMs, 1000, 60000, 10000),
-        viewport: {
-          width: clampNumber(form.viewportWidth, 320, 7680, 1440),
-          height: clampNumber(form.viewportHeight, 240, 4320, 900),
-        },
-        ignoreHttpsErrors: form.ignoreHttpsErrors,
-        defaultVariableSetId: form.defaultVariableSetId,
-        mockApplicationId: form.mockApplicationId,
-      })
-    : JSON.stringify({
-        description: form.description.trim(),
-        timeoutMs: clampNumber(form.defaultTimeoutMs, 1000, 60000, 10000),
-        ignoreSsl: form.ignoreHttpsErrors,
-        defaultVariableSetId: form.defaultVariableSetId,
-        mockApplicationId: form.mockApplicationId,
-      })
+  const services = normalizeServiceEndpoints(form.services, form.baseUrl)
+  const defaultServiceKey = normalizeDefaultServiceKey(form.defaultServiceKey, services)
+  const defaultService = services.find(service => service.key === defaultServiceKey) ?? services[0]
+  const configJson = JSON.stringify({
+    envGroup: normalizeEnvGroup(form.envType),
+    description: form.description.trim(),
+    defaultServiceKey,
+    services,
+    timeoutMs: clampNumber(form.defaultTimeoutMs, 1000, 60000, 10000),
+    ignoreSsl: form.ignoreHttpsErrors,
+    defaultVariableSetId: form.defaultVariableSetId,
+    mockApplicationId: form.mockApplicationId,
+  })
 
   return {
     workspaceCode: form.workspaceCode === 'ALL' ? undefined : form.workspaceCode,
-    envType: form.envType,
+    envType: normalizeEnvGroup(form.envType),
     envName: form.envName.trim(),
-    baseUrl: form.baseUrl.trim(),
+    baseUrl: defaultService?.baseUrl.trim() || form.baseUrl.trim(),
     configJson,
     status: form.status,
   }
@@ -117,6 +131,20 @@ export function validateConfigEnvForm(form: ConfigEnvForm) {
   }
   if (!/^https?:\/\//i.test(form.baseUrl.trim())) {
     return 'Base URL 必须以 http:// 或 https:// 开头'
+  }
+  const services = normalizeServiceEndpoints(form.services, form.baseUrl)
+  const serviceKeys = new Set<string>()
+  for (const service of services) {
+    if (!service.key.trim()) {
+      return '请输入服务标识'
+    }
+    if (serviceKeys.has(service.key)) {
+      return '服务标识不能重复'
+    }
+    serviceKeys.add(service.key)
+    if (!/^https?:\/\//i.test(service.baseUrl)) {
+      return '服务地址必须以 http:// 或 https:// 开头'
+    }
   }
   return ''
 }
@@ -144,6 +172,57 @@ function normalizeBrowserType(value: unknown): ConfigEnvForm['browserType'] {
     return normalized
   }
   return 'CHROMIUM'
+}
+
+function normalizeEnvGroup(value: unknown) {
+  const normalized = typeof value === 'string' ? value.trim().toUpperCase() : ''
+  if (normalized === 'STAGING' || normalized === 'PROD' || normalized === 'SANDBOX') {
+    return normalized
+  }
+  return 'TEST'
+}
+
+function normalizeServiceEndpoints(value: unknown, fallbackBaseUrl: string) {
+  const endpoints = Array.isArray(value)
+    ? value
+      .filter((item): item is { key?: unknown; name?: unknown; baseUrl?: unknown } => typeof item === 'object' && item !== null)
+      .map((item, index) => ({
+        key: normalizeServiceKey(item.key, index),
+        name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : normalizeServiceKey(item.key, index),
+        baseUrl: typeof item.baseUrl === 'string' ? item.baseUrl.trim() : '',
+      }))
+      .filter(item => item.key && item.baseUrl)
+    : []
+
+  if (endpoints.length > 0) {
+    return endpoints
+  }
+
+  return [{
+    ...createDefaultServiceEndpoint(),
+    baseUrl: fallbackBaseUrl.trim(),
+  }]
+}
+
+function normalizeDefaultServiceKey(value: unknown, services: ConfigEnvServiceEndpointForm[]) {
+  const key = typeof value === 'string' ? value.trim() : ''
+  if (key && services.some(service => service.key === key)) {
+    return key
+  }
+  return services[0]?.key ?? 'default'
+}
+
+function normalizeServiceKey(value: unknown, index: number) {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  return normalized || (index === 0 ? 'default' : `service-${index + 1}`)
+}
+
+export function createDefaultServiceEndpoint(): ConfigEnvServiceEndpointForm {
+  return {
+    key: 'default',
+    name: '默认服务',
+    baseUrl: '',
+  }
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number) {

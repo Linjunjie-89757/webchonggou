@@ -2957,7 +2957,7 @@ watch(activeScenarioDetailTab, (tab) => {
           highlight-current
           :expand-on-click-node="false"
           :current-node-key="selectedScenarioModuleTreeKey"
-          class="ms-like-directory-tree scenario-module-tree"
+          class="ms-like-directory-tree scenario-module-tree app-soft-scrollbar"
           @current-change="handleScenarioModuleSelect"
           @node-expand="handleScenarioModuleTreeExpand"
           @node-collapse="handleScenarioModuleTreeCollapse"
@@ -3348,7 +3348,7 @@ watch(activeScenarioDetailTab, (tab) => {
                     </template>
                   </el-dropdown>
                 </div>
-                <div v-if="scenarioFlatSteps.length" class="scenario-step-tree">
+                <div v-if="scenarioFlatSteps.length" class="scenario-step-tree app-soft-scrollbar">
                   <div
                     v-for="(item, index) in scenarioFlatSteps"
                     :key="item.step.id || item.path.join('-')"
@@ -3537,7 +3537,7 @@ watch(activeScenarioDetailTab, (tab) => {
                 <div v-if="activeScenarioRunFailureSummary" class="scenario-run-failure-summary">
                   {{ activeScenarioRunFailureSummary }}
                 </div>
-                <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table">
+                <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table app-soft-scrollbar">
                   <div class="scenario-step-table-header">
                     <span>轮次</span>
                     <span>行号</span>
@@ -3565,7 +3565,7 @@ watch(activeScenarioDetailTab, (tab) => {
                     <span class="scenario-run-step-error">{{ row.failureSummary || '-' }}</span>
                   </div>
                 </div>
-                <div class="scenario-step-table scenario-run-history-table">
+                <div class="scenario-step-table scenario-run-history-table app-soft-scrollbar">
                   <div class="scenario-step-table-header">
                     <span>#</span>
                     <span>步骤</span>
@@ -3815,7 +3815,7 @@ watch(activeScenarioDetailTab, (tab) => {
               highlight-current
               :expand-on-click-node="false"
               :current-node-key="selectedScenarioImportTreeKey"
-              class="scenario-import-tree"
+              class="scenario-import-tree app-soft-scrollbar"
               default-expand-all
               @current-change="(data: ScenarioImportTreeNode) => selectedScenarioImportTreeKey = data.key"
             >
@@ -3965,7 +3965,7 @@ watch(activeScenarioDetailTab, (tab) => {
                 </button>
                 <button :class="['ms-like-top-tab', { active: scenarioStepConfigActiveTab === 'settings' }]" @click="scenarioStepConfigActiveTab = 'settings'">设置</button>
               </div>
-              <div class="scenario-step-config-body scenario-system-request-body">
+              <div class="scenario-step-config-body scenario-system-request-body app-soft-scrollbar">
                 <el-table v-if="scenarioStepConfigActiveTab === 'headers'" :data="enabledScenarioRows(scenarioStepSystemConfig.headers)" size="small">
                   <el-table-column prop="key" label="参数名称" min-width="180" />
                   <el-table-column prop="value" label="参数值" min-width="220" show-overflow-tooltip />
@@ -4077,7 +4077,7 @@ watch(activeScenarioDetailTab, (tab) => {
         </template>
 
         <template v-else-if="activeScenarioStep.stepType === 'API_SCENARIO'">
-          <div class="scenario-step-config-body is-resource">
+          <div class="scenario-step-config-body is-resource app-soft-scrollbar">
             <div class="scenario-step-resource-card">
               <div class="scenario-step-resource-title">{{ scenarioStepTypeTitle(activeScenarioStep.stepType) }}</div>
               <div class="scenario-step-resource-subtitle">按旧项目步骤配置入口选择引用资源，后续执行时使用该资源 ID。</div>
@@ -4129,7 +4129,7 @@ watch(activeScenarioDetailTab, (tab) => {
             </button>
             <button :class="['ms-like-top-tab', { active: scenarioStepConfigActiveTab === 'settings' }]" @click="scenarioStepConfigActiveTab = 'settings'">设置</button>
           </div>
-          <div class="scenario-step-config-body scenario-custom-request-body">
+          <div class="scenario-step-config-body scenario-custom-request-body app-soft-scrollbar">
             <div v-if="scenarioStepConfigActiveTab === 'headers'" class="scenario-step-param-table">
               <div class="scenario-step-param-header"><span>参数名称</span><span>参数值</span><span>描述</span><span></span></div>
               <div v-for="(row, index) in activeScenarioStepRequestConfig.headers" :key="`scenario-header-${index}`" class="scenario-step-param-row">
@@ -4308,7 +4308,7 @@ watch(activeScenarioDetailTab, (tab) => {
               <span v-if="scenarioStepScriptAssertionEnabledCount" class="ms-like-tab-badge">{{ scenarioStepScriptAssertionEnabledCount }}</span>
             </button>
           </div>
-          <div v-if="scenarioStepScriptActiveTab === 'script'" class="scenario-step-config-body is-script scenario-script-editor-pane">
+          <div v-if="scenarioStepScriptActiveTab === 'script'" class="scenario-step-config-body is-script scenario-script-editor-pane app-soft-scrollbar">
             <label class="scenario-step-field">
               <span>名称</span>
               <el-input v-model="activeScenarioStep.stepName" maxlength="255" placeholder="请输入脚本操作名称" @input="markScenarioDirty" />
@@ -4332,7 +4332,7 @@ watch(activeScenarioDetailTab, (tab) => {
               <ApiCodeEditor v-model="activeScenarioStep.script" language="javascript" height="100%" :show-format-button="false" placeholder="// JavaScript" @change="markScenarioDirty" />
             </div>
           </div>
-          <div v-else class="scenario-step-config-body scenario-script-assertion-pane">
+          <div v-else class="scenario-step-config-body scenario-script-assertion-pane app-soft-scrollbar">
             <ScenarioAssertionEditor
               v-model="activeScenarioStepAssertions"
               v-model:active-id="scenarioStepScriptActiveAssertionId"
@@ -4344,7 +4344,7 @@ watch(activeScenarioDetailTab, (tab) => {
         </template>
 
         <template v-else>
-          <div class="scenario-step-config-body is-controller">
+          <div class="scenario-step-config-body is-controller app-soft-scrollbar">
             <label class="scenario-step-field">
               <span>步骤名称</span>
               <el-input v-model="activeScenarioStep.stepName" placeholder="请输入步骤名称" @input="markScenarioDirty" />

@@ -39,6 +39,16 @@ export function formatRunStatus(status?: string | null) {
   return getWebUiRunStatusOption(status)?.label || status || '-'
 }
 
+export function formatExecutionLocation(value?: string | null) {
+  if (value === 'LOCAL_RUNNER') {
+    return 'Local Runner'
+  }
+  if (value === 'SERVER') {
+    return '服务端'
+  }
+  return value || '服务端'
+}
+
 export function formatRunStepStatus(status?: string | null) {
   return getWebUiRunStepStatusOption(status)?.label || status || '-'
 }

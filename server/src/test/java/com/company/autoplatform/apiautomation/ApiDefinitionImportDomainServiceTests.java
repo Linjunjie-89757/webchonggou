@@ -57,11 +57,69 @@ class ApiDefinitionImportDomainServiceTests {
         assertThat(captured.get(0).name()).isEqualTo("List orders");
         assertThat(captured.get(0).requestConfig().method()).isEqualTo("GET");
         assertThat(captured.get(0).requestConfig().path()).isEqualTo("/orders");
+        assertThat(captured.get(0).directoryName()).isEqualTo("Imported/OpenAPI/orders");
         assertThat(captured.get(0).requestConfig().queryParams()).extracting(ApiKeyValueInput::key).containsExactly("status");
         assertThat(captured.get(0).requestConfig().headers()).extracting(ApiKeyValueInput::key).containsExactly("X-Trace-Id");
         assertThat(captured.get(1).name()).isEqualTo("createOrder");
+        assertThat(captured.get(1).directoryName()).isEqualTo("Imported/OpenAPI/orders");
         assertThat(captured.get(1).requestConfig().body().type()).isEqualTo("RAW_JSON");
         assertThat(captured.get(1).requestConfig().body().rawText()).contains("\"sku\"");
+    }
+
+    @Test
+    void importsOpenApiOperationsIntoTagDirectories() {
+        List<SaveApiDefinitionRequest> captured = captureImportRequests();
+        String content = """
+                {
+                  "openapi": "3.0.1",
+                  "info": {"title": "Order API"},
+                  "paths": {
+                    "/admin/order/page": {
+                      "post": {
+                        "summary": "Order page",
+                        "tags": ["订单管理"]
+                      }
+                    },
+                    "/admin/refund/page": {
+                      "get": {
+                        "summary": "Refund page",
+                        "tags": ["售后/退款"]
+                      }
+                    }
+                  }
+                }
+                """;
+
+        ApiDefinitionImportResult result = importDomainService.importContent("ws_1", new ApiDefinitionImportRequest(
+                "ws_1", "swagger", "content", null, content, "Imported"));
+
+        assertThat(result.createdCount()).isEqualTo(2);
+        assertThat(captured).extracting(SaveApiDefinitionRequest::directoryName)
+                .containsExactlyInAnyOrder("Imported/订单管理", "Imported/售后/退款");
+    }
+
+    @Test
+    void importsOpenApiOperationsIntoPathSegmentDirectoriesWhenTagsAreMissing() {
+        List<SaveApiDefinitionRequest> captured = captureImportRequests();
+        String content = """
+                {
+                  "openapi": "3.0.1",
+                  "info": {"title": "Order API"},
+                  "paths": {
+                    "/admin/order/page": {
+                      "post": {
+                        "summary": "Order page"
+                      }
+                    }
+                  }
+                }
+                """;
+
+        ApiDefinitionImportResult result = importDomainService.importContent("ws_1", new ApiDefinitionImportRequest(
+                "ws_1", "swagger", "content", null, content, "Imported"));
+
+        assertThat(result.createdCount()).isEqualTo(1);
+        assertThat(captured.getFirst().directoryName()).isEqualTo("Imported/admin");
     }
 
     @Test
@@ -92,6 +150,16 @@ class ApiDefinitionImportDomainServiceTests {
                               "application/json": {
                                 "schema": {
                                   "$ref": "#/components/schemas/CreateOrderResponse"
+                                }
+                              }
+                            }
+                          },
+                          "400": {
+                            "description": "Invalid request",
+                            "content": {
+                              "application/json": {
+                                "schema": {
+                                  "$ref": "#/components/schemas/ErrorResponse"
                                 }
                               }
                             }
@@ -141,6 +209,12 @@ class ApiDefinitionImportDomainServiceTests {
                             }
                           }
                         }
+                      },
+                      "ErrorResponse": {
+                        "type": "object",
+                        "properties": {
+                          "errorCode": {"type": "string", "description": "Error code"}
+                        }
                       }
                     }
                   }
@@ -177,7 +251,16 @@ class ApiDefinitionImportDomainServiceTests {
                 .first()
                 .satisfies(field -> {
                     assertThat(field.location()).isEqualTo("response");
+                    assertThat(field.responseCode()).isEqualTo("200");
                     assertThat(field.description()).isEqualTo("Order id");
+                });
+        assertThat(request.requestConfig().schemaFields())
+                .filteredOn(field -> "errorCode".equals(field.fieldPath()))
+                .first()
+                .satisfies(field -> {
+                    assertThat(field.location()).isEqualTo("response");
+                    assertThat(field.responseCode()).isEqualTo("400");
+                    assertThat(field.description()).isEqualTo("Error code");
                 });
     }
 

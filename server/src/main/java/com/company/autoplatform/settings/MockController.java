@@ -143,6 +143,42 @@ public class MockController {
         return ApiResponse.ok(null, "Mock 场景删除成功");
     }
 
+    @GetMapping("/api/settings/mock/business-scenarios")
+    public ApiResponse<PageResponse<MockBusinessScenarioItem>> listBusinessScenarios(
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,
+            @RequestParam(value = "appId", required = false) Long appId,
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "status", required = false) Integer status
+    ) {
+        return ApiResponse.ok(mockDomainService.listBusinessScenarios(workspaceCode, appId, keyword, status));
+    }
+
+    @PostMapping("/api/settings/mock/business-scenarios")
+    public ApiResponse<MockBusinessScenarioItem> createBusinessScenario(
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,
+            @Valid @RequestBody MockBusinessScenarioRequest request
+    ) {
+        return ApiResponse.ok(mockDomainService.createBusinessScenario(workspaceCode, request), "Mock 业务场景创建成功");
+    }
+
+    @PutMapping("/api/settings/mock/business-scenarios/{id}")
+    public ApiResponse<MockBusinessScenarioItem> updateBusinessScenario(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,
+            @Valid @RequestBody MockBusinessScenarioRequest request
+    ) {
+        return ApiResponse.ok(mockDomainService.updateBusinessScenario(id, workspaceCode, request), "Mock 业务场景更新成功");
+    }
+
+    @DeleteMapping("/api/settings/mock/business-scenarios/{id}")
+    public ApiResponse<Void> deleteBusinessScenario(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode
+    ) {
+        mockDomainService.deleteBusinessScenario(id, workspaceCode);
+        return ApiResponse.ok(null, "Mock 业务场景删除成功");
+    }
+
     @GetMapping("/api/settings/mock/call-logs")
     public ApiResponse<PageResponse<MockCallLogItem>> listCallLogs(
             @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,

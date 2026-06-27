@@ -4,6 +4,7 @@ import type {
   ConfigReferenceSummary,
   ConfigStatus,
   CreateMockApplicationPayload,
+  CreateMockBusinessScenarioPayload,
   CreateMockEndpointPayload,
   CreateMockScenarioPayload,
   CreateDbConnectionPayload,
@@ -14,6 +15,7 @@ import type {
   DbConnectionTestResult,
   EnvConfigItem,
   MockApplicationItem,
+  MockBusinessScenarioItem,
   MockCallLogItem,
   MockEndpointItem,
   MockScenarioItem,
@@ -62,6 +64,12 @@ export interface SettingsMockEndpointQuery {
 
 export interface SettingsMockScenarioQuery {
   endpointId?: number
+  keyword?: string
+  status?: ConfigStatus
+}
+
+export interface SettingsMockBusinessScenarioQuery {
+  appId?: number
   keyword?: string
   status?: ConfigStatus
 }
@@ -410,6 +418,43 @@ export const configApi = {
 
   async deleteMockScenario(workspaceCode: string, id: number) {
     const response = await httpDelete<ApiResponse<void>>(`/settings/mock/scenarios/${id}`, {
+      headers: workspaceHeaders(workspaceCode),
+    })
+
+    return unwrapApiResponse(response)
+  },
+
+  async getMockBusinessScenarios(workspaceCode = 'ALL', query?: SettingsMockBusinessScenarioQuery) {
+    const payload = await httpGet<ApiResponse<PageResponse<MockBusinessScenarioItem>>>('/settings/mock/business-scenarios', {
+      headers: workspaceHeaders(workspaceCode),
+      params: cleanQuery(query),
+    })
+
+    return unwrapApiResponse(payload)
+  },
+
+  async createMockBusinessScenario(workspaceCode: string, payload: CreateMockBusinessScenarioPayload) {
+    const response = await httpPost<ApiResponse<MockBusinessScenarioItem>, CreateMockBusinessScenarioPayload>(
+      '/settings/mock/business-scenarios',
+      payload,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async updateMockBusinessScenario(workspaceCode: string, id: number, payload: CreateMockBusinessScenarioPayload) {
+    const response = await httpPut<ApiResponse<MockBusinessScenarioItem>, CreateMockBusinessScenarioPayload>(
+      `/settings/mock/business-scenarios/${id}`,
+      payload,
+      { headers: workspaceHeaders(workspaceCode) },
+    )
+
+    return unwrapApiResponse(response)
+  },
+
+  async deleteMockBusinessScenario(workspaceCode: string, id: number) {
+    const response = await httpDelete<ApiResponse<void>>(`/settings/mock/business-scenarios/${id}`, {
       headers: workspaceHeaders(workspaceCode),
     })
 

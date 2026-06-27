@@ -21,6 +21,7 @@ public class ApiRunResultPersistenceSupport {
 
     private static final String API_ENV_TYPE = "API";
     private static final String API_VARIABLE_SET_TYPE = "API_VARIABLE_SET";
+    private static final String PAYMENT_CHANNEL_VARIABLE_SET_TYPE = "PAYMENT_CHANNEL";
 
     private final ApiDefinitionCaseRunHistoryMapper caseRunHistoryMapper;
     private final ApiRunStepResultMapper runStepResultMapper;
@@ -124,7 +125,7 @@ public class ApiRunResultPersistenceSupport {
             return null;
         }
         EnvConfigEntity environment = envConfigMapper.selectById(environmentId);
-        if (environment == null || !API_ENV_TYPE.equals(environment.getEnvType())) {
+        if (environment == null || !ApiEnvironmentTypeSupport.isApiUsable(environment.getEnvType())) {
             throw new NotFoundException("Environment not found");
         }
         return environment.getEnvName();
@@ -135,10 +136,15 @@ public class ApiRunResultPersistenceSupport {
             return null;
         }
         ParamSetEntity variableSet = paramSetMapper.selectById(variableSetId);
-        if (variableSet == null || !API_VARIABLE_SET_TYPE.equals(variableSet.getParamType())) {
+        if (variableSet == null || !isApiRuntimeVariableSet(variableSet.getParamType())) {
             throw new NotFoundException("Variable set not found");
         }
         return variableSet.getParamName();
+    }
+
+    private boolean isApiRuntimeVariableSet(String paramType) {
+        return API_VARIABLE_SET_TYPE.equals(paramType)
+                || PAYMENT_CHANNEL_VARIABLE_SET_TYPE.equals(paramType);
     }
 
     private Long computeResponseSize(ApiAutomationModels.ApiResponseSnapshot response) {

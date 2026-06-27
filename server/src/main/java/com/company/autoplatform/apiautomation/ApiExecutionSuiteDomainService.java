@@ -310,6 +310,7 @@ public class ApiExecutionSuiteDomainService {
                 null,
                 request == null ? null : request.mockEnabled(),
                 request == null ? null : request.mockApplicationId(),
+                request == null ? null : request.mockBusinessScenarioId(),
                 null
         );
         SuiteExecutionPolicy policy = SuiteExecutionPolicy.of(
@@ -380,6 +381,7 @@ public class ApiExecutionSuiteDomainService {
                     effectiveRequest.threadCount(),
                     effectiveRequest.mockEnabled(),
                     effectiveRequest.mockApplicationId(),
+                    effectiveRequest.mockBusinessScenarioId(),
                     row.values()
             );
             SuiteRunAggregate rowRun = runSuiteOnce(enabledItems, workspace.getWorkspaceCode(), rowRequest, policy, row);

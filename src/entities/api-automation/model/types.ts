@@ -76,6 +76,7 @@ export interface ApiSchemaFieldInput {
   maxLength?: number | null
   minimum?: string | null
   maximum?: string | null
+  responseCode?: string | null
 }
 
 export interface ApiRequestConfigInput {
@@ -96,6 +97,8 @@ export interface ApiAutomationEnvironmentItem {
   workspaceName: string | null
   name: string
   baseUrl: string | null
+  defaultVariableSetId?: number | null
+  mockApplicationId?: number | null
   status: number | null
 }
 
@@ -223,6 +226,7 @@ export interface ApiDefinitionImportPayload {
   url?: string | null
   content?: string | null
   directoryName?: string | null
+  groupByTags?: boolean | null
 }
 
 export interface ApiDefinitionImportItem {
@@ -530,6 +534,7 @@ export interface ApiRunPayload {
   threadCount?: number | null
   mockEnabled?: boolean | null
   mockApplicationId?: number | null
+  mockBusinessScenarioId?: number | null
   rowVariables?: Record<string, string> | null
 }
 
@@ -605,11 +610,18 @@ export interface ApiRuntimeContextSnapshot {
     name?: string | null
     versionNo?: number | null
   } | null
+  variableSets?: Array<{
+    id?: number | null
+    name?: string | null
+    versionNo?: number | null
+  }>
   mock?: {
     id?: number | null
     appName?: string | null
     appCode?: string | null
     baseUrl?: string | null
+    businessScenarioId?: number | null
+    businessScenarioName?: string | null
   } | null
   variables?: Record<string, string>
 }

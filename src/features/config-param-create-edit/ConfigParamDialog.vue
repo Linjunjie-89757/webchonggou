@@ -145,7 +145,7 @@ watch(
     :model-value="modelValue"
     :title="fixedParamType === 'WEB_UI_VARIABLE_SET'
       ? (mode === 'create' ? '新增变量集' : '编辑变量集')
-      : (mode === 'create' ? '新增变量集/参数' : '编辑变量集/参数')"
+      : (mode === 'create' ? '新增变量集' : '编辑变量集')"
     width="760px"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -164,7 +164,7 @@ watch(
       </div>
 
       <div v-if="!fixedParamType" class="config-param-dialog__field">
-        <span>参数类型</span>
+        <span>变量类型</span>
         <div class="config-param-dialog__segment">
           <button
             v-for="item in configParamTypeOptions"

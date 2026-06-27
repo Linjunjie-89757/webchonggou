@@ -18,8 +18,10 @@ import {
   buildCreateEnvPayload,
   createConfigEnvFormFromItem,
   createDefaultConfigEnvForm,
+  createDefaultServiceEndpoint,
   type ConfigEnvDialogMode,
   type ConfigEnvForm,
+  type ConfigEnvServiceEndpointForm,
   validateConfigEnvForm,
 } from './model'
 
@@ -52,11 +54,25 @@ const loadingVariableSets = ref(false)
 const loadingMockApplications = ref(false)
 let variableSetRequestSeq = 0
 let mockApplicationRequestSeq = 0
+const serviceKeySnapshots = new WeakMap<ConfigEnvServiceEndpointForm, string>()
 
 const paramTypeLabelMap = new Map<string, string>(configParamTypeOptions.map(item => [item.value, item.label]))
 
 const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
 const enabledMockApplications = computed(() => mockApplications.value.filter(item => item.status !== 0))
+const defaultService = computed(() => {
+  return form.services.find(service => service.key === form.defaultServiceKey) ?? form.services[0] ?? null
+})
+const duplicateServiceKeys = computed(() => {
+  const counter = new Map<string, number>()
+  for (const service of form.services) {
+    const key = service.key.trim()
+    if (key) {
+      counter.set(key, (counter.get(key) || 0) + 1)
+    }
+  }
+  return new Set(Array.from(counter.entries()).filter(([, count]) => count > 1).map(([key]) => key))
+})
 
 function resetForm() {
   const nextForm =
@@ -77,6 +93,55 @@ function submit() {
 
   formError.message = ''
   emit('submit', buildCreateEnvPayload(form))
+}
+
+function syncBaseUrlFromDefaultService() {
+  if (defaultService.value) {
+    form.baseUrl = defaultService.value.baseUrl
+  }
+}
+
+function addServiceEndpoint() {
+  const index = form.services.length + 1
+  form.services.push({
+    key: `service-${index}`,
+    name: `服务 ${index}`,
+    baseUrl: '',
+  })
+}
+
+function removeServiceEndpoint(service: ConfigEnvServiceEndpointForm) {
+  if (form.services.length <= 1) {
+    return
+  }
+  const index = form.services.indexOf(service)
+  if (index >= 0) {
+    form.services.splice(index, 1)
+  }
+  if (!form.services.some(item => item.key === form.defaultServiceKey)) {
+    form.defaultServiceKey = form.services[0]?.key ?? createDefaultServiceEndpoint().key
+  }
+  syncBaseUrlFromDefaultService()
+}
+
+function markDefaultService(service: ConfigEnvServiceEndpointForm) {
+  form.defaultServiceKey = service.key
+  syncBaseUrlFromDefaultService()
+}
+
+function handleServiceKeyChange(service: ConfigEnvServiceEndpointForm, oldKey: string) {
+  service.key = service.key.trim()
+  if (form.defaultServiceKey === oldKey) {
+    form.defaultServiceKey = service.key
+  }
+}
+
+function rememberServiceKey(service: ConfigEnvServiceEndpointForm) {
+  serviceKeySnapshots.set(service, service.key)
+}
+
+function isDuplicateServiceKey(service: ConfigEnvServiceEndpointForm) {
+  return duplicateServiceKeys.value.has(service.key.trim())
 }
 
 async function loadVariableSets() {
@@ -143,10 +208,13 @@ watch(
 </script>
 
 <template>
-  <AppDialog
+  <component
+    :is="mode === 'edit' ? 'el-drawer' : AppDialog"
     :model-value="modelValue"
     :title="mode === 'create' ? '新增环境' : '编辑环境'"
-    width="520px"
+    :width="mode === 'create' ? '560px' : undefined"
+    :size="mode === 'edit' ? '760px' : undefined"
+    class="config-env-drawer"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="config-env-dialog">
@@ -161,7 +229,7 @@ watch(
       </div>
 
       <div class="config-env-dialog__field">
-        <span>环境类型</span>
+        <span>环境分组</span>
         <div class="config-env-dialog__segment">
           <button
             v-for="item in configEnvTypeOptions"
@@ -177,60 +245,70 @@ watch(
 
       <div class="config-env-dialog__field">
         <span>Base URL *</span>
-        <el-input v-model="form.baseUrl" placeholder="https://api.example.com" />
+        <el-input
+          v-model="form.baseUrl"
+          placeholder="https://api.example.com"
+          @change="() => { if (defaultService) defaultService.baseUrl = form.baseUrl }"
+        />
       </div>
 
-      <div v-if="form.envType === 'WEB_UI'" class="config-env-dialog__field">
-        <span>Web UI 配置</span>
-        <div class="config-env-dialog__grid">
-          <label>
-            <span>浏览器</span>
-            <el-select v-model="form.browserType">
-              <el-option label="Chromium" value="CHROMIUM" />
-              <el-option label="Firefox" value="FIREFOX" />
-              <el-option label="WebKit" value="WEBKIT" />
-            </el-select>
-          </label>
-          <label>
-            <span>默认超时</span>
-            <el-input-number v-model="form.defaultTimeoutMs" :min="1000" :max="60000" :step="1000" controls-position="right" />
-          </label>
-          <label>
-            <span>视口宽度</span>
-            <el-input-number v-model="form.viewportWidth" :min="320" :max="7680" :step="10" controls-position="right" />
-          </label>
-          <label>
-            <span>视口高度</span>
-            <el-input-number v-model="form.viewportHeight" :min="240" :max="4320" :step="10" controls-position="right" />
-          </label>
+      <div v-if="mode === 'edit'" class="config-env-dialog__field">
+        <div class="config-env-dialog__field-header">
+          <span>服务地址</span>
+          <AppButton size="small" @click="addServiceEndpoint">新增服务</AppButton>
         </div>
-        <div class="config-env-dialog__switches">
-          <label>
-            <span>无头模式</span>
-            <el-switch v-model="form.headless" />
-          </label>
-          <label>
-            <span>忽略 HTTPS 错误</span>
-            <el-switch v-model="form.ignoreHttpsErrors" />
-          </label>
+        <div class="config-env-dialog__services">
+          <div class="config-env-dialog__service-head">
+            <span>服务标识</span>
+            <span>服务名称</span>
+            <span>服务地址</span>
+            <span>默认</span>
+            <span>操作</span>
+          </div>
+          <div
+            v-for="(service, serviceIndex) in form.services"
+            :key="`${service.key}-${serviceIndex}`"
+            class="config-env-dialog__service-row"
+            :class="{ 'is-default': service.key === form.defaultServiceKey, 'has-error': isDuplicateServiceKey(service) }"
+          >
+            <el-input
+              v-model="service.key"
+              placeholder="服务标识"
+              @focus="rememberServiceKey(service)"
+              @change="handleServiceKeyChange(service, serviceKeySnapshots.get(service) || service.key)"
+            />
+            <el-input v-model="service.name" placeholder="服务名称" />
+            <el-input
+              v-model="service.baseUrl"
+              class="config-env-dialog__service-url"
+              placeholder="https://service.example.com"
+              @change="() => { if (service.key === form.defaultServiceKey) form.baseUrl = service.baseUrl }"
+            />
+            <button
+              type="button"
+              class="config-env-dialog__service-default"
+              :class="{ 'is-active': service.key === form.defaultServiceKey }"
+              @click="markDefaultService(service)"
+            >
+              {{ service.key === form.defaultServiceKey ? '默认' : '设为默认' }}
+            </button>
+            <button
+              type="button"
+              class="config-env-dialog__service-remove"
+              :disabled="form.services.length <= 1"
+              @click="removeServiceEndpoint(service)"
+            >
+              删除
+            </button>
+            <p v-if="isDuplicateServiceKey(service)" class="config-env-dialog__service-error">服务标识重复</p>
+          </div>
         </div>
-        <el-select
-          v-model="form.defaultVariableSetId"
-          clearable
-          filterable
-          :loading="loadingVariableSets"
-          placeholder="默认变量集"
-        >
-          <el-option
-            v-for="variableSet in enabledVariableSets"
-            :key="variableSet.id"
-            :label="`${variableSet.paramName}（${paramTypeLabelMap.get(variableSet.paramType) ?? variableSet.paramType}）`"
-            :value="variableSet.id"
-          />
-        </el-select>
+        <p class="config-env-dialog__hint">
+          默认服务地址会同步为兼容 Base URL，后续接口和 Web UI 可按服务标识引用。
+        </p>
       </div>
 
-      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__field">
+      <div v-if="mode === 'edit'" class="config-env-dialog__field">
         <span>描述</span>
         <el-input
           v-model="form.description"
@@ -240,7 +318,7 @@ watch(
         />
       </div>
 
-      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__field">
+      <div v-if="mode === 'edit'" class="config-env-dialog__field">
         <span>默认变量集</span>
         <el-select
           v-model="form.defaultVariableSetId"
@@ -258,7 +336,7 @@ watch(
         </el-select>
       </div>
 
-      <div class="config-env-dialog__field">
+      <div v-if="mode === 'edit'" class="config-env-dialog__field">
         <span>关联 Mock 应用</span>
         <el-select
           v-model="form.mockApplicationId"
@@ -276,7 +354,7 @@ watch(
         </el-select>
       </div>
 
-      <div v-if="form.envType !== 'WEB_UI'" class="config-env-dialog__grid">
+      <div v-if="mode === 'edit'" class="config-env-dialog__grid">
         <label>
           <span>默认超时</span>
           <el-input-number v-model="form.defaultTimeoutMs" :min="1000" :max="60000" :step="1000" controls-position="right" />
@@ -309,7 +387,7 @@ watch(
       <AppButton :disabled="saving" @click="emit('update:modelValue', false)">取消</AppButton>
       <AppButton type="primary" :loading="saving" @click="submit">保存</AppButton>
     </template>
-  </AppDialog>
+  </component>
 </template>
 
 <style scoped>
@@ -319,13 +397,35 @@ watch(
   gap: var(--app-space-4);
 }
 
+.config-env-drawer :deep(.el-drawer__body) {
+  padding: var(--app-space-5);
+}
+
+.config-env-drawer :deep(.el-drawer__footer) {
+  padding: var(--app-space-4) var(--app-space-5);
+  border-top: 1px solid var(--app-border);
+}
+
 .config-env-dialog__field {
   display: flex;
   flex-direction: column;
   gap: var(--app-space-2);
 }
 
+.config-env-dialog__field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
 .config-env-dialog__field > span {
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.config-env-dialog__field-header > span {
   color: var(--app-text-secondary);
   font-size: var(--app-font-size-sm);
   font-weight: 600;
@@ -358,9 +458,86 @@ watch(
   width: 100%;
 }
 
+.config-env-dialog__services {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-2);
+}
+
+.config-env-dialog__service-head,
+.config-env-dialog__service-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.8fr) minmax(96px, 1fr) minmax(180px, 1.6fr) 84px 62px;
+  gap: var(--app-space-2);
+  align-items: center;
+}
+
+.config-env-dialog__service-head {
+  color: var(--app-text-tertiary);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+}
+
+.config-env-dialog__service-row {
+  position: relative;
+  padding: var(--app-space-2);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+}
+
+.config-env-dialog__service-row.is-default {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+}
+
+.config-env-dialog__service-row.has-error {
+  border-color: var(--app-danger);
+}
+
+.config-env-dialog__service-default,
+.config-env-dialog__service-remove {
+  min-height: var(--app-control-height-md);
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0 var(--app-space-3);
+}
+
+.config-env-dialog__service-default:hover,
+.config-env-dialog__service-remove:hover {
+  background: var(--app-bg-page);
+}
+
+.config-env-dialog__service-default.is-active {
+  border-color: var(--app-primary);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.config-env-dialog__service-remove:disabled {
+  color: var(--app-text-disabled);
+  cursor: not-allowed;
+}
+
+.config-env-dialog__service-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--app-danger);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-env-dialog__hint {
+  margin: 0;
+  color: var(--app-text-tertiary);
+  font-size: var(--app-font-size-sm);
+}
+
 .config-env-dialog__segment {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--app-space-2);
 }
 

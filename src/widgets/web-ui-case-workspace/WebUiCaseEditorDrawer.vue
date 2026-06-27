@@ -1,6 +1,6 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import { CopyDocument, Delete, MagicStick, Plus, Top, Bottom, VideoPlay } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { CopyDocument, Delete, MagicStick, Plus, Top, Bottom, VideoPlay, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { configApi, type ParamSetItem } from '@/entities/config'
@@ -28,6 +28,7 @@ import {
   type WebUiElementItem,
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
+  type LocalRunnerTaskDetailResponse,
   type WebUiLocatorType,
   type WebUiRunResponse,
   type WebUiRunStepResult,
@@ -37,6 +38,7 @@ import {
 } from '@/entities/web-ui-automation'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
+import { startLocalRunnerTaskPolling } from '@/entities/web-ui-automation/lib/localRunnerClient'
 
 interface EditableStep {
   id?: number | null
@@ -105,6 +107,7 @@ const visible = computed({
 const loading = ref(false)
 const saving = ref(false)
 const debugging = ref(false)
+const localRunnerRunning = ref(false)
 const loadingVariableSets = ref(false)
 const loadingElements = ref(false)
 const debuggingStepIndex = ref<number | null>(null)
@@ -112,6 +115,8 @@ const errorMessage = ref('')
 const form = ref<CaseForm>(createEmptyForm())
 const loadedDetail = ref<WebUiCaseDetail | null>(null)
 const lastDebugResult = ref<WebUiRunResponse | null>(null)
+const localRunnerTask = ref<LocalRunnerTaskDetailResponse | null>(null)
+const localRunnerFormalRunId = ref<number | null>(null)
 const savedFormSnapshot = ref('')
 const validatingLocatorIndex = ref<number | null>(null)
 const locatorValidationVisible = ref(false)
@@ -125,6 +130,7 @@ const debugVariableSetId = ref<number | null>(null)
 let detailRequestSeq = 0
 let variableSetRequestSeq = 0
 let elementRequestSeq = 0
+let localRunnerTaskTimer: ReturnType<typeof window.setTimeout> | null = null
 
 const drawerTitle = computed(() => {
   if (props.caseId) {
@@ -134,6 +140,15 @@ const drawerTitle = computed(() => {
 })
 
 const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
+
+const localRunnerStepResults = computed(() => {
+  const result = localRunnerTask.value?.result as {
+    reportData?: {
+      stepResults?: Array<Record<string, unknown>>
+    }
+  } | null
+  return Array.isArray(result?.reportData?.stepResults) ? result.reportData.stepResults : []
+})
 
 function createEmptyForm(): CaseForm {
   return {
@@ -302,6 +317,9 @@ function toEditableStep(item: WebUiCaseStepItem, index: number): EditableStep {
 function fillForm(detail: WebUiCaseDetail) {
   loadedDetail.value = detail
   lastDebugResult.value = null
+  localRunnerTask.value = null
+  localRunnerFormalRunId.value = null
+  stopLocalRunnerTaskRefresh()
   form.value = {
     name: detail.name || '',
     moduleName: detail.moduleName || '',
@@ -365,6 +383,9 @@ async function loadDetail() {
     if (isCurrentDetailRequest(requestId, workspaceCode, caseId, draftCase)) {
       loadedDetail.value = null
       lastDebugResult.value = null
+      localRunnerTask.value = null
+      localRunnerFormalRunId.value = null
+      stopLocalRunnerTaskRefresh()
       form.value = createEmptyForm()
       savedFormSnapshot.value = JSON.stringify(buildPayload())
     }
@@ -391,6 +412,7 @@ async function loadDetail() {
 function closeDrawer() {
   detailRequestSeq += 1
   loading.value = false
+  stopLocalRunnerTaskRefresh()
   visible.value = false
 }
 
@@ -466,7 +488,127 @@ function getStepHelper(step: EditableStep) {
 }
 
 function getStepDebugResult(index: number) {
+  const step = form.value.steps[index]
+  const localResult = localRunnerStepResults.value.find(item => {
+    const stepId = String(item.stepId || '')
+    const sortOrder = Number((item.extra as { sortOrder?: unknown } | undefined)?.sortOrder || 0)
+    return stepId === String(step?.id ?? index + 1) || sortOrder === index + 1
+  })
+  if (localResult) {
+    return {
+      status: localRunnerStepStatus(localResult.status),
+      errorMessage: String(localResult.errorMessage || ''),
+      screenshotUrl: getLocalRunnerStepScreenshotSrc(localResult),
+      sortOrder: index + 1,
+    } as WebUiRunStepResult
+  }
   return lastDebugResult.value?.stepResults?.find(item => Number(item.sortOrder) === index + 1) || null
+}
+
+function localRunnerStepStatus(status: unknown) {
+  const normalized = String(status || '').toUpperCase()
+  if (normalized === 'SUCCESS') return 'PASSED'
+  if (normalized === 'FAILED') return 'FAILED'
+  if (normalized === 'SKIPPED') return 'SKIPPED'
+  return 'RUNNING'
+}
+
+function getLocalRunnerStepScreenshotSrc(item: Record<string, unknown>) {
+  const extra = item.extra as { screenshotBase64?: unknown } | undefined
+  const screenshotBase64 = typeof extra?.screenshotBase64 === 'string' ? extra.screenshotBase64 : ''
+  return screenshotBase64 ? `data:image/png;base64,${screenshotBase64}` : null
+}
+
+function isLocalRunnerTaskTerminal(status?: string | null) {
+  return ['SUCCESS', 'FAILED', 'DEGRADED', 'CANCELED'].includes(String(status || '').toUpperCase())
+}
+
+function formatLocalRunnerTaskStatus(status?: string | null) {
+  if (status === 'SUCCESS') return '成功'
+  if (status === 'FAILED') return '失败'
+  if (status === 'DEGRADED') return '降级'
+  if (status === 'RUNNING') return '执行中'
+  if (status === 'ASSIGNED') return '已领取'
+  if (status === 'PENDING') return '等待领取'
+  return status || '暂无任务'
+}
+
+function getLocalRunnerTaskStatusType(status?: string | null) {
+  if (status === 'SUCCESS') return 'success'
+  if (status === 'FAILED') return 'danger'
+  if (status === 'DEGRADED') return 'warning'
+  if (status === 'RUNNING' || status === 'ASSIGNED') return 'primary'
+  return 'info'
+}
+
+function stopLocalRunnerTaskRefresh() {
+  if (localRunnerTaskTimer) {
+    window.clearTimeout(localRunnerTaskTimer)
+    localRunnerTaskTimer = null
+  }
+}
+
+function scheduleLocalRunnerTaskRefresh(runId: string) {
+  stopLocalRunnerTaskRefresh()
+  if (!runId || isLocalRunnerTaskTerminal(localRunnerTask.value?.status)) {
+    return
+  }
+  localRunnerTaskTimer = window.setTimeout(async () => {
+    localRunnerTaskTimer = null
+    await refreshLocalRunnerTask(true)
+    if (props.modelValue && localRunnerTask.value?.runId === runId && !isLocalRunnerTaskTerminal(localRunnerTask.value.status)) {
+      scheduleLocalRunnerTaskRefresh(runId)
+    }
+  }, 1500)
+}
+
+async function refreshLocalRunnerTask(silent = false) {
+  const runId = localRunnerTask.value?.runId
+  if (!runId) {
+    return
+  }
+  try {
+    localRunnerTask.value = await webUiAutomationApi.getLocalRunnerDebugTask(runId)
+    if (isLocalRunnerTaskTerminal(localRunnerTask.value.status)) {
+      await refreshLocalRunnerFormalRun()
+    }
+    if (!silent) {
+      ElMessage.success('本地运行任务状态已刷新')
+    }
+  } catch (error) {
+    if (!silent) {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  }
+}
+
+async function refreshLocalRunnerFormalRun() {
+  if (!localRunnerFormalRunId.value) {
+    return
+  }
+  const detail = await webUiAutomationApi.getRunDetail(props.workspaceCode, localRunnerFormalRunId.value)
+  lastDebugResult.value = {
+    runId: detail.summary.id,
+    batchId: detail.summary.batchId,
+    caseId: detail.summary.caseId,
+    caseName: detail.summary.caseName,
+    status: detail.summary.status,
+    durationMs: detail.summary.durationMs,
+    failureSummary: detail.summary.failureSummary,
+    totalSteps: detail.summary.totalSteps,
+    passedSteps: detail.summary.passedSteps,
+    failedSteps: detail.summary.failedSteps,
+    skippedSteps: detail.summary.skippedSteps,
+    stepResults: detail.steps,
+  }
+}
+
+function openLocalRunnerFormalReport() {
+  if (!localRunnerFormalRunId.value) {
+    ElMessage.warning('暂无可查看的正式报告')
+    return
+  }
+  emit('debug-run-finished', localRunnerFormalRunId.value)
 }
 
 function isFocusedStep(step: EditableStep) {
@@ -939,6 +1081,48 @@ async function debugRunStep(index: number) {
   }
 }
 
+async function runCaseWithLocalRunner() {
+  if (localRunnerRunning.value || debugging.value) {
+    return
+  }
+  if (!validateExecutableForm()) {
+    return
+  }
+  if (!props.caseId) {
+    ElMessage.warning('请先保存用例，再使用本地 Runner 正式运行')
+    return
+  }
+  if (hasUnsavedChanges()) {
+    ElMessage.warning('当前用例有未保存修改，请先保存后再本地运行，避免报告内容和页面草稿不一致')
+    return
+  }
+
+  localRunnerRunning.value = true
+  try {
+    lastDebugResult.value = null
+    localRunnerTask.value = null
+    localRunnerFormalRunId.value = null
+    stopLocalRunnerTaskRefresh()
+    await startLocalRunnerTaskPolling({
+      capabilities: ['WEB_CASE_RUN', 'WEB_ELEMENT_VALIDATE'],
+      workspaceCodes: [props.workspaceCode],
+      intervalMs: 1000,
+    })
+    const response = await webUiAutomationApi.createLocalRunnerRun(props.workspaceCode, props.caseId, {
+      headless: form.value.headless,
+      variableSetId: debugVariableSetId.value,
+    })
+    localRunnerFormalRunId.value = response.run.runId
+    localRunnerTask.value = response.runnerTask
+    scheduleLocalRunnerTaskRefresh(response.runnerTask.runId)
+    ElMessage.success(`本地 Runner 正式运行已创建：${response.runnerTask.runId}`)
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    localRunnerRunning.value = false
+  }
+}
+
 async function validateLocator(index: number) {
   if (validatingLocatorIndex.value !== null) {
     return
@@ -999,6 +1183,10 @@ watch(
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  stopLocalRunnerTaskRefresh()
+})
 </script>
 
 <template>
@@ -1044,6 +1232,40 @@ watch(
           <div class="web-ui-case-meta__failure">
             <span>失败摘要</span>
             <strong>{{ lastDebugResult?.failureSummary || '-' }}</strong>
+          </div>
+        </section>
+
+        <section v-if="localRunnerTask" class="web-ui-local-runner-result">
+          <div class="web-ui-local-runner-result__main">
+            <el-tag :type="getLocalRunnerTaskStatusType(localRunnerTask.status)" effect="light">
+              {{ formatLocalRunnerTaskStatus(localRunnerTask.status) }}
+            </el-tag>
+            <span class="web-ui-local-runner-result__run-id">{{ localRunnerTask.runId }}</span>
+            <span v-if="localRunnerFormalRunId">报告 #{{ localRunnerFormalRunId }}</span>
+            <el-tag v-if="lastDebugResult" size="small" effect="light">
+              正式报告：{{ formatRunStatus(lastDebugResult.status) }}
+            </el-tag>
+            <span>{{ localRunnerTask.statusMessage || localRunnerTask.errorMessage || '本地运行任务已创建，等待 Runner 回传结果' }}</span>
+          </div>
+          <el-progress
+            class="web-ui-local-runner-result__progress"
+            :percentage="localRunnerTask.progress.percent"
+            :status="localRunnerTask.status === 'FAILED' ? 'exception' : localRunnerTask.status === 'SUCCESS' ? 'success' : undefined"
+          />
+          <div class="web-ui-local-runner-result__actions">
+            <span>阶段：{{ localRunnerTask.currentStage || '-' }}</span>
+            <span>步骤：{{ localRunnerTask.progress.current }}/{{ localRunnerTask.progress.total }}</span>
+            <span v-if="lastDebugResult">报告步骤：{{ lastDebugResult.passedSteps }}/{{ lastDebugResult.failedSteps }}/{{ lastDebugResult.skippedSteps }}</span>
+            <AppButton size="small" @click="() => refreshLocalRunnerTask(false)">刷新</AppButton>
+            <AppButton
+              v-if="localRunnerFormalRunId"
+              size="small"
+              type="primary"
+              :icon="View"
+              @click="openLocalRunnerFormalReport"
+            >
+              查看正式报告
+            </AppButton>
           </div>
         </section>
 
@@ -1378,8 +1600,9 @@ watch(
     <template #footer>
       <div class="web-ui-case-drawer__footer">
         <AppButton @click="closeDrawer">取消</AppButton>
-        <AppButton :loading="debugging && debuggingStepIndex === null" :disabled="Boolean(errorMessage) || debugging || saving" @click="debugRunCase">调试运行</AppButton>
-        <AppButton type="primary" :loading="saving" :disabled="Boolean(errorMessage) || debugging" @click="saveCase">保存</AppButton>
+        <AppButton :loading="localRunnerRunning" :disabled="Boolean(errorMessage) || debugging || localRunnerRunning || saving" @click="runCaseWithLocalRunner">本地运行</AppButton>
+        <AppButton :loading="debugging && debuggingStepIndex === null" :disabled="Boolean(errorMessage) || debugging || localRunnerRunning || saving" @click="debugRunCase">调试运行</AppButton>
+        <AppButton type="primary" :loading="saving" :disabled="Boolean(errorMessage) || debugging || localRunnerRunning" @click="saveCase">保存</AppButton>
       </div>
     </template>
   </el-drawer>
@@ -1458,6 +1681,43 @@ watch(
 
 .web-ui-case-meta__failure {
   grid-column: span 1;
+}
+
+.web-ui-local-runner-result {
+  display: grid;
+  gap: var(--app-space-2);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.web-ui-local-runner-result__main,
+.web-ui-local-runner-result__actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+.web-ui-local-runner-result__run-id {
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-family: var(--app-font-family-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ui-local-runner-result__progress {
+  max-width: 520px;
+}
+
+.web-ui-local-runner-result__actions {
+  color: var(--app-text-muted);
 }
 
 .web-ui-case-form__description {

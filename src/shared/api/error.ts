@@ -15,6 +15,19 @@ function isRequestError(error: unknown): error is RequestError {
   )
 }
 
+function getBackendMessage(raw: unknown) {
+  if (typeof raw !== 'object' || raw === null || !('response' in raw)) {
+    return ''
+  }
+  const response = (raw as { response?: { data?: unknown } }).response
+  const data = response?.data
+  if (typeof data !== 'object' || data === null || !('message' in data)) {
+    return ''
+  }
+  const message = (data as { message?: unknown }).message
+  return typeof message === 'string' ? message.trim() : ''
+}
+
 function getStatusMessage(status?: number) {
   if (status === 401) {
     return '暂无访问权限或登录状态已失效'
@@ -45,10 +58,11 @@ export function normalizeRequestError(error: unknown): NormalizedRequestError {
   if (isRequestError(error)) {
     const statusMessage = getStatusMessage(error.status)
     const networkMessage = getNetworkMessage(error.message)
+    const backendMessage = getBackendMessage(error.raw)
 
     return {
       status: error.status,
-      message: statusMessage || networkMessage || error.message || '请求失败，请稍后重试',
+      message: backendMessage || statusMessage || networkMessage || error.message || '请求失败，请稍后重试',
       raw: error.raw,
     }
   }

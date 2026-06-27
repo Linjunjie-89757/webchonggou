@@ -11,6 +11,8 @@ import com.company.autoplatform.settings.EnvConfigEntity;
 import com.company.autoplatform.settings.EnvConfigMapper;
 import com.company.autoplatform.settings.MockApplicationEntity;
 import com.company.autoplatform.settings.MockApplicationMapper;
+import com.company.autoplatform.settings.MockBusinessScenarioEntity;
+import com.company.autoplatform.settings.MockBusinessScenarioMapper;
 import com.company.autoplatform.settings.ParamSetEntity;
 import com.company.autoplatform.settings.ParamSetMapper;
 import com.company.autoplatform.settings.ParamSetVersionEntity;
@@ -46,7 +48,10 @@ public class ApiExecutionEngineSupport {
     private static final String RESULT_NOT_PASSED = "NOT_PASSED";
     private static final String RESULT_NO_ASSERTION = "NO_ASSERTION";
     private static final String RESULT_FAILED = "FAILED";
+    private static final String GLOBAL_VARIABLE_SET_TYPE = "GLOBAL";
     private static final String API_VARIABLE_SET_TYPE = "API_VARIABLE_SET";
+    private static final String BUSINESS_VARIABLE_SET_TYPE = "BUSINESS";
+    private static final String PAYMENT_CHANNEL_VARIABLE_SET_TYPE = "PAYMENT_CHANNEL";
     private static final String SCENARIO_RESOURCE_TYPE_DEFINITION = "DEFINITION";
     private static final String SCENARIO_RESOURCE_TYPE_CASE = "CASE";
     private static final String SCENARIO_STEP_API = "API";
@@ -71,6 +76,7 @@ public class ApiExecutionEngineSupport {
     private final ParamSetMapper paramSetMapper;
     private final ParamSetVersionMapper paramSetVersionMapper;
     private final MockApplicationMapper mockApplicationMapper;
+    private final MockBusinessScenarioMapper mockBusinessScenarioMapper;
     private final TaskMapper taskMapper;
     private final ReportMapper reportMapper;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
@@ -91,6 +97,7 @@ public class ApiExecutionEngineSupport {
             ParamSetMapper paramSetMapper,
             ParamSetVersionMapper paramSetVersionMapper,
             MockApplicationMapper mockApplicationMapper,
+            MockBusinessScenarioMapper mockBusinessScenarioMapper,
             TaskMapper taskMapper,
             ReportMapper reportMapper,
             ApiWorkspaceScopeSupport workspaceScopeSupport,
@@ -110,6 +117,7 @@ public class ApiExecutionEngineSupport {
         this.paramSetMapper = paramSetMapper;
         this.paramSetVersionMapper = paramSetVersionMapper;
         this.mockApplicationMapper = mockApplicationMapper;
+        this.mockBusinessScenarioMapper = mockBusinessScenarioMapper;
         this.taskMapper = taskMapper;
         this.reportMapper = reportMapper;
         this.workspaceScopeSupport = workspaceScopeSupport;
@@ -123,44 +131,52 @@ public class ApiExecutionEngineSupport {
         this.mockPublicBaseUrl = trimTrailingSlash(mockPublicBaseUrl);
     }
     ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId) {
-        return buildExecutionContext(workspaceId, environmentId, variableSetId, null, null);
+        return buildExecutionContext(workspaceId, environmentId, variableSetId, null, null, null, null);
     }
 
     ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId, Long mockApplicationId, Boolean mockEnabled) {
+        return buildExecutionContext(workspaceId, environmentId, variableSetId, mockApplicationId, mockEnabled, null);
+    }
+
+    ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId, Long mockApplicationId, Boolean mockEnabled, Long mockBusinessScenarioId) {
         ResolvedEnvironment environment = resolveEnvironment(workspaceId, environmentId);
-        environment = resolveMockEnvironment(workspaceId, environment, mockApplicationId, mockEnabled);
+        environment = resolveMockEnvironment(workspaceId, environment, mockApplicationId, mockEnabled, mockBusinessScenarioId);
         Map<String, String> variables = new LinkedHashMap<>();
+        List<RuntimeVariableSetSnapshot> variableSetSnapshots = new ArrayList<>();
+        applyVariableSets(variables, listGlobalVariableSets(workspaceId), variableSetSnapshots);
         for (ApiVariableItem variable : defaultList(environment.variables())) {
             if (variable.name() != null) {
                 variables.put(variable.name(), variable.value() == null ? "" : variable.value());
             }
         }
-        Long effectiveVariableSetId = variableSetId == null ? environment.defaultVariableSetId() : variableSetId;
-        String effectiveVariableSetName = null;
-        Integer effectiveVariableSetVersionNo = null;
-        if (effectiveVariableSetId != null) {
-            ParamSetEntity variableSet = requireVariableSet(effectiveVariableSetId);
-            if (!variableSet.getWorkspaceId().equals(workspaceId)) {
-                throw new BadRequestException("Variable set must belong to the same workspace");
-            }
-            effectiveVariableSetName = variableSet.getParamName();
-            effectiveVariableSetVersionNo = resolveLatestVariableSetVersionNo(effectiveVariableSetId);
-            for (ApiVariableItem variable : readVariables(variableSet.getContentJson())) {
-                if (variable.name() != null) {
-                    variables.put(variable.name(), variable.value() == null ? "" : variable.value());
-                }
-            }
-        }
+        putServiceVariables(variables, environment);
         putMockVariables(variables, environment);
-        return new ExecutionContext(environment, variables, buildContextSnapshot(environment, effectiveVariableSetId, effectiveVariableSetName, effectiveVariableSetVersionNo, variables));
+        ParamSetEntity defaultVariableSet = null;
+        if (environment.defaultVariableSetId() != null) {
+            defaultVariableSet = requireVariableSet(environment.defaultVariableSetId());
+            ensureVariableSetInWorkspace(defaultVariableSet, workspaceId);
+            applyVariableSet(variables, defaultVariableSet, variableSetSnapshots);
+        }
+        ParamSetEntity runtimeVariableSet = null;
+        if (variableSetId != null && (defaultVariableSet == null || !variableSetId.equals(defaultVariableSet.getId()))) {
+            runtimeVariableSet = requireVariableSet(variableSetId);
+            ensureVariableSetInWorkspace(runtimeVariableSet, workspaceId);
+            applyVariableSet(variables, runtimeVariableSet, variableSetSnapshots);
+        }
+        ParamSetEntity effectiveVariableSet = runtimeVariableSet != null ? runtimeVariableSet : defaultVariableSet;
+        return new ExecutionContext(environment, variables, buildContextSnapshot(environment, effectiveVariableSet, variableSetSnapshots, variables));
     }
 
     ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId, Map<String, String> rowVariables) {
-        return buildExecutionContext(workspaceId, environmentId, variableSetId, rowVariables, null, null);
+        return buildExecutionContext(workspaceId, environmentId, variableSetId, rowVariables, null, null, null);
     }
 
     ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId, Map<String, String> rowVariables, Long mockApplicationId, Boolean mockEnabled) {
-        ExecutionContext context = buildExecutionContext(workspaceId, environmentId, variableSetId, mockApplicationId, mockEnabled);
+        return buildExecutionContext(workspaceId, environmentId, variableSetId, rowVariables, mockApplicationId, mockEnabled, null);
+    }
+
+    ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId, Map<String, String> rowVariables, Long mockApplicationId, Boolean mockEnabled, Long mockBusinessScenarioId) {
+        ExecutionContext context = buildExecutionContext(workspaceId, environmentId, variableSetId, mockApplicationId, mockEnabled, mockBusinessScenarioId);
         if (rowVariables != null) {
             rowVariables.forEach((key, value) -> {
                 if (key != null && !key.isBlank()) {
@@ -173,17 +189,24 @@ public class ApiExecutionEngineSupport {
 
     private ResolvedEnvironment resolveEnvironment(Long workspaceId, Long environmentId) {
         if (environmentId == null) {
-            return new ResolvedEnvironment(null, "", List.of(), emptyAuthConfig(), 10000, List.of(), null, null, null, null, null);
+            return new ResolvedEnvironment(null, "", List.of(), emptyAuthConfig(), 10000, List.of(), null, null, null, null, null, null, null, null, List.of());
         }
         EnvConfigEntity environment = requireEnvironment(environmentId);
         if (!environment.getWorkspaceId().equals(workspaceId)) {
             throw new BadRequestException("Environment must belong to the same workspace");
         }
         EnvironmentConfigPayload config = ApiAutomationJsonSupport.read(environment.getConfigJson(), EnvironmentConfigPayload.class,
-                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of(), null, null));
+                new EnvironmentConfigPayload(List.of(), emptyAuthConfig(), 10000, List.of(), null, null, null, List.of()));
+        List<EnvironmentServiceEndpoint> services = normalizeServices(config.services(), environment.getBaseUrl());
+        String defaultServiceKey = normalizeDefaultServiceKey(config.defaultServiceKey(), services);
+        String baseUrl = services.stream()
+                .filter(service -> service.key().equals(defaultServiceKey))
+                .findFirst()
+                .map(EnvironmentServiceEndpoint::baseUrl)
+                .orElse(environment.getBaseUrl());
         return new ResolvedEnvironment(
                 environment.getId(),
-                environment.getBaseUrl(),
+                baseUrl,
                 defaultList(config.headers()),
                 normalizeAuth(config.authConfig()),
                 config.timeoutMs() == null ? 10000 : config.timeoutMs(),
@@ -192,17 +215,21 @@ public class ApiExecutionEngineSupport {
                 config.mockApplicationId(),
                 null,
                 null,
-                null
+                null,
+                null,
+                null,
+                defaultServiceKey,
+                services
         );
     }
 
-    private ResolvedEnvironment resolveMockEnvironment(Long workspaceId, ResolvedEnvironment environment, Long requestMockApplicationId, Boolean mockEnabled) {
+    private ResolvedEnvironment resolveMockEnvironment(Long workspaceId, ResolvedEnvironment environment, Long requestMockApplicationId, Boolean mockEnabled, Long mockBusinessScenarioId) {
         if (Boolean.FALSE.equals(mockEnabled)) {
-            return copyEnvironmentWithMock(environment, null, null, null, null);
+            return copyEnvironmentWithMock(environment, null, null, null, null, null, null);
         }
         Long effectiveMockApplicationId = requestMockApplicationId != null ? requestMockApplicationId : environment.mockApplicationId();
         if (effectiveMockApplicationId == null) {
-            return copyEnvironmentWithMock(environment, null, null, null, null);
+            return copyEnvironmentWithMock(environment, null, null, null, null, null, null);
         }
         MockApplicationEntity application = mockApplicationMapper.selectById(effectiveMockApplicationId);
         if (application == null || !application.getWorkspaceId().equals(workspaceId)) {
@@ -211,11 +238,36 @@ public class ApiExecutionEngineSupport {
         if (application.getStatus() != null && application.getStatus() == 0) {
             throw new BadRequestException("Mock application is disabled");
         }
+        MockBusinessScenarioEntity businessScenario = resolveMockBusinessScenario(workspaceId, application.getId(), mockBusinessScenarioId);
         String baseUrl = mockPublicBaseUrl + "/" + application.getAppCode();
-        return copyEnvironmentWithMock(environment, application.getId(), application.getAppName(), application.getAppCode(), baseUrl);
+        return copyEnvironmentWithMock(
+                environment,
+                application.getId(),
+                application.getAppName(),
+                application.getAppCode(),
+                baseUrl,
+                businessScenario == null ? null : businessScenario.getId(),
+                businessScenario == null ? null : businessScenario.getScenarioName()
+        );
     }
 
-    private ResolvedEnvironment copyEnvironmentWithMock(ResolvedEnvironment environment, Long mockApplicationId, String mockApplicationName, String mockApplicationCode, String mockBaseUrl) {
+    private MockBusinessScenarioEntity resolveMockBusinessScenario(Long workspaceId, Long mockApplicationId, Long mockBusinessScenarioId) {
+        if (mockBusinessScenarioId == null) {
+            return null;
+        }
+        MockBusinessScenarioEntity businessScenario = mockBusinessScenarioMapper.selectById(mockBusinessScenarioId);
+        if (businessScenario == null
+                || !workspaceId.equals(businessScenario.getWorkspaceId())
+                || !mockApplicationId.equals(businessScenario.getAppId())) {
+            throw new BadRequestException("Mock business scenario must belong to the selected Mock application");
+        }
+        if (businessScenario.getStatus() != null && businessScenario.getStatus() == 0) {
+            throw new BadRequestException("Mock business scenario is disabled");
+        }
+        return businessScenario;
+    }
+
+    private ResolvedEnvironment copyEnvironmentWithMock(ResolvedEnvironment environment, Long mockApplicationId, String mockApplicationName, String mockApplicationCode, String mockBaseUrl, Long mockBusinessScenarioId, String mockBusinessScenarioName) {
         return new ResolvedEnvironment(
                 environment.environmentId(),
                 environment.baseUrl(),
@@ -227,8 +279,37 @@ public class ApiExecutionEngineSupport {
                 mockApplicationId,
                 mockApplicationName,
                 mockApplicationCode,
-                mockBaseUrl
+                mockBaseUrl,
+                mockBusinessScenarioId,
+                mockBusinessScenarioName,
+                environment.defaultServiceKey(),
+                environment.services()
         );
+    }
+
+    private List<EnvironmentServiceEndpoint> normalizeServices(List<EnvironmentServiceEndpoint> services, String fallbackBaseUrl) {
+        List<EnvironmentServiceEndpoint> normalized = defaultList(services).stream()
+                .filter(service -> service != null
+                        && service.key() != null && !service.key().isBlank()
+                        && service.baseUrl() != null && !service.baseUrl().isBlank())
+                .map(service -> new EnvironmentServiceEndpoint(
+                        service.key().trim(),
+                        service.name() == null || service.name().isBlank() ? service.key().trim() : service.name().trim(),
+                        service.baseUrl().trim()
+                ))
+                .toList();
+        if (!normalized.isEmpty()) {
+            return normalized;
+        }
+        return List.of(new EnvironmentServiceEndpoint("default", "默认服务", Optional.ofNullable(fallbackBaseUrl).orElse("").trim()));
+    }
+
+    private String normalizeDefaultServiceKey(String defaultServiceKey, List<EnvironmentServiceEndpoint> services) {
+        String normalized = Optional.ofNullable(defaultServiceKey).orElse("").trim();
+        if (!normalized.isBlank() && services.stream().anyMatch(service -> service.key().equals(normalized))) {
+            return normalized;
+        }
+        return services.isEmpty() ? "default" : services.getFirst().key();
     }
 
     private void putMockVariables(Map<String, String> variables, ResolvedEnvironment environment) {
@@ -238,6 +319,19 @@ public class ApiExecutionEngineSupport {
         variables.put("MOCK_BASE_URL", Optional.ofNullable(environment.mockBaseUrl()).orElse(""));
         variables.put("MOCK_APP_CODE", Optional.ofNullable(environment.mockApplicationCode()).orElse(""));
         variables.put("MOCK_APP_NAME", Optional.ofNullable(environment.mockApplicationName()).orElse(""));
+        if (environment.mockBusinessScenarioId() != null) {
+            variables.put("MOCK_BUSINESS_SCENARIO_ID", String.valueOf(environment.mockBusinessScenarioId()));
+            variables.put("MOCK_BUSINESS_SCENARIO_NAME", Optional.ofNullable(environment.mockBusinessScenarioName()).orElse(""));
+        }
+    }
+
+    private void putServiceVariables(Map<String, String> variables, ResolvedEnvironment environment) {
+        variables.put("BASE_URL", Optional.ofNullable(environment.baseUrl()).orElse(""));
+        variables.put("DEFAULT_SERVICE_URL", Optional.ofNullable(environment.baseUrl()).orElse(""));
+        variables.put("DEFAULT_SERVICE_KEY", Optional.ofNullable(environment.defaultServiceKey()).orElse(""));
+        for (EnvironmentServiceEndpoint service : defaultList(environment.services())) {
+            variables.put(service.key(), Optional.ofNullable(service.baseUrl()).orElse(""));
+        }
     }
 
     private Integer resolveLatestVariableSetVersionNo(Long variableSetId) {
@@ -256,29 +350,67 @@ public class ApiExecutionEngineSupport {
 
     private String rebuildContextSnapshot(String snapshotJson, ResolvedEnvironment environment, Map<String, String> variables) {
         RuntimeContextSnapshot snapshot = ApiAutomationJsonSupport.read(snapshotJson, RuntimeContextSnapshot.class,
-                new RuntimeContextSnapshot(null, null, null, Map.of()));
-        Long variableSetId = snapshot.variableSet() == null ? null : snapshot.variableSet().id();
-        String variableSetName = snapshot.variableSet() == null ? null : snapshot.variableSet().name();
-        Integer variableSetVersionNo = snapshot.variableSet() == null ? null : snapshot.variableSet().versionNo();
-        return buildContextSnapshot(environment, variableSetId, variableSetName, variableSetVersionNo, variables);
+                new RuntimeContextSnapshot(null, null, List.of(), null, Map.of()));
+        return buildContextSnapshot(environment, snapshot.variableSet(), defaultList(snapshot.variableSets()), variables);
     }
 
-    private String buildContextSnapshot(ResolvedEnvironment environment, Long variableSetId, String variableSetName, Integer variableSetVersionNo, Map<String, String> variables) {
+    private String buildContextSnapshot(ResolvedEnvironment environment, ParamSetEntity effectiveVariableSet, List<RuntimeVariableSetSnapshot> variableSets, Map<String, String> variables) {
+        RuntimeVariableSetSnapshot effectiveSnapshot = effectiveVariableSet == null
+                ? null
+                : new RuntimeVariableSetSnapshot(effectiveVariableSet.getId(), effectiveVariableSet.getParamName(), resolveLatestVariableSetVersionNo(effectiveVariableSet.getId()));
+        return buildContextSnapshot(environment, effectiveSnapshot, variableSets, variables);
+    }
+
+    private String buildContextSnapshot(ResolvedEnvironment environment, RuntimeVariableSetSnapshot effectiveVariableSet, List<RuntimeVariableSetSnapshot> variableSets, Map<String, String> variables) {
         return ApiAutomationJsonSupport.toJson(new RuntimeContextSnapshot(
                 environment.environmentId() == null ? null : new RuntimeEnvironmentSnapshot(
                         environment.environmentId(),
                         environment.baseUrl(),
-                        environment.timeoutMs()
+                        environment.timeoutMs(),
+                        environment.defaultServiceKey(),
+                        defaultList(environment.services())
                 ),
-                variableSetId == null ? null : new RuntimeVariableSetSnapshot(variableSetId, variableSetName, variableSetVersionNo),
+                effectiveVariableSet,
+                defaultList(variableSets),
                 environment.mockApplicationId() == null ? null : new RuntimeMockSnapshot(
                         environment.mockApplicationId(),
                         environment.mockApplicationName(),
                         environment.mockApplicationCode(),
-                        environment.mockBaseUrl()
+                        environment.mockBaseUrl(),
+                        environment.mockBusinessScenarioId(),
+                        environment.mockBusinessScenarioName()
                 ),
                 maskRuntimeVariables(variables)
         ), "Failed to serialize API execution context snapshot");
+    }
+
+    private List<ParamSetEntity> listGlobalVariableSets(Long workspaceId) {
+        if (workspaceId == null) {
+            return List.of();
+        }
+        return paramSetMapper.selectList(new LambdaQueryWrapper<ParamSetEntity>()
+                .eq(ParamSetEntity::getWorkspaceId, workspaceId)
+                .eq(ParamSetEntity::getParamType, GLOBAL_VARIABLE_SET_TYPE)
+                .eq(ParamSetEntity::getStatus, 1)
+                .orderByAsc(ParamSetEntity::getId));
+    }
+
+    private void applyVariableSets(Map<String, String> variables, List<ParamSetEntity> variableSets, List<RuntimeVariableSetSnapshot> snapshots) {
+        for (ParamSetEntity variableSet : defaultList(variableSets)) {
+            applyVariableSet(variables, variableSet, snapshots);
+        }
+    }
+
+    private void applyVariableSet(Map<String, String> variables, ParamSetEntity variableSet, List<RuntimeVariableSetSnapshot> snapshots) {
+        if (variableSet == null || variableSet.getStatus() != null && variableSet.getStatus() == 0) {
+            return;
+        }
+        for (ApiVariableItem variable : readVariables(variableSet.getContentJson())) {
+            if (variable.name() != null) {
+                variables.put(variable.name(), variable.value() == null ? "" : variable.value());
+            }
+        }
+        snapshots.add(new RuntimeVariableSetSnapshot(variableSet.getId(), variableSet.getParamName(), resolveLatestVariableSetVersionNo(variableSet.getId())));
     }
 
     private Map<String, String> maskRuntimeVariables(Map<String, String> variables) {
@@ -817,7 +949,7 @@ public class ApiExecutionEngineSupport {
 
     private EnvConfigEntity requireEnvironment(Long id) {
         EnvConfigEntity entity = envConfigMapper.selectById(id);
-        if (entity == null || !API_ENV_TYPE.equals(entity.getEnvType())) {
+        if (entity == null || !ApiEnvironmentTypeSupport.isApiUsable(entity.getEnvType())) {
             throw new NotFoundException("API environment not found");
         }
         return entity;
@@ -825,10 +957,22 @@ public class ApiExecutionEngineSupport {
 
     private ParamSetEntity requireVariableSet(Long id) {
         ParamSetEntity entity = paramSetMapper.selectById(id);
-        if (entity == null || !API_VARIABLE_SET_TYPE.equals(entity.getParamType())) {
+        if (entity == null || !isApiRuntimeVariableSet(entity.getParamType())) {
             throw new NotFoundException("API variable set not found");
         }
         return entity;
+    }
+
+    private boolean isApiRuntimeVariableSet(String paramType) {
+        return API_VARIABLE_SET_TYPE.equals(paramType)
+                || BUSINESS_VARIABLE_SET_TYPE.equals(paramType)
+                || PAYMENT_CHANNEL_VARIABLE_SET_TYPE.equals(paramType);
+    }
+
+    private void ensureVariableSetInWorkspace(ParamSetEntity variableSet, Long workspaceId) {
+        if (!variableSet.getWorkspaceId().equals(workspaceId)) {
+            throw new BadRequestException("Variable set must belong to the same workspace");
+        }
     }
 
     private void ensureDefinitionInWorkspace(ApiDefinitionEntity definition, Long workspaceId, String message) {

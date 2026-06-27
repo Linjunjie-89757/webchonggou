@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Connection, Delete, Edit, Plus, RefreshRight, Search, Switch } from '@element-plus/icons-vue'
+import { Connection, MoreFilled, Plus, RefreshRight, Search, Switch } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import {
@@ -9,6 +9,11 @@ import {
   configApi,
   configEnvTypeOptions,
   configStatusOptions,
+  getEnvBuiltInVariableHints,
+  getEnvDefaultVariableSetId,
+  getEnvMockApplicationId,
+  getEnvServiceSummary,
+  getEnvTimeoutMs,
   getEnvVisualMeta,
   isProductionEnv,
   type ConfigStat,
@@ -16,6 +21,8 @@ import {
   type ConfigReferenceSummary,
   type CreateEnvPayload,
   type EnvConfigItem,
+  type MockApplicationItem,
+  type ParamSetItem,
 } from '@/entities/config'
 import { ConfigEnvDialog, type ConfigEnvDialogMode } from '@/features/config-env-create-edit'
 import { deleteConfigEnv } from '@/features/config-env-delete'
@@ -37,6 +44,8 @@ const props = withDefaults(
 )
 
 const envs = ref<EnvConfigItem[]>([])
+const variableSets = ref<ParamSetItem[]>([])
+const mockApplications = ref<MockApplicationItem[]>([])
 const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
@@ -77,8 +86,14 @@ async function loadEnvs() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const page = await configApi.getSettingsEnvs(props.workspaceCode, envQuery.value)
+    const [page, variableSetPage, mockApplicationPage] = await Promise.all([
+      configApi.getSettingsEnvs(props.workspaceCode, envQuery.value),
+      configApi.getSettingsParams(props.workspaceCode, { status: 1 }),
+      configApi.getMockApplications(props.workspaceCode, { status: 1 }),
+    ])
     envs.value = Array.isArray(page.items) ? page.items : []
+    variableSets.value = Array.isArray(variableSetPage.items) ? variableSetPage.items : []
+    mockApplications.value = Array.isArray(mockApplicationPage.items) ? mockApplicationPage.items : []
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
   } finally {
@@ -134,7 +149,13 @@ async function removeEnv(env: EnvConfigItem) {
     await loadEnvs()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error(getRequestErrorMessage(error))
+      const message = getRequestErrorMessage(error)
+      if (message.includes('引用')) {
+        ElMessage.warning('该环境已被引用，已为你打开引用详情')
+        await openReferenceDrawer(env)
+      } else {
+        ElMessage.error(message)
+      }
     }
   } finally {
     deletingEnvId.value = null
@@ -169,6 +190,25 @@ async function openReferenceDrawer(env: EnvConfigItem) {
 
 function isEnvOperating(env: EnvConfigItem) {
   return deletingEnvId.value === env.id || togglingEnvId.value === env.id
+}
+
+function findEnvDefaultVariableSet(env: EnvConfigItem) {
+  const id = getEnvDefaultVariableSetId(env)
+  return id == null ? null : variableSets.value.find(item => item.id === id) || null
+}
+
+function findEnvMockApplication(env: EnvConfigItem) {
+  const id = getEnvMockApplicationId(env)
+  return id == null ? null : mockApplications.value.find(item => item.id === id) || null
+}
+
+function formatEnvTimeout(env: EnvConfigItem) {
+  const timeoutMs = getEnvTimeoutMs(env)
+  return timeoutMs == null ? '-' : `${timeoutMs} ms`
+}
+
+function formatEnvBuiltInVariables(env: EnvConfigItem) {
+  return getEnvBuiltInVariableHints(env).join('、')
 }
 
 onMounted(() => {
@@ -224,7 +264,7 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
         v-model="filterEnvType"
         class="config-filter-control"
         clearable
-        placeholder="环境类型"
+        placeholder="环境分组"
       >
         <el-option
           v-for="item in configEnvTypeOptions"
@@ -266,69 +306,100 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
       </template>
     </AppEmptyState>
 
-    <div v-else-if="filteredEnvs.length" class="config-env-grid">
-      <article v-for="env in filteredEnvs" :key="env.id" class="config-env-card">
-        <div class="config-env-card__main">
-          <div class="config-env-card__title">
-            <div class="config-env-card__name-row">
-              <h3>{{ env.envName }}</h3>
+    <div v-else-if="filteredEnvs.length" class="config-env-table-card">
+      <table>
+        <colgroup>
+          <col class="config-env-table-card__name-col" />
+          <col class="config-env-table-card__type-col" />
+          <col class="config-env-table-card__service-col" />
+          <col class="config-env-table-card__variable-col" />
+          <col class="config-env-table-card__mock-col" />
+          <col class="config-env-table-card__policy-col" />
+          <col class="config-env-table-card__status-col" />
+          <col class="config-env-table-card__action-col" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>环境名称</th>
+            <th>环境类型</th>
+            <th>默认服务</th>
+            <th>默认变量集</th>
+            <th>默认 Mock 应用</th>
+            <th>超时(ms)</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="env in filteredEnvs" :key="env.id">
+            <td>
+              <div class="config-table-title">{{ env.envName }}</div>
+              <span class="config-table-subtitle">{{ env.workspaceName || env.workspaceCode }}</span>
+              <span class="config-env-description">{{ getEnvVisualMeta(env).description }}</span>
+            </td>
+            <td>
+              <ConfigTypeBadge
+                :label="getEnvVisualMeta(env).typeLabel"
+                :tone="getEnvVisualMeta(env).tone"
+              />
+            </td>
+            <td>
+              <div class="config-env-service-cell">
+                <span>{{ getEnvServiceSummary(env).defaultLabel }}</span>
+                <code>{{ getEnvServiceSummary(env).defaultBaseUrl || env.baseUrl || '-' }}</code>
+              </div>
+            </td>
+            <td>
+              <span class="config-table-muted">{{ findEnvDefaultVariableSet(env)?.paramName || '未绑定' }}</span>
+            </td>
+            <td>
+              <span class="config-table-muted">{{ findEnvMockApplication(env)?.appName || '未绑定' }}</span>
+            </td>
+            <td>
+              <span class="config-table-muted" :title="formatEnvBuiltInVariables(env)">{{ formatEnvTimeout(env).replace('ms', '') }}</span>
+            </td>
+            <td>
               <ConfigTypeBadge
                 :label="env.status === 1 ? '启用中' : '已停用'"
                 :tone="env.status === 1 ? 'success' : 'default'"
               />
-            </div>
-            <p>{{ getEnvVisualMeta(env).description }}</p>
-          </div>
-          <div class="config-env-card__actions">
-            <button
-              type="button"
-              class="config-env-card__icon-button"
-              :aria-label="env.status === 1 ? '禁用环境' : '启用环境'"
-              :disabled="isEnvOperating(env)"
-              @click="switchEnvStatus(env)"
-            >
-              <el-icon><Switch /></el-icon>
-            </button>
-            <button
-              type="button"
-              class="config-env-card__icon-button"
-              aria-label="查看引用"
-              :disabled="isEnvOperating(env)"
-              @click="openReferenceDrawer(env)"
-            >
-              <el-icon><Connection /></el-icon>
-            </button>
-            <button
-              type="button"
-              class="config-env-card__icon-button"
-              aria-label="编辑环境"
-              :disabled="isEnvOperating(env)"
-              @click="openEditDialog(env)"
-            >
-              <el-icon><Edit /></el-icon>
-            </button>
-            <button
-              type="button"
-              class="config-env-card__icon-button is-danger"
-              aria-label="删除环境"
-              :disabled="isEnvOperating(env)"
-              @click="removeEnv(env)"
-            >
-              <el-icon><Delete /></el-icon>
-            </button>
-          </div>
-        </div>
-        <div class="config-env-card__body">
-          <ConfigTypeBadge
-            :label="getEnvVisualMeta(env).typeLabel"
-            :tone="getEnvVisualMeta(env).tone"
-          />
-          <div class="config-code-box">{{ env.baseUrl }}</div>
-          <div class="config-card-meta">
-            所属空间：{{ env.workspaceName || env.workspaceCode }}
-          </div>
-        </div>
-      </article>
+            </td>
+            <td>
+              <button
+                type="button"
+                class="config-text-action"
+                :disabled="isEnvOperating(env)"
+                @click="openEditDialog(env)"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                class="config-text-action"
+                :disabled="isEnvOperating(env)"
+                @click="openReferenceDrawer(env)"
+              >
+                <el-icon><Connection /></el-icon>
+                引用
+              </button>
+              <el-dropdown trigger="click" @command="(command: string) => command === 'toggle' ? switchEnvStatus(env) : removeEnv(env)">
+                <button type="button" class="config-more-action" :disabled="isEnvOperating(env)">
+                  <el-icon><MoreFilled /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="toggle">
+                      <el-icon><Switch /></el-icon>
+                      {{ env.status === 1 ? '停用' : '启用' }}
+                    </el-dropdown-item>
+                    <el-dropdown-item command="delete" class="is-danger">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <AppEmptyState
@@ -427,122 +498,183 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
   width: min(320px, 100%);
 }
 
-.config-env-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--app-space-4);
-}
-
-.config-env-card {
-  min-height: 188px;
-  padding: var(--app-space-5);
+.config-env-table-card {
+  overflow: hidden;
+  min-height: 120px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
-  transition: box-shadow 160ms ease;
 }
 
-.config-env-card:hover {
-  box-shadow: var(--app-shadow-card-hover);
+.config-env-table-card table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
 }
 
-.config-env-card__main {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--app-space-3);
-  margin-bottom: 18px;
+.config-env-table-card__name-col {
+  width: 18%;
 }
 
-.config-env-card__title {
-  min-width: 0;
+.config-env-table-card__type-col {
+  width: 112px;
 }
 
-.config-env-card__name-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--app-space-2);
-  margin-bottom: 3px;
+.config-env-table-card__service-col {
+  width: 22%;
 }
 
-.config-env-card h3 {
+.config-env-table-card__variable-col {
+  width: 15%;
+}
+
+.config-env-table-card__mock-col {
+  width: 15%;
+}
+
+.config-env-table-card__policy-col {
+  width: 96px;
+}
+
+.config-env-table-card__status-col {
+  width: 90px;
+}
+
+.config-env-table-card__action-col {
+  width: 150px;
+}
+
+.config-env-table-card thead {
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-bg-page);
+}
+
+.config-env-table-card th {
+  padding: var(--app-space-3) var(--app-space-5);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+  text-align: left;
+}
+
+.config-env-table-card td {
+  padding: var(--app-space-4) var(--app-space-5);
+  border-bottom: 1px solid var(--app-border-soft);
+  color: var(--app-text-main);
+  vertical-align: middle;
+}
+
+.config-env-table-card tr:last-child td {
+  border-bottom: 0;
+}
+
+.config-table-title {
   overflow: hidden;
-  margin: 0;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-md);
-  line-height: var(--app-line-height-md);
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.config-env-card p {
-  margin: 0;
+.config-table-subtitle,
+.config-env-description {
+  display: block;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-env-service-cell,
+.config-env-policy-cell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.config-env-service-cell span,
+.config-env-policy-cell span,
+.config-env-service-cell em {
+  overflow: hidden;
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
-  line-height: var(--app-line-height-xs);
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.config-env-card__actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: var(--app-space-1);
-}
-
-.config-env-card__icon-button {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--app-radius-md);
-  background: transparent;
-  color: var(--app-text-subtle);
-  cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease, opacity 160ms ease;
-}
-
-.config-env-card__icon-button:hover {
-  background: var(--app-border-soft);
+.config-env-service-cell span {
   color: var(--app-text-main);
+  font-weight: 600;
 }
 
-.config-env-card__icon-button.is-danger:hover {
-  background: var(--app-danger-soft);
-  color: var(--app-danger);
-}
-
-.config-env-card__icon-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
-}
-
-.config-env-card__body {
-  display: grid;
-  gap: var(--app-space-3);
-}
-
-.config-code-box {
+.config-env-service-cell code {
+  display: inline-block;
+  max-width: 100%;
   overflow: hidden;
-  padding: var(--app-space-2) var(--app-space-3);
-  border-radius: var(--app-radius-md);
+  padding: 2px 6px;
+  border-radius: var(--app-radius-sm);
   background: var(--app-bg-page);
-  color: var(--app-text-main);
+  color: var(--app-text-secondary);
   font-family: Consolas, Monaco, monospace;
   font-size: var(--app-font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.config-card-meta {
-  color: var(--app-text-subtle);
+.config-text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: var(--app-space-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-primary);
+  cursor: pointer;
   font-size: var(--app-font-size-xs);
-  line-height: var(--app-line-height-xs);
+}
+
+.config-text-action:hover {
+  color: var(--app-primary-hover);
+}
+
+.config-text-action.is-danger {
+  color: var(--app-danger);
+}
+
+.config-text-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.config-more-action {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.config-more-action:hover {
+  background: var(--app-bg-page);
+  color: var(--app-text-main);
+}
+
+.config-more-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 @media (max-width: 900px) {
-  .config-panel__stats--three,
-  .config-env-grid {
+  .config-panel__stats--three {
     grid-template-columns: 1fr;
   }
 
@@ -558,6 +690,14 @@ watch([filterKeyword, filterEnvType, filterStatus], () => {
   .config-filter-control,
   .config-filter-control--search {
     width: 100%;
+  }
+
+  .config-env-table-card {
+    overflow-x: auto;
+  }
+
+  .config-env-table-card table {
+    min-width: 1040px;
   }
 }
 </style>

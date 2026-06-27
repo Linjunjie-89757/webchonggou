@@ -43,6 +43,12 @@ const runnerTaskPoller = createRunnerTaskPoller({
   webElementValidateExecutor: async ({ locators }) => validateCurrentPageLocators({
     locators,
   }),
+  webCaseRunExecutor: async ({ task, caseSnapshot, steps, onStepResult }) => executeCurrentPageCase({
+    task,
+    caseSnapshot,
+    steps,
+    onStepResult,
+  }),
 });
 
 const server = createServer(async (request, response) => {
@@ -419,6 +425,294 @@ async function validateCurrentPageLocators(payload) {
     page: await getPageInfo(page),
     results,
   };
+}
+
+async function executeCurrentPageCase(payload) {
+  const task = payload.task || {};
+  const caseSnapshot = payload.caseSnapshot || {};
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  const stepResults = [];
+  let stoppedByFailure = false;
+
+  for (const step of steps) {
+    if (stoppedByFailure) {
+      const skipped = buildCaseStepResult(step, {
+        status: 'SKIPPED',
+        durationMs: 0,
+        errorMessage: '前置步骤失败，当前步骤未执行',
+      });
+      stepResults.push(skipped);
+      await payload.onStepResult?.(skipped);
+      continue;
+    }
+
+    const startedAt = Date.now();
+    let result;
+    try {
+      await executeCurrentPageCaseStep({
+        task,
+        caseSnapshot,
+        step,
+      });
+      result = buildCaseStepResult(step, {
+        status: 'SUCCESS',
+        durationMs: Date.now() - startedAt,
+        extra: {
+          pageUrl: getActivePageUrl(),
+        },
+      });
+    } catch (error) {
+      const message = humanizeRunnerError(error);
+      const screenshotBase64 = await captureFailureScreenshot();
+      result = buildCaseStepResult(step, {
+        status: 'FAILED',
+        durationMs: Date.now() - startedAt,
+        errorMessage: message,
+        screenshotRef: screenshotBase64 ? `inline:base64:${String(resultStepId(step))}` : null,
+        extra: {
+          pageUrl: getActivePageUrl(),
+          screenshotBase64,
+        },
+      });
+      if (step.continueOnFailure !== true) {
+        stoppedByFailure = true;
+      }
+    }
+
+    stepResults.push(result);
+    await payload.onStepResult?.(result);
+  }
+
+  return {
+    success: stepResults.every(item => item.status !== 'FAILED'),
+    page: hasUsablePage() ? await getPageInfo(page) : null,
+    stepResults,
+    errorMessage: stepResults.find(item => item.status === 'FAILED')?.errorMessage || null,
+  };
+}
+
+async function executeCurrentPageCaseStep(input) {
+  const step = input.step || {};
+  const stepType = optionalString(step.stepType || step.type).toUpperCase();
+  const timeoutMs = normalizePositiveNumber(step.timeoutMs, input.caseSnapshot.defaultTimeoutMs || 10_000);
+
+  switch (stepType) {
+    case 'OPEN': {
+      const url = resolveCaseOpenUrl(step, input.caseSnapshot);
+      if (!url) {
+        throw new Error('OPEN step requires inputValue or case baseUrl');
+      }
+      await openCollectPage({
+        url,
+        workspaceId: input.task.workspaceCode || 'default-workspace',
+        environmentId: input.caseSnapshot.environmentId || 'default-environment',
+        headless: input.caseSnapshot.headless === true,
+      });
+      return;
+    }
+    case 'CLICK': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.click({ timeout: timeoutMs });
+      return;
+    }
+    case 'DOUBLE_CLICK': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.dblclick({ timeout: timeoutMs });
+      return;
+    }
+    case 'RIGHT_CLICK': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.click({ button: 'right', timeout: timeoutMs });
+      return;
+    }
+    case 'HOVER': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.hover({ timeout: timeoutMs });
+      return;
+    }
+    case 'FILL': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.fill(String(step.inputValue ?? ''), { timeout: timeoutMs });
+      return;
+    }
+    case 'CLEAR': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      await locator.fill('', { timeout: timeoutMs });
+      return;
+    }
+    case 'PRESS_KEY': {
+      await ensureCasePage();
+      const key = optionalString(step.inputValue || step.key);
+      if (!key) {
+        throw new Error('PRESS_KEY step requires inputValue');
+      }
+      if (optionalString(step.locatorValue)) {
+        await (await prepareLocatorAction(step, timeoutMs)).press(key, { timeout: timeoutMs });
+      } else {
+        await page.keyboard.press(key);
+      }
+      return;
+    }
+    case 'SELECT': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const value = optionalString(step.inputValue || step.value);
+      if (!value) {
+        throw new Error('SELECT step requires inputValue');
+      }
+      await locator.selectOption(value, { timeout: timeoutMs });
+      return;
+    }
+    case 'WAIT_FOR': {
+      if (optionalString(step.locatorValue)) {
+        const locator = resolveCaseStepLocator(step, timeoutMs);
+        await locator.waitFor({ state: 'visible', timeout: timeoutMs }).catch(error => {
+          throw new Error(`等待失败：元素在 ${timeoutMs} ms 内未显示（${formatLocatorForMessage(step)}），原始错误：${error instanceof Error ? error.message : String(error)}`);
+        });
+        return;
+      }
+      await ensureCasePage();
+      await page.waitForTimeout(Math.min(timeoutMs, 60_000));
+      return;
+    }
+    case 'ASSERT_VISIBLE': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const visible = await locator.isVisible({ timeout: timeoutMs }).catch(() => false);
+      if (!visible) {
+        throw new Error(`断言失败：元素未显示（${formatLocatorForMessage(step)}）`);
+      }
+      return;
+    }
+    case 'ASSERT_TEXT': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const expectedText = optionalString(step.inputValue || step.expectedText || step.text);
+      if (!expectedText) {
+        throw new Error('ASSERT_TEXT step requires inputValue');
+      }
+      const actualText = optionalString(await locator.innerText({ timeout: timeoutMs }).catch(() => ''));
+      if (!actualText.includes(expectedText)) {
+        throw new Error(`断言失败：文本不匹配。期望包含“${expectedText}”，实际为“${actualText || '空文本'}”`);
+      }
+      return;
+    }
+    case 'ASSERT_URL': {
+      await ensureCasePage();
+      const expectedUrl = optionalString(step.inputValue || step.expectedUrl || step.url);
+      if (!expectedUrl) {
+        throw new Error('ASSERT_URL step requires inputValue');
+      }
+      const actualUrl = page.url();
+      if (!actualUrl.includes(expectedUrl)) {
+        throw new Error(`断言失败：URL 不匹配。期望包含“${expectedUrl}”，实际为“${actualUrl}”`);
+      }
+      return;
+    }
+    case 'ASSERT_TITLE': {
+      await ensureCasePage();
+      const expectedTitle = optionalString(step.inputValue || step.expectedTitle || step.title);
+      if (!expectedTitle) {
+        throw new Error('ASSERT_TITLE step requires inputValue');
+      }
+      const actualTitle = await page.title();
+      if (!actualTitle.includes(expectedTitle)) {
+        throw new Error(`断言失败：标题不匹配。期望包含“${expectedTitle}”，实际为“${actualTitle || '空标题'}”`);
+      }
+      return;
+    }
+    case 'SCREENSHOT':
+      await ensureCasePage();
+      await page.screenshot({ fullPage: false, type: 'png' });
+      return;
+    default:
+      throw new Error(`Unsupported Web UI case step type: ${stepType || 'UNKNOWN'}`);
+  }
+}
+
+async function ensureCasePage() {
+  ensurePage();
+  await ensureSessionFresh();
+}
+
+function resolveCaseOpenUrl(step, caseSnapshot) {
+  const rawUrl = optionalString(step.inputValue || step.url || caseSnapshot.baseUrl || caseSnapshot.pageUrl);
+  if (!rawUrl) {
+    return '';
+  }
+  if (isAbsoluteBrowserUrl(rawUrl)) {
+    return rawUrl;
+  }
+  const baseUrl = optionalString(caseSnapshot.baseUrl || caseSnapshot.pageUrl);
+  if (!baseUrl || !isAbsoluteBrowserUrl(baseUrl)) {
+    return rawUrl;
+  }
+  try {
+    return new URL(rawUrl, baseUrl).toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function isAbsoluteBrowserUrl(value) {
+  return /^(https?:|file:|data:|about:)/i.test(optionalString(value));
+}
+
+function resolveCaseStepLocator(step, timeoutMs) {
+  ensurePage();
+  void timeoutMs;
+  const locatorType = optionalString(step.locatorType).toUpperCase();
+  const locatorValue = optionalString(step.locatorValue);
+  if (!locatorType || !locatorValue) {
+    throw new Error('Step locatorType and locatorValue are required');
+  }
+  const locator = resolveLocator(page, locatorType, locatorValue);
+  return locator.first();
+}
+
+async function prepareLocatorAction(step, timeoutMs) {
+  const locator = resolveCaseStepLocator(step, timeoutMs);
+  await locator.waitFor({ state: 'visible', timeout: timeoutMs }).catch(error => {
+    throw new Error(`元素准备失败：元素在 ${timeoutMs} ms 内未显示（${formatLocatorForMessage(step)}），原始错误：${error instanceof Error ? error.message : String(error)}`);
+  });
+  await locator.scrollIntoViewIfNeeded({ timeout: Math.min(timeoutMs, 5000) }).catch(() => {});
+  return locator;
+}
+
+function formatLocatorForMessage(step) {
+  const locatorType = optionalString(step.locatorType).toUpperCase() || 'CSS';
+  const locatorValue = optionalString(step.locatorValue) || '-';
+  return `${locatorType}: ${locatorValue}`;
+}
+
+function buildCaseStepResult(step, result) {
+  return {
+    stepId: String(resultStepId(step)),
+    stepName: optionalString(step.stepName || step.name) || String(resultStepId(step)),
+    stepType: optionalString(step.stepType || step.type).toUpperCase(),
+    status: result.status,
+    durationMs: result.durationMs,
+    errorMessage: result.errorMessage || null,
+    screenshotRef: result.screenshotRef || null,
+    extra: {
+      sortOrder: step.sortOrder || null,
+      locatorType: step.locatorType || null,
+      locatorValue: step.locatorValue || null,
+      ...(result.extra || {}),
+    },
+  };
+}
+
+function resultStepId(step) {
+  return step.stepId || step.id || step.sortOrder || randomUUID();
+}
+
+async function captureFailureScreenshot() {
+  if (!hasUsablePage()) {
+    return null;
+  }
+  const screenshot = await page.screenshot({
+    fullPage: false,
+    type: 'png',
+  }).catch(() => null);
+  return screenshot ? screenshot.toString('base64') : null;
 }
 
 function resolveLocator(targetPage, locatorType, locatorValue) {
@@ -974,6 +1268,24 @@ function sanitizePlatformPoller(poller) {
 
 function isTerminalCollectStatus(status) {
   return ['COMPLETED', 'FAILED', 'DEGRADED', 'CANCELED'].includes(optionalString(status).toUpperCase());
+}
+
+function humanizeRunnerError(error) {
+  const rawMessage = error instanceof Error ? error.message : String(error || '');
+  const message = rawMessage.trim() || '本地 Runner 执行失败';
+  if (/page\.goto/i.test(message) && /Protocol error/i.test(message)) {
+    return `目标页面打开失败：浏览器导航协议异常。请检查 URL 是否可访问、协议是否正确，原始错误：${message}`;
+  }
+  if (/net::ERR_NAME_NOT_RESOLVED/i.test(message)) {
+    return `目标页面打开失败：域名无法解析。请检查本机网络、DNS 或目标环境配置，原始错误：${message}`;
+  }
+  if (/net::ERR_CONNECTION_REFUSED/i.test(message)) {
+    return `目标页面打开失败：连接被拒绝。请确认目标服务已启动且本机可访问，原始错误：${message}`;
+  }
+  if (/Timeout/i.test(message)) {
+    return `本地执行超时：页面加载或步骤等待超过限制。请检查页面响应速度、登录态和定位器，原始错误：${message}`;
+  }
+  return message;
 }
 
 async function readJsonFile(filePath) {

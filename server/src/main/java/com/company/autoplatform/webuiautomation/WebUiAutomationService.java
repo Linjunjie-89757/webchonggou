@@ -316,6 +316,10 @@ public class WebUiAutomationService {
         return executionDomainService.runCase(id, workspaceCode, request);
     }
 
+    public WebUiLocalRunnerRunResponse createLocalRunnerRun(Long id, String workspaceCode, WebUiRunRequest request) {
+        return executionDomainService.createLocalRunnerRun(id, workspaceCode, request);
+    }
+
     public WebUiBatchRunResponse runBatch(String workspaceCode, WebUiBatchRunRequest request) {
         return executionDomainService.runBatch(workspaceCode, request);
     }

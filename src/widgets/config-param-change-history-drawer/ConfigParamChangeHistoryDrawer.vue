@@ -51,7 +51,7 @@ function prettyJson(value: string | null) {
     title="变量集变更记录"
     size="820px"
   >
-    <div v-loading="loading" class="config-param-change-history-drawer__body">
+    <div v-loading="loading" class="config-param-change-history-drawer__body app-soft-scrollbar">
       <el-table
         v-if="rows.length"
         :data="rows"

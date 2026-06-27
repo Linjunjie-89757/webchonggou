@@ -10,6 +10,7 @@ import com.company.autoplatform.settings.ParamSetEntity;
 import com.company.autoplatform.settings.ParamSetMapper;
 import com.company.autoplatform.workspace.WorkspaceEntity;
 import com.company.autoplatform.workspace.WorkspaceService;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,7 @@ public class ApiConfigDomainService {
 
     private static final String API_ENV_TYPE = "API";
     private static final String API_VARIABLE_SET_TYPE = "API_VARIABLE_SET";
+    private static final String PAYMENT_CHANNEL_VARIABLE_SET_TYPE = "PAYMENT_CHANNEL";
 
     private final EnvConfigMapper envConfigMapper;
     private final ParamSetMapper paramSetMapper;
@@ -44,7 +46,7 @@ public class ApiConfigDomainService {
 
     public PageResponse<ApiEnvironmentItem> listEnvironments(String workspaceCode) {
         LambdaQueryWrapper<EnvConfigEntity> query = new LambdaQueryWrapper<>();
-        query.eq(EnvConfigEntity::getEnvType, API_ENV_TYPE);
+        query.in(EnvConfigEntity::getEnvType, ApiEnvironmentTypeSupport.apiUsableEnvTypes());
         workspaceScopeSupport.applyWorkspaceScope(query, EnvConfigEntity::getWorkspaceId, workspaceCode);
         List<ApiEnvironmentItem> items = envConfigMapper.selectList(query.orderByDesc(EnvConfigEntity::getUpdatedAt))
                 .stream()
@@ -83,7 +85,7 @@ public class ApiConfigDomainService {
 
     public PageResponse<ApiVariableSetItem> listVariableSets(String workspaceCode) {
         LambdaQueryWrapper<ParamSetEntity> query = new LambdaQueryWrapper<>();
-        query.eq(ParamSetEntity::getParamType, API_VARIABLE_SET_TYPE);
+        query.in(ParamSetEntity::getParamType, API_VARIABLE_SET_TYPE, PAYMENT_CHANNEL_VARIABLE_SET_TYPE);
         workspaceScopeSupport.applyWorkspaceScope(query, ParamSetEntity::getWorkspaceId, workspaceCode);
         List<ApiVariableSetItem> items = paramSetMapper.selectList(query.orderByDesc(ParamSetEntity::getUpdatedAt))
                 .stream()
@@ -179,7 +181,7 @@ public class ApiConfigDomainService {
 
     private EnvConfigEntity requireEnvironment(Long id) {
         EnvConfigEntity entity = envConfigMapper.selectById(id);
-        if (entity == null || !API_ENV_TYPE.equals(entity.getEnvType())) {
+        if (entity == null || !ApiEnvironmentTypeSupport.isApiUsable(entity.getEnvType())) {
             throw new NotFoundException("API environment not found");
         }
         return entity;
@@ -187,10 +189,15 @@ public class ApiConfigDomainService {
 
     private ParamSetEntity requireVariableSet(Long id) {
         ParamSetEntity entity = paramSetMapper.selectById(id);
-        if (entity == null || !API_VARIABLE_SET_TYPE.equals(entity.getParamType())) {
+        if (entity == null || !isApiRuntimeVariableSet(entity.getParamType())) {
             throw new NotFoundException("API variable set not found");
         }
         return entity;
+    }
+
+    private boolean isApiRuntimeVariableSet(String paramType) {
+        return API_VARIABLE_SET_TYPE.equals(paramType)
+                || PAYMENT_CHANNEL_VARIABLE_SET_TYPE.equals(paramType);
     }
 
     private List<ApiVariableItem> readVariables(String json) {
@@ -238,6 +245,7 @@ public class ApiConfigDomainService {
         return values == null ? List.of() : values;
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     private record EnvironmentConfigPayload(
             List<ApiKeyValueInput> headers,
             ApiAuthConfigInput authConfig,

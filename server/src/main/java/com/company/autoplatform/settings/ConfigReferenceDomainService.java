@@ -126,11 +126,11 @@ public class ConfigReferenceDomainService {
         int total = 0;
         total += collectApiScenarios(ApiScenarioEntity::getDefaultEnvId, id, workspaceId, "API 场景", "默认环境", items);
         total += collectApiSuites(ApiExecutionSuiteEntity::getEnvironmentId, id, workspaceId, "执行套件", "运行环境", items);
-        total += collectApiCaseRuns(ApiDefinitionCaseRunHistoryEntity::getEnvironmentId, id, workspaceId, "接口用例运行历史", "运行环境", items);
+        total += collectApiCaseRuns(ApiDefinitionCaseRunHistoryEntity::getEnvironmentId, id, workspaceId, "接口调试/用例运行历史", "运行环境", items);
         total += collectApiScenarioRuns(ApiScenarioRunHistoryEntity::getEnvironmentId, id, workspaceId, "场景运行历史", "运行环境", items);
         total += collectApiSuiteRuns(ApiExecutionSuiteRunHistoryEntity::getEnvironmentId, id, workspaceId, "套件运行历史", "运行环境", items);
-        total += collectWebUiRuns(id, workspaceId, "Web UI 运行历史", "运行环境", items);
-        total += collectWebUiBatches(id, workspaceId, "Web UI 批次运行", "运行环境", items);
+        total += collectWebUiRuns(id, workspaceId, "Web UI 单次运行历史", "运行环境", items);
+        total += collectWebUiBatches(id, workspaceId, "Web UI 批次运行历史", "运行环境", items);
         return total;
     }
 

@@ -220,6 +220,23 @@ class DbConnectionServiceTests extends IntegrationTestSupport {
     }
 
     @Test
+    void envCreateDefaultsBlankTypeToTestGroup() {
+        String unique = "settings-env-default-type-" + System.nanoTime();
+
+        EnvConfigItem env = settingsService.createEnv(WORKSPACE_CODE, new CreateEnvConfigRequest(
+                null,
+                " ",
+                unique + "-env",
+                "https://" + unique + ".example.com",
+                "{\"description\":\"default group\"}"
+        ));
+
+        assertThat(env.envType()).isEqualTo("TEST");
+
+        settingsService.deleteEnv(env.id(), WORKSPACE_CODE);
+    }
+
+    @Test
     void paramSetChangesAreRecordedForCreateUpdateAndStatus() {
         String unique = "settings-param-history-" + System.nanoTime();
 

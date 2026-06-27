@@ -506,6 +506,8 @@ function normalizeEnvironment(item: ApiAutomationEnvironmentItem): ApiAutomation
     workspaceName: item.workspaceName || null,
     name: item.name,
     baseUrl: item.baseUrl || null,
+    defaultVariableSetId: item.defaultVariableSetId ?? null,
+    mockApplicationId: item.mockApplicationId ?? null,
     status: item.status ?? null,
   }
 }
@@ -973,12 +975,16 @@ export const apiAutomationApi = {
     mode: ApiDefinitionImportPayload['mode'],
     file: File,
     directoryName?: string | null,
+    groupByTags?: boolean | null,
   ) {
     const form = new FormData()
     form.append('workspaceCode', workspaceCode)
     form.append('mode', mode)
     if (directoryName) {
       form.append('directoryName', directoryName)
+    }
+    if (groupByTags != null) {
+      form.append('groupByTags', String(groupByTags))
     }
     form.append('file', file)
 

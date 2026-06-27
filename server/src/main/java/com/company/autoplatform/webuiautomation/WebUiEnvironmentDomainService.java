@@ -54,10 +54,11 @@ public class WebUiEnvironmentDomainService {
                 .map(this::toEnvironmentItem)
                 .toList());
         LambdaQueryWrapper<EnvConfigEntity> publicQuery = new LambdaQueryWrapper<>();
-        publicQuery.eq(EnvConfigEntity::getEnvType, WebUiExecutionContextSupport.WEB_UI_ENV_TYPE);
+        publicQuery.in(EnvConfigEntity::getEnvType, WebUiEnvironmentTypeSupport.webUiUsableEnvTypes());
         workspaceScopeSupport.applyWorkspaceScope(publicQuery, EnvConfigEntity::getWorkspaceId, workspaceCode);
         items.addAll(envConfigMapper.selectList(publicQuery.orderByDesc(EnvConfigEntity::getUpdatedAt))
                 .stream()
+                .filter(item -> WebUiEnvironmentTypeSupport.isWebUiUsable(item.getEnvType()))
                 .map(this::toPublicEnvironmentItem)
                 .toList());
         return PageResponse.of(items, items.size(), 1, items.isEmpty() ? 1 : items.size());
@@ -163,12 +164,13 @@ public class WebUiEnvironmentDomainService {
         ParamSetEntity defaultVariableSet = config.defaultVariableSetId() == null
                 ? null
                 : paramSetMapper.selectById(config.defaultVariableSetId());
+        String baseUrl = resolveDefaultServiceBaseUrl(config, entity.getBaseUrl());
         return new WebUiEnvironmentItem(
                 -entity.getId(),
                 workspace.getWorkspaceCode(),
                 workspace.getWorkspaceName(),
                 entity.getEnvName(),
-                entity.getBaseUrl(),
+                baseUrl,
                 normalizeBrowserType(config.browserType()),
                 config.headless() == null || config.headless(),
                 normalizeCaseTimeout(config.defaultTimeoutMs()),
@@ -180,5 +182,16 @@ public class WebUiEnvironmentDomainService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private String resolveDefaultServiceBaseUrl(WebUiExecutionContextSupport.WebUiEnvironmentConfig config, String fallbackBaseUrl) {
+        List<WebUiExecutionContextSupport.ServiceEndpoint> services = config.services() == null ? List.of() : config.services();
+        String defaultServiceKey = config.defaultServiceKey() == null ? "" : config.defaultServiceKey().trim();
+        return services.stream()
+                .filter(service -> service != null && service.baseUrl() != null && !service.baseUrl().isBlank())
+                .filter(service -> defaultServiceKey.isBlank() || defaultServiceKey.equals(service.key()))
+                .findFirst()
+                .map(service -> service.baseUrl().trim())
+                .orElse(fallbackBaseUrl);
     }
 }

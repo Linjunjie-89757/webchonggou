@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 
 import type { ConfigCenterTab } from '@/entities/config'
-import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
+import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import AiProviderPanel from '@/widgets/ai-provider-panel/AiProviderPanel.vue'
@@ -14,10 +14,14 @@ import ConfigParamPanel from '@/widgets/config-param-panel/ConfigParamPanel.vue'
 import ConfigSidebar from '@/widgets/config-sidebar/ConfigSidebar.vue'
 
 const activeTab = ref<ConfigCenterTab>('env')
-const workspaceCode = ref('ALL')
+const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 const workspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceErrorMessage = ref('')
+const workspaceCode = computed({
+  get: () => selectedWorkspaceCode.value,
+  set: (value: string) => setSelectedWorkspaceCode(value),
+})
 
 const workspaceOptions = computed(() => {
   const options = workspaces.value.map((item) => ({
@@ -33,6 +37,12 @@ const workspaceOptions = computed(() => {
 })
 
 function resolveDefaultWorkspaceCode(items: WorkspaceItem[]) {
+  if (
+    selectedWorkspaceCode.value
+    && (selectedWorkspaceCode.value === 'ALL' || items.some((item) => item.workspaceCode === selectedWorkspaceCode.value))
+  ) {
+    return selectedWorkspaceCode.value
+  }
   const selected = items.find((item) => item.current || item.isCurrent || item.default || item.isDefault)
   return selected?.workspaceCode || items[0]?.workspaceCode || 'ALL'
 }
@@ -43,9 +53,9 @@ async function loadWorkspaces() {
   try {
     const items = await workspaceApi.getSwitchableWorkspaces()
     workspaces.value = items
-    workspaceCode.value = resolveDefaultWorkspaceCode(items)
+    setSelectedWorkspaceCode(resolveDefaultWorkspaceCode(items))
   } catch (error) {
-    workspaceCode.value = 'ALL'
+    setSelectedWorkspaceCode(selectedWorkspaceCode.value || 'ALL')
     workspaceErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     workspaceLoading.value = false

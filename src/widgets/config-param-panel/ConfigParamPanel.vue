@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Connection, Plus, RefreshRight, Search } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { Connection, MoreFilled, Plus, RefreshRight, Search } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import {
   ConfigStatCard,
   ConfigTypeBadge,
   configApi,
+  configParamTypeOptions,
   configStatusOptions,
   getParamCategory,
   getParamDescriptionText,
@@ -20,7 +21,16 @@ import {
   type ParamSetItem,
   type ParamSetVersionItem,
 } from '@/entities/config'
-import { ConfigParamDialog, type ConfigParamDialogMode } from '@/features/config-param-create-edit'
+import {
+  buildCreateParamPayload,
+  ConfigParamDialog,
+  createConfigParamFormFromItem,
+  createDefaultConfigParamForm,
+  createDefaultWebUiVariable,
+  parseWebUiVariables,
+  type ConfigParamDialogMode,
+  type ConfigParamForm,
+} from '@/features/config-param-create-edit'
 import { deleteConfigParam } from '@/features/config-param-delete'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import { debounce } from '@/shared/lib/debounce'
@@ -31,7 +41,7 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
-type ParamCategoryFilter = '' | 'global' | 'api' | 'business' | 'webUi'
+type ParamCategoryFilter = '' | 'global' | 'business' | 'api' | 'webUi' | 'appUi'
 
 const props = withDefaults(
   defineProps<{
@@ -64,6 +74,10 @@ const editingParam = ref<ParamSetItem | null>(null)
 const deletingParamId = ref<number | null>(null)
 const filterKeyword = ref('')
 const filterStatus = ref('')
+const detailParam = ref<ParamSetItem | null>(null)
+const detailForm = reactive<ConfigParamForm>(createDefaultConfigParamForm(props.workspaceCode))
+const detailKeyword = ref('')
+const detailError = ref('')
 let suppressFilterLoad = false
 
 const filteredParams = computed(() => {
@@ -74,25 +88,38 @@ const filteredParams = computed(() => {
 })
 
 const stats = computed<ConfigStat[]>(() => [
-  { label: '全部参数', value: params.value.length },
-  { label: '全局参数', value: params.value.filter((item) => getParamCategory(item) === 'global').length, tone: 'primary' },
+  { label: '全局公共变量', value: params.value.filter((item) => getParamCategory(item) === 'global').length, tone: 'primary' },
+  { label: '通用业务变量', value: params.value.filter((item) => getParamCategory(item) === 'business').length, tone: 'success' },
   { label: '接口变量', value: params.value.filter((item) => getParamCategory(item) === 'api').length, tone: 'purple' },
-  { label: '业务参数', value: params.value.filter((item) => getParamCategory(item) === 'business').length, tone: 'success' },
-  { label: 'Web UI 变量集', value: params.value.filter((item) => getParamCategory(item) === 'webUi').length, tone: 'warning' },
+  { label: 'Web UI变量', value: params.value.filter((item) => getParamCategory(item) === 'webUi').length, tone: 'warning' },
+  { label: 'APP UI变量', value: params.value.filter((item) => getParamCategory(item) === 'appUi').length, tone: 'warning' },
 ])
 
 const categoryTabs: Array<{ label: string; value: ParamCategoryFilter }> = [
   { label: '全部', value: '' },
-  { label: '全局参数', value: 'global' },
+  { label: '通用业务', value: 'business' },
   { label: '接口变量', value: 'api' },
-  { label: '业务参数', value: 'business' },
-  { label: 'Web UI 变量集', value: 'webUi' },
+  { label: 'Web UI', value: 'webUi' },
+  { label: 'APP UI', value: 'appUi' },
+  { label: '全局公共', value: 'global' },
 ]
 
 const paramQuery = computed(() => ({
   keyword: filterKeyword.value.trim(),
   status: filterStatus.value === '' ? undefined : (Number(filterStatus.value) as ConfigStatus),
 }))
+
+const detailVariableRows = computed(() => {
+  const keyword = detailKeyword.value.trim().toLowerCase()
+  return detailForm.variables
+    .map((variable, index) => ({ variable, index }))
+    .filter(({ variable }) => {
+      if (!keyword) {
+        return true
+      }
+      return `${variable.name} ${variable.value} ${variable.description}`.toLowerCase().includes(keyword)
+    })
+})
 
 const debouncedLoadParams = debounce(() => {
   void loadParams()
@@ -127,9 +154,117 @@ function openCreateDialog() {
 }
 
 function openEditDialog(param: ParamSetItem) {
-  dialogMode.value = 'edit'
-  editingParam.value = param
-  dialogVisible.value = true
+  openDetail(param)
+}
+
+function openDetail(param: ParamSetItem) {
+  detailParam.value = param
+  Object.assign(detailForm, createConfigParamFormFromItem(param))
+  detailKeyword.value = ''
+  detailError.value = ''
+}
+
+function closeDetail() {
+  detailParam.value = null
+  detailKeyword.value = ''
+  detailError.value = ''
+}
+
+function addDetailVariable() {
+  detailForm.variables.push(createDefaultWebUiVariable())
+}
+
+function removeDetailVariable(index: number) {
+  detailForm.variables.splice(index, 1)
+  if (detailForm.variables.length === 0) {
+    addDetailVariable()
+  }
+}
+
+async function importDetailVariablesFromJson() {
+  const input = window.prompt('请输入变量 JSON 数组，例如：[{"name":"USERNAME","value":"admin","sensitive":false,"description":"登录账号"}]')
+  if (input === null) {
+    return
+  }
+  const variables = parseWebUiVariables(input)
+  if (variables.length === 0) {
+    detailError.value = '未识别到有效变量，请检查 JSON 格式'
+    return
+  }
+  detailForm.variables.splice(0, detailForm.variables.length, ...variables)
+  detailError.value = ''
+  ElMessage.success(`已导入 ${variables.length} 个变量`)
+}
+
+async function exportDetailVariablesToJson() {
+  const text = JSON.stringify(
+    detailForm.variables
+      .filter(variable => variable.name.trim())
+      .map(variable => ({
+        name: variable.name.trim(),
+        value: variable.value,
+        sensitive: variable.sensitive,
+        description: variable.description.trim(),
+      })),
+    null,
+    2,
+  )
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('变量 JSON 已复制到剪贴板')
+  } catch {
+    detailError.value = text
+  }
+}
+
+async function saveDetail() {
+  if (!detailParam.value) {
+    return
+  }
+  const error = validateDetailForm()
+  if (error) {
+    detailError.value = error
+    return
+  }
+  saving.value = true
+  try {
+    const nextParam = await configApi.updateSettingsParam(props.workspaceCode, detailParam.value.id, buildCreateParamPayload(detailForm))
+    detailParam.value = nextParam
+    Object.assign(detailForm, createConfigParamFormFromItem(nextParam))
+    detailError.value = ''
+    ElMessage.success('变量集已保存')
+    await loadParams()
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    saving.value = false
+  }
+}
+
+function validateDetailForm() {
+  if (!detailForm.paramName.trim()) {
+    return '请输入变量集名称'
+  }
+  const activeVariables = detailForm.variables.filter(variable => variable.name.trim() || variable.value.trim())
+  if (activeVariables.length === 0) {
+    return '请至少添加一个变量'
+  }
+  const names = new Set<string>()
+  for (const variable of activeVariables) {
+    const name = variable.name.trim()
+    if (!name) {
+      return '变量名不能为空'
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(name)) {
+      return `变量名 ${name} 只能包含字母、数字、下划线、点和中划线，且不能以数字开头`
+    }
+    const upperName = name.toUpperCase()
+    if (names.has(upperName)) {
+      return `变量名 ${name} 重复`
+    }
+    names.add(upperName)
+  }
+  return ''
 }
 
 async function submitParam(payload: CreateParamPayload) {
@@ -274,11 +409,11 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       </div>
       <div class="config-panel__actions">
         <AppButton :icon="RefreshRight" :loading="loading" @click="loadParams">刷新</AppButton>
-        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集/参数</AppButton>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集</AppButton>
       </div>
     </header>
 
-    <div class="config-panel__stats config-panel__stats--five">
+    <div class="config-panel__stats config-panel__stats--four">
       <ConfigStatCard v-for="stat in stats" :key="stat.label" :stat="stat" />
     </div>
 
@@ -378,15 +513,6 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
                 type="button"
                 class="config-text-action"
                 :disabled="deletingParamId === param.id"
-                @click="openReferenceDrawer(param)"
-              >
-                <el-icon><Connection /></el-icon>
-                引用
-              </button>
-              <button
-                type="button"
-                class="config-text-action"
-                :disabled="deletingParamId === param.id"
                 @click="openEditDialog(param)"
               >
                 编辑
@@ -395,26 +521,27 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
                 type="button"
                 class="config-text-action"
                 :disabled="deletingParamId === param.id"
-                @click="openChangeHistoryDrawer(param)"
+                @click="openReferenceDrawer(param)"
               >
-                变更
+                <el-icon><Connection /></el-icon>
+                引用
               </button>
-              <button
-                type="button"
-                class="config-text-action"
-                :disabled="deletingParamId === param.id"
-                @click="openVersionDrawer(param)"
-              >
-                版本
-              </button>
-              <button
-                type="button"
-                class="config-text-action is-danger"
-                :disabled="deletingParamId === param.id"
-                @click="removeParam(param)"
-              >
-                删除
-              </button>
+              <el-dropdown trigger="click" @command="(command: string) => {
+                if (command === 'history') openChangeHistoryDrawer(param)
+                if (command === 'version') openVersionDrawer(param)
+                if (command === 'delete') removeParam(param)
+              }">
+                <button type="button" class="config-more-action" :disabled="deletingParamId === param.id">
+                  <el-icon><MoreFilled /></el-icon>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="history">变更历史</el-dropdown-item>
+                    <el-dropdown-item command="version">版本</el-dropdown-item>
+                    <el-dropdown-item command="delete" class="is-danger">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </td>
           </tr>
         </tbody>
@@ -426,10 +553,113 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
         description="当前筛选条件下没有变量集或参数。"
       >
         <template #actions>
-          <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集/参数</AppButton>
+          <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集</AppButton>
         </template>
       </AppEmptyState>
     </div>
+
+    <el-drawer
+      :model-value="!!detailParam"
+      title="编辑变量集"
+      size="760px"
+      class="config-param-drawer"
+      @update:model-value="(value: boolean) => { if (!value) closeDetail() }"
+    >
+    <div v-if="detailParam" class="config-param-detail">
+      <div class="config-param-detail__top">
+        <div class="config-param-detail__main-fields">
+          <label>
+            <span>变量集名称</span>
+            <el-input v-model="detailForm.paramName" placeholder="例如：微信沙箱支付变量集" />
+          </label>
+          <label>
+            <span>变量集类型</span>
+            <el-select v-model="detailForm.paramType" placeholder="请选择类型">
+              <el-option
+                v-for="item in configParamTypeOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </label>
+          <label>
+            <span>状态</span>
+            <el-select v-model="detailForm.status">
+              <el-option
+                v-for="item in configStatusOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+              />
+            </el-select>
+          </label>
+        </div>
+        <div class="config-param-detail__meta">
+          <span>{{ detailParam.workspaceName || detailParam.workspaceCode }}</span>
+          <span>ID {{ detailParam.id }}</span>
+          <button type="button" class="config-text-action" @click="openReferenceDrawer(detailParam)">引用详情</button>
+          <button type="button" class="config-text-action" @click="openChangeHistoryDrawer(detailParam)">变更历史</button>
+        </div>
+      </div>
+
+      <div v-if="detailError" class="config-inline-error">
+        {{ detailError }}
+      </div>
+
+      <div class="config-param-detail__toolbar">
+        <el-input
+          v-model="detailKeyword"
+          class="config-filter-control config-filter-control--search"
+          clearable
+          placeholder="搜索变量名 / 值 / 说明"
+          :prefix-icon="Search"
+        />
+        <div class="config-param-detail__toolbar-actions">
+          <AppButton @click="importDetailVariablesFromJson">JSON 导入</AppButton>
+          <AppButton @click="exportDetailVariablesToJson">JSON 导出</AppButton>
+          <AppButton type="primary" :icon="Plus" @click="addDetailVariable">新增变量</AppButton>
+        </div>
+      </div>
+
+      <el-table class="config-param-detail__table" :data="detailVariableRows" border>
+        <el-table-column label="变量名" min-width="180">
+          <template #default="{ row }">
+            <el-input v-model="row.variable.name" placeholder="变量名" />
+          </template>
+        </el-table-column>
+        <el-table-column label="变量值" min-width="240">
+          <template #default="{ row }">
+            <el-input
+              v-model="row.variable.value"
+              :type="row.variable.sensitive ? 'password' : 'text'"
+              placeholder="变量值"
+              show-password
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="敏感" width="92" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.variable.sensitive" />
+          </template>
+        </el-table-column>
+        <el-table-column label="说明" min-width="220">
+          <template #default="{ row }">
+            <el-input v-model="row.variable.description" placeholder="用途说明" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="92" align="center">
+          <template #default="{ row }">
+            <el-button type="danger" link @click="removeDetailVariable(row.index)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+      <template #footer>
+        <AppButton :disabled="saving" @click="closeDetail">取消</AppButton>
+        <AppButton type="primary" :loading="saving" @click="saveDetail">保存</AppButton>
+      </template>
+    </el-drawer>
 
     <ConfigParamDialog
       v-model="dialogVisible"
@@ -501,6 +731,10 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.config-panel__stats--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .config-filter-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -562,6 +796,72 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
+}
+
+.config-param-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-4);
+  min-height: 360px;
+  padding: 0;
+}
+
+.config-param-drawer :deep(.el-drawer__body) {
+  padding: var(--app-space-5);
+}
+
+.config-param-drawer :deep(.el-drawer__footer) {
+  padding: var(--app-space-4) var(--app-space-5);
+  border-top: 1px solid var(--app-border);
+}
+
+.config-param-detail__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--app-space-4);
+}
+
+.config-param-detail__main-fields {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(260px, 1.5fr) minmax(180px, 1fr) minmax(140px, 0.6fr);
+  gap: var(--app-space-3);
+}
+
+.config-param-detail__main-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-1);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-param-detail__meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--app-space-3);
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-param-detail__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+}
+
+.config-param-detail__toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--app-space-2);
+}
+
+.config-param-detail__table {
+  width: 100%;
 }
 
 .config-param-table-card table {
@@ -648,6 +948,9 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
 }
 
 .config-text-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   margin-right: var(--app-space-3);
   padding: 0;
   border: 0;
@@ -665,13 +968,53 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   opacity: 0.45;
 }
 
+.config-more-action {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.config-more-action:hover {
+  background: var(--app-bg-page);
+  color: var(--app-text-main);
+}
+
+.config-more-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 @media (max-width: 1100px) {
+  .config-panel__stats--four,
   .config-panel__stats--five {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .config-param-detail__top,
+  .config-param-detail__toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .config-param-detail__main-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .config-param-detail__meta,
+  .config-param-detail__toolbar-actions {
+    justify-content: flex-start;
   }
 }
 
 @media (max-width: 720px) {
+  .config-panel__stats--four,
   .config-panel__stats--five {
     grid-template-columns: 1fr;
   }

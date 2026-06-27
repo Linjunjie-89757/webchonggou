@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +8,7 @@ import {
   ArrowUp,
   Close,
   Fold,
+  InfoFilled,
   MagicStick,
   MoreFilled,
   Plus,
@@ -58,6 +60,16 @@ import {
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
 import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
+import {
+  configApi,
+  getEnvServiceDetails,
+  getParamDescriptionText,
+  getParamValueText,
+  type EnvConfigItem,
+  type MockApplicationItem,
+  type MockBusinessScenarioItem,
+  type ParamSetItem,
+} from '@/entities/config'
 import type { WorkspaceItem } from '@/entities/workspace'
 import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCreateEditDialog.vue'
 import { getRequestErrorMessage } from '@/shared/api/error'
@@ -88,10 +100,30 @@ type ApiReportArchiveFilter = 'active' | 'archived' | 'all'
 type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
 type ApiBodyLanguage = 'json' | 'xml' | 'text'
 type BodyJsonViewMode = 'json' | 'schema'
+type DefinitionSchemaViewMode = 'schema' | 'json'
 type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
 type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
   | { kind: 'processorExtract', processor: ApiProcessorConfig, item: ApiProcessorExtractItem }
+
+interface DefinitionSchemaGroup {
+  key: 'path' | 'query' | 'header' | 'body'
+  title: string
+  description: string
+  fields: ApiSchemaFieldInput[]
+  emptyText: string
+}
+
+interface DefinitionResponseSchemaGroup {
+  code: string
+  fields: ApiSchemaFieldInput[]
+}
+
+interface ImportModuleOption {
+  label: string
+  value: string
+  workspaceCode: string
+}
 
 const CASE_RUN_HISTORY_LIMIT = 10
 const CASE_RUN_HISTORY_TABLE_HEADER_HEIGHT = 40
@@ -107,6 +139,25 @@ interface ApiAiGeneratedCaseResult {
   status: ApiAiGeneratedCaseStatus
   draft: ApiAiGeneratedCaseDraft
   message?: string | null
+  runResult?: string | null
+  runMessage?: string | null
+}
+
+interface AiCaseGenerationTabState {
+  definitionId: number
+  workspaceCode: string
+  definitionName: string
+  method: string
+  path: string
+  description: string | null
+  requestConfig: ApiRequestConfigInput
+  assertions: unknown[]
+  preProcessors: unknown[]
+  postProcessors: unknown[]
+  results: ApiAiGeneratedCaseResult[]
+  generating: boolean
+  message: string
+  logs: string[]
 }
 
 interface ApiAssertionConfig {
@@ -227,6 +278,7 @@ interface DirectoryNode {
   type: DirectoryNodeType
   label: string
   count: number
+  directCount?: number
   moduleId: number | null
   workspaceCode: string
   definitionId: number | null
@@ -238,6 +290,7 @@ interface DirectoryNode {
 
 interface EditorTab {
   key: string
+  resourceType?: 'definition' | 'ai-case-generation'
   definitionId: number | null
   title: string
   method: string
@@ -248,6 +301,7 @@ interface EditorTab {
   runResult: ApiRunResult | null
   runError: string
   loading: boolean
+  aiGeneration?: AiCaseGenerationTabState
 }
 
 const props = defineProps<{
@@ -256,6 +310,8 @@ const props = defineProps<{
   workspaceReady?: boolean
   workspaces?: WorkspaceItem[]
 }>()
+
+const router = useRouter()
 
 const emit = defineEmits<{
   loaded: [payload: { definitions: ApiDefinitionItem[]; modules: ApiDefinitionModuleItem[]; cases: ApiDefinitionCaseItem[] }]
@@ -281,6 +337,14 @@ const runOptionsLoading = ref(false)
 const runOptionsErrorMessage = ref('')
 const selectedEnvironmentId = ref<number | null>(null)
 const selectedVariableSetId = ref<number | null>(null)
+const selectedMockBusinessScenarioId = ref<number | null>(null)
+const runEnvironmentDrawerVisible = ref(false)
+const runEnvironmentDetailLoading = ref(false)
+const runEnvironmentDetailErrorMessage = ref('')
+const runEnvironmentConfig = ref<EnvConfigItem | null>(null)
+const runEnvironmentParamSets = ref<ParamSetItem[]>([])
+const runEnvironmentMockApplications = ref<MockApplicationItem[]>([])
+const runEnvironmentMockBusinessScenarios = ref<MockBusinessScenarioItem[]>([])
 const directoryKeyword = ref('')
 const debouncedDirectoryKeyword = ref('')
 const selectedDirectoryKey = ref('definition-root')
@@ -289,6 +353,9 @@ const activeDirectoryNodeKey = ref('')
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
 const bodyJsonViewMode = ref<BodyJsonViewMode>('json')
+const definitionBodyViewMode = ref<DefinitionSchemaViewMode>('schema')
+const definitionResponseViewMode = ref<DefinitionSchemaViewMode>('schema')
+const activeDefinitionResponseCode = ref('200')
 const editorTabNavRef = ref<HTMLElement | null>(null)
 const editorTabOverflow = ref({
   overflow: false,
@@ -309,6 +376,8 @@ const importInputMode = ref<ApiImportInputMode>('url')
 const importUrl = ref('')
 const importFileName = ref('')
 const importFile = ref<File | null>(null)
+const importGroupByTags = ref(true)
+const importDirectoryName = ref('')
 const importSubmitting = ref(false)
 const softPromptVisible = ref(false)
 const softPromptTitle = ref('')
@@ -380,7 +449,7 @@ const aiCaseSelectedProviderId = ref<number | null>(null)
 const aiCaseCount = ref('AUTO')
 const aiCaseNoDuplicate = ref(true)
 const aiCasePrompt = ref('')
-const aiCaseSelectedOptionKeys = ref<string[]>(['positive-basic', 'negative-required', 'boundary-value'])
+const aiCaseSelectedOptionKeys = ref<string[]>(['required-only', 'missing-required', 'max-min'])
 const aiCaseGenerationStatus = ref<ApiAiCaseGenerationStatus>('idle')
 const aiCaseGenerationMessage = ref('')
 const aiCaseGenerationLogs = ref<string[]>([])
@@ -417,12 +486,27 @@ const bodyModes: Array<{ label: string; value: BodyType }> = [
 ]
 
 const aiCaseGenerationOptions: ApiAiCaseGenerationOptionPayload[] = [
-  { id: 'positive-basic', key: 'positive-basic', group: 'positive', groupLabel: '正向场景', label: '基础成功路径' },
-  { id: 'positive-variant', key: 'positive-variant', group: 'positive', groupLabel: '正向场景', label: '参数组合成功' },
-  { id: 'negative-required', key: 'negative-required', group: 'negative', groupLabel: '异常场景', label: '必填缺失' },
-  { id: 'negative-format', key: 'negative-format', group: 'negative', groupLabel: '异常场景', label: '格式错误' },
-  { id: 'boundary-value', key: 'boundary-value', group: 'boundary', groupLabel: '边界场景', label: '边界值' },
-  { id: 'security-basic', key: 'security-basic', group: 'security', groupLabel: '安全场景', label: '鉴权与越权' },
+  { id: 'required-only', key: 'required-only', group: 'positive', groupLabel: '正向', label: '仅传必要字段' },
+  { id: 'valid-semantics', key: 'valid-semantics', group: 'positive', groupLabel: '正向', label: '语义合法' },
+  { id: 'sample-combination', key: 'sample-combination', group: 'positive', groupLabel: '正向', label: '覆盖枚举组合' },
+  { id: 'other-positive', key: 'other-positive', group: 'positive', groupLabel: '正向', label: '其他正向' },
+  { id: 'empty-value', key: 'empty-value', group: 'negative', groupLabel: '负向', label: '无效值' },
+  { id: 'missing-required', key: 'missing-required', group: 'negative', groupLabel: '负向', label: '缺失必填字段' },
+  { id: 'format-error', key: 'format-error', group: 'negative', groupLabel: '负向', label: '格式错误' },
+  { id: 'type-error', key: 'type-error', group: 'negative', groupLabel: '负向', label: '类型错误' },
+  { id: 'semantic-invalid', key: 'semantic-invalid', group: 'negative', groupLabel: '负向', label: '语义非法' },
+  { id: 'other-negative', key: 'other-negative', group: 'negative', groupLabel: '负向', label: '其他负向' },
+  { id: 'max-min', key: 'max-min', group: 'boundary', groupLabel: '边界值', label: '极大值/极小值' },
+  { id: 'over-boundary', key: 'over-boundary', group: 'boundary', groupLabel: '边界值', label: '超出最大、最小边界值' },
+  { id: 'null-empty', key: 'null-empty', group: 'boundary', groupLabel: '边界值', label: 'Null/零值/空值' },
+  { id: 'string-length', key: 'string-length', group: 'boundary', groupLabel: '边界值', label: '字符串过长、过短' },
+  { id: 'auth-control', key: 'auth-control', group: 'security', groupLabel: '安全性', label: '鉴权控制' },
+  { id: 'sql-injection', key: 'sql-injection', group: 'security', groupLabel: '安全性', label: 'SQL注入' },
+  { id: 'fuzzy-input', key: 'fuzzy-input', group: 'security', groupLabel: '安全性', label: '模糊输入' },
+  { id: 'xss-injection', key: 'xss-injection', group: 'security', groupLabel: '安全性', label: 'XSS注入' },
+  { id: 'command-injection', key: 'command-injection', group: 'security', groupLabel: '安全性', label: '命令行注入' },
+  { id: 'json-injection', key: 'json-injection', group: 'security', groupLabel: '安全性', label: 'JSON注入' },
+  { id: 'nosql-injection', key: 'nosql-injection', group: 'security', groupLabel: '安全性', label: 'NoSQL注入' },
 ]
 
 const aiCaseCountOptions = [
@@ -473,6 +557,43 @@ const importCapabilityItems: Array<{
 const selectedImportCapability = computed(() => (
   importCapabilityItems.find(item => item.mode === importMode.value) || importCapabilityItems[0]
 ))
+
+const aiCaseGenerateGroups = computed(() => {
+  const groupMap = new Map<string, { key: string; label: string; options: ApiAiCaseGenerationOptionPayload[] }>()
+  aiCaseGenerationOptions.forEach((option) => {
+    const key = option.group || option.groupLabel || 'default'
+    const existed = groupMap.get(key)
+    if (existed) {
+      existed.options.push(option)
+      return
+    }
+    groupMap.set(key, {
+      key,
+      label: option.groupLabel || option.group || '默认场景',
+      options: [option],
+    })
+  })
+  return Array.from(groupMap.values())
+})
+
+const aiCaseGenerateSelectedCount = computed(() => aiCaseSelectedOptionKeys.value.length)
+
+function isAiCaseGroupAllSelected(groupKey: string) {
+  const group = aiCaseGenerateGroups.value.find(item => item.key === groupKey)
+  if (!group) return false
+  return group.options.every(option => aiCaseSelectedOptionKeys.value.includes(option.key))
+}
+
+function toggleAiCaseGroup(groupKey: string, checked: boolean) {
+  const group = aiCaseGenerateGroups.value.find(item => item.key === groupKey)
+  if (!group) return
+  const keys = group.options.map(option => option.key)
+  if (checked) {
+    aiCaseSelectedOptionKeys.value = Array.from(new Set([...aiCaseSelectedOptionKeys.value, ...keys]))
+    return
+  }
+  aiCaseSelectedOptionKeys.value = aiCaseSelectedOptionKeys.value.filter(key => !keys.includes(key))
+}
 
 function openApiSoftPrompt(options: ApiSoftPromptOptions) {
   if (softPromptResolve) {
@@ -798,6 +919,10 @@ const contentTabs = computed<Array<{ label: string; value: RequestContentTab; co
 
 const activeEditor = computed(() => tabs.value.find(item => item.key === activeEditorKey.value) || null)
 const activeDetail = computed(() => activeEditor.value?.detail || null)
+const activeAiCaseGenerationState = computed(() => (
+  activeEditor.value?.resourceType === 'ai-case-generation' ? activeEditor.value.aiGeneration || null : null
+))
+const isAiCaseGenerationTabActive = computed(() => Boolean(activeAiCaseGenerationState.value))
 const activeBodyRawText = computed({
   get: () => activeDetail.value ? getModeBodyText(activeDetail.value.requestConfig.body) : '',
   set: (value: string) => {
@@ -813,6 +938,55 @@ const querySchemaFields = computed(() => schemaFieldsByLocation('query'))
 const headerSchemaFields = computed(() => schemaFieldsByLocation('header'))
 const pathSchemaFields = computed(() => schemaFieldsByLocation('path'))
 const responseSchemaFields = computed(() => schemaFieldsByLocation('response'))
+const definitionRequestSchemaGroups = computed<DefinitionSchemaGroup[]>(() => {
+  const groups: DefinitionSchemaGroup[] = [
+    {
+      key: 'path',
+      title: 'Path 参数',
+      description: '路径中的变量参数',
+      fields: pathSchemaFields.value,
+      emptyText: '暂无 Path 参数',
+    },
+    {
+      key: 'query',
+      title: 'Query 参数',
+      description: 'URL 查询参数',
+      fields: querySchemaFields.value,
+      emptyText: '暂无 Query 参数',
+    },
+    {
+      key: 'header',
+      title: 'Header 参数',
+      description: '请求头参数',
+      fields: headerSchemaFields.value,
+      emptyText: '暂无 Header 参数',
+    },
+  ]
+  return groups.filter(group => group.fields.length)
+})
+const definitionRequestExampleJson = computed(() => {
+  if (bodySchemaFields.value.length) return buildSchemaExampleText(bodySchemaFields.value)
+  const text = activeDetail.value ? getModeBodyText(activeDetail.value.requestConfig.body).trim() : ''
+  return text ? toPrettyJson(text) : '-'
+})
+const responseSchemaGroups = computed<DefinitionResponseSchemaGroup[]>(() => {
+  const grouped = new Map<string, ApiSchemaFieldInput[]>()
+  responseSchemaFields.value.forEach((field) => {
+    const code = normalizeDefinitionResponseCode(field.responseCode)
+    grouped.set(code, [...(grouped.get(code) || []), field])
+  })
+  return Array.from(grouped.entries())
+    .map(([code, fields]) => ({ code, fields }))
+    .sort((left, right) => compareDefinitionResponseCode(left.code, right.code))
+})
+const activeResponseSchemaGroup = computed(() => {
+  if (!responseSchemaGroups.value.length) return null
+  return responseSchemaGroups.value.find(group => group.code === activeDefinitionResponseCode.value) || responseSchemaGroups.value[0]
+})
+const activeResponseSchemaFields = computed(() => activeResponseSchemaGroup.value?.fields || [])
+const definitionResponseExampleJson = computed(() =>
+  activeResponseSchemaFields.value.length ? buildSchemaExampleText(activeResponseSchemaFields.value) : '-',
+)
 const activeDefinitionCases = computed(() => {
   const id = activeEditor.value?.definitionId
   return id ? cases.value.filter(item => item.definitionId === id) : []
@@ -837,6 +1011,20 @@ watch(
       caseListCurrentPage.value = 1
     }
   },
+)
+
+watch(
+  responseSchemaGroups,
+  (groups) => {
+    if (!groups.length) {
+      activeDefinitionResponseCode.value = '200'
+      return
+    }
+    if (!groups.some(group => group.code === activeDefinitionResponseCode.value)) {
+      activeDefinitionResponseCode.value = groups[0].code
+    }
+  },
+  { immediate: true },
 )
 
 function caseProtocolLabel() {
@@ -867,12 +1055,15 @@ const aiCaseCanGenerate = computed(() =>
   && aiCaseSelectedOptionKeys.value.length > 0
   && aiCaseGenerationStatus.value !== 'running',
 )
-const aiCaseGenerationStatusText = computed(() => {
-  if (aiCaseGenerationStatus.value === 'running') return '生成中'
-  if (aiCaseGenerationStatus.value === 'done') return '已完成'
-  if (aiCaseGenerationStatus.value === 'failed') return '失败'
-  return '待生成'
-})
+const aiCaseActiveSourceName = computed(() =>
+  activeAiCaseGenerationState.value?.definitionName || activeEditor.value?.detail.name || '-',
+)
+const aiCaseActiveSourceMethod = computed(() =>
+  activeAiCaseGenerationState.value?.method || activeEditor.value?.detail.requestConfig.method || '-',
+)
+const aiCaseActiveSourcePath = computed(() =>
+  activeAiCaseGenerationState.value?.path || activeEditor.value?.detail.requestConfig.path || '-',
+)
 const aiCasePendingResults = computed(() =>
   aiCaseGeneratedResults.value.filter(item => item.status === 'pending'),
 )
@@ -899,12 +1090,6 @@ const aiCaseFilteredResults = computed(() => {
     ].some(value => String(value || '').toLowerCase().includes(keyword))
   })
 })
-const aiCaseResultFilterOptions = computed<Array<{ label: string; value: ApiAiCaseResultFilter; count: number }>>(() => [
-  { label: '全部', value: 'all', count: aiCaseGeneratedResults.value.length },
-  { label: '待处理', value: 'pending', count: aiCasePendingResults.value.length },
-  { label: '已采纳', value: 'accepted', count: aiCaseAcceptedResults.value.length },
-  { label: '已丢弃', value: 'discarded', count: aiCaseDiscardedResults.value.length },
-])
 const aiCaseResultGroupOptions = computed(() => {
   const options = new Map<string, string>()
   aiCaseGeneratedResults.value.forEach((item) => {
@@ -924,6 +1109,18 @@ const aiCaseResultTypeOptions = computed(() => {
 const selectedPendingAiCaseResults = computed(() =>
   aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id)),
 )
+const aiCaseSelectionAllChecked = computed(() =>
+  aiCaseFilteredResults.value.some(item => item.status === 'pending')
+  && aiCaseFilteredResults.value
+    .filter(item => item.status === 'pending')
+    .every(item => aiCaseSelectedResultIds.value.includes(item.id)),
+)
+const aiCaseSelectionIndeterminate = computed(() => {
+  const pending = aiCaseFilteredResults.value.filter(item => item.status === 'pending')
+  if (!pending.length) return false
+  const selectedCount = pending.filter(item => aiCaseSelectedResultIds.value.includes(item.id)).length
+  return selectedCount > 0 && selectedCount < pending.length
+})
 
 const currentDefinitionWorkspaceLabel = computed(() => {
   const editor = activeEditor.value
@@ -958,9 +1155,10 @@ const filteredDefinitions = computed(() => {
 })
 
 const directorySearchMatchedCount = computed(() => {
-  return debouncedDirectoryKeyword.value.trim()
-    ? directorySearchTotal.value
-    : definitions.value.length
+  if (debouncedDirectoryKeyword.value.trim()) {
+    return directorySearchTotal.value
+  }
+  return directoryTree.value[0]?.count ?? definitions.value.length
 })
 
 const directorySearchLimited = computed(() =>
@@ -1056,6 +1254,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       type: 'workspace' as const,
       label: workspace?.workspaceName || workspace?.name || code,
       count: 0,
+      directCount: 0,
       moduleId: null,
       workspaceCode: code,
       definitionId: null,
@@ -1084,6 +1283,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
         type: 'module',
         label,
         count: 0,
+        directCount: 0,
         moduleId,
         workspaceCode,
         definitionId: null,
@@ -1099,6 +1299,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     }
     if (count != null) {
       node.count = count
+      node.directCount = count
     }
     return node
   }
@@ -1149,6 +1350,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       type: 'request',
       label: item.name,
       count: 0,
+      directCount: 0,
       moduleId: null,
       workspaceCode: item.workspaceCode,
       definitionId: item.id,
@@ -1204,7 +1406,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
       const children = stripChildMap(node.children as MutableNode[])
       const hasRequestChild = children.some(child => child.type === 'request')
       const shouldAddLazyPlaceholder = node.type === 'module'
-        && node.count > 0
+        && (node.directCount ?? node.count) > 0
         && !hasRequestChild
         && !isDefinitionModuleLoading(node.workspaceCode, node.moduleId, node.fullPath ?? null)
         && !loadedDefinitionModuleKeys.value.has(definitionModuleLoadKey(node.workspaceCode, node.moduleId, node.fullPath ?? null))
@@ -1214,6 +1416,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
           type: 'placeholder',
           label: '展开加载接口',
           count: 0,
+          directCount: 0,
           moduleId: null,
           workspaceCode: node.workspaceCode,
           definitionId: null,
@@ -1221,11 +1424,20 @@ const directoryTree = computed<DirectoryNode[]>(() => {
           children: [],
         })
       }
+      const loadedRequestCount = children
+        .filter(child => child.type !== 'placeholder')
+        .reduce((sum, child) => sum + (child.type === 'request' ? 1 : child.count), 0)
+      const displayCount = node.type === 'request'
+        ? 0
+        : node.type === 'module'
+          ? Math.max(node.count, loadedRequestCount)
+          : loadedRequestCount
       return {
         key: node.key,
         type: node.type,
         label: node.label,
-        count: node.count,
+        count: displayCount,
+        directCount: node.directCount,
         moduleId: node.moduleId,
         workspaceCode: node.workspaceCode,
         definitionId: node.definitionId,
@@ -1245,6 +1457,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
         type: 'unassigned',
         label: '未规划请求',
         count: unassignedRequests.length,
+        directCount: unassignedRequests.length,
         moduleId: null,
         workspaceCode: workspaceNode.workspaceCode,
         definitionId: null,
@@ -1252,11 +1465,13 @@ const directoryTree = computed<DirectoryNode[]>(() => {
         children: stripChildMap(unassignedRequests),
       })
     }
+    const workspaceCount = children.reduce((sum, child) => sum + child.count, 0)
     return {
       key: workspaceNode.key,
       type: workspaceNode.type,
       label: workspaceNode.label,
-      count: workspaceNode.count,
+      count: workspaceCount,
+      directCount: workspaceNode.directCount,
       moduleId: workspaceNode.moduleId,
       workspaceCode: workspaceNode.workspaceCode,
       definitionId: workspaceNode.definitionId,
@@ -1265,11 +1480,13 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     }
   })
 
+  const rootCount = workspaceTrees.reduce((sum, workspaceNode) => sum + workspaceNode.count, 0)
   return [{
     key: 'definition-root',
     type: 'root',
     label: '请求目录',
-    count: filteredDefinitions.value.length,
+    count: rootCount,
+    directCount: rootCount,
     moduleId: null,
     workspaceCode: props.workspaceCode,
     definitionId: null,
@@ -1280,6 +1497,37 @@ const directoryTree = computed<DirectoryNode[]>(() => {
 
 const visibleDirectoryTree = computed<DirectoryNode[]>(() => directoryTree.value[0]?.children ?? [])
 const directoryTreeRenderKey = computed(() => props.workspaceCode)
+const importModuleOptions = computed<ImportModuleOption[]>(() => {
+  const workspaceCodes = props.workspaceCode === 'ALL'
+    ? Array.from(new Set([
+        ...(props.workspaces || [])
+          .map(item => item.workspaceCode || item.code || '')
+          .filter((code): code is string => Boolean(code) && code !== 'ALL'),
+        ...modules.value
+          .map(item => item.workspaceCode || '')
+          .filter((code): code is string => Boolean(code)),
+      ]))
+    : [props.workspaceCode]
+  const workspaceLabel = (workspaceCode: string) => {
+    const workspace = (props.workspaces || []).find(item => (item.workspaceCode || item.code) === workspaceCode)
+    return workspace?.workspaceName || workspace?.name || workspaceCode
+  }
+  const options: ImportModuleOption[] = workspaceCodes.map(code => ({
+    label: props.workspaceCode === 'ALL' ? `${workspaceLabel(code)} / 根目录` : '根目录',
+    value: '',
+    workspaceCode: code,
+  }))
+  modules.value.forEach((item) => {
+    const fullPath = (item.fullPath || item.name || '').trim()
+    if (!fullPath) return
+    options.push({
+      label: props.workspaceCode === 'ALL' ? `${workspaceLabel(item.workspaceCode)} / ${fullPath}` : fullPath,
+      value: fullPath,
+      workspaceCode: item.workspaceCode,
+    })
+  })
+  return options
+})
 
 function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
   const keys: string[] = []
@@ -1424,6 +1672,13 @@ const selectedReportContextVariableSetLabel = computed(() => {
   return variableSet?.versionNo ? `${name} · v${variableSet.versionNo}` : name
 })
 
+const selectedReportContextVariableSetDetails = computed(() => {
+  const variableSets = selectedReportContextSnapshot.value?.variableSets || []
+  return variableSets
+    .map(item => item.name ? (item.versionNo ? `${item.name} · v${item.versionNo}` : item.name) : '')
+    .filter(Boolean)
+})
+
 function parseRuntimeContextSnapshot(value?: string | null): ApiRuntimeContextSnapshot | null {
   if (!value) return null
   try {
@@ -1547,13 +1802,46 @@ watch(
   { immediate: true },
 )
 
+watch(selectedEnvironmentId, () => {
+  selectedMockBusinessScenarioId.value = null
+  runEnvironmentConfig.value = null
+  runEnvironmentMockBusinessScenarios.value = []
+})
+
 const currentStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(activeEditor.value?.runResult?.stepResults ?? []))
 const caseDetailPreviewStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(selectedCaseRunHistoryDetail.value?.stepResults ?? []))
 const selectedCaseHistoryStep = computed<ApiRunStepResult | null>(() => pickPreferredRunStep(selectedCaseRunHistoryDetail.value?.stepResults ?? []))
 const selectedEnvironment = computed(() => environments.value.find(item => item.id === selectedEnvironmentId.value) || null)
-const selectedVariableSet = computed(() => variableSets.value.find(item => item.id === selectedVariableSetId.value) || null)
+const selectedEnvironmentDefaultVariableSet = computed(() => {
+  const defaultId = selectedEnvironment.value?.defaultVariableSetId
+  return defaultId ? variableSets.value.find(item => item.id === defaultId) || null : null
+})
+const runEnvironmentConfigJson = computed(() => parseRunEnvironmentConfig(runEnvironmentConfig.value?.configJson || ''))
+const runEnvironmentServices = computed(() =>
+  runEnvironmentConfig.value
+    ? getEnvServiceDetails(runEnvironmentConfig.value)
+    : selectedEnvironment.value?.baseUrl
+      ? [{ key: 'default', name: '默认服务', baseUrl: selectedEnvironment.value.baseUrl, isDefault: true }]
+      : [],
+)
+const runEnvironmentDefaultVariableSetId = computed(() => {
+  const value = runEnvironmentConfigJson.value.defaultVariableSetId
+  return typeof value === 'number' ? value : selectedEnvironment.value?.defaultVariableSetId ?? null
+})
+const runEnvironmentDefaultParamSet = computed(() => {
+  const id = runEnvironmentDefaultVariableSetId.value
+  return id ? runEnvironmentParamSets.value.find(item => item.id === id) || null : null
+})
+const runEnvironmentMockApplication = computed(() => {
+  const id = runEnvironmentConfigJson.value.mockApplicationId
+  return typeof id === 'number' ? runEnvironmentMockApplications.value.find(item => item.id === id) || null : null
+})
+const selectedMockBusinessScenario = computed(() =>
+  runEnvironmentMockBusinessScenarios.value.find(item => item.id === selectedMockBusinessScenarioId.value) || null,
+)
+const runEnvironmentHeaders = computed(() => normalizeRunEnvironmentHeaders(runEnvironmentConfigJson.value.headers))
 const currentEnvironmentName = computed(() => selectedEnvironment.value?.name || '未选择环境')
-const currentVariableSetName = computed(() => selectedVariableSet.value?.name || '未选择变量集')
+const currentVariableSetName = computed(() => selectedEnvironmentDefaultVariableSet.value?.name || '跟随环境')
 const responseStatus = computed(() => currentStep.value?.response?.statusCode ?? null)
 const responseDuration = computed(() => currentStep.value?.durationMs ?? null)
 const responseBody = computed(() => currentStep.value?.response?.body ?? '')
@@ -1659,7 +1947,10 @@ const responseSize = computed(() => {
   return bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`
 })
 const showResponseEmpty = computed(() => !currentStep.value && !activeEditor.value?.runError)
-const shouldShowResponsePanel = computed(() => activeEditor.value?.activeTab !== 'cases')
+const shouldShowResponsePanel = computed(() => {
+  const tab = activeEditor.value?.activeTab
+  return tab !== 'cases' && tab !== 'definition'
+})
 const latestResponseBody = computed(() => String(currentStep.value?.response?.body || ''))
 const hasLatestResponseBody = computed(() => Boolean(latestResponseBody.value.trim()))
 const fastExtractionTitle = computed(() => (hasLatestResponseBody.value ? '从最近响应快速提取' : '请先发送请求，再使用快速提取'))
@@ -1832,6 +2123,22 @@ function schemaFieldsByLocation(location: string) {
   return activeSchemaFields.value.filter(field => String(field.location || '').toLowerCase() === location)
 }
 
+function normalizeDefinitionResponseCode(code?: string | null) {
+  const normalized = String(code || '').trim()
+  return normalized || '200'
+}
+
+function compareDefinitionResponseCode(left: string, right: string) {
+  const leftNumber = Number(left)
+  const rightNumber = Number(right)
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber - rightNumber
+  }
+  if (Number.isFinite(leftNumber)) return -1
+  if (Number.isFinite(rightNumber)) return 1
+  return left.localeCompare(right)
+}
+
 function schemaFieldName(field: ApiSchemaFieldInput) {
   return field.fieldPath || field.name || '-'
 }
@@ -1877,6 +2184,29 @@ function schemaFieldLimit(field: ApiSchemaFieldInput) {
     field.minimum != null || field.maximum != null ? `范围 ${field.minimum ?? '-'} ~ ${field.maximum ?? '-'}` : '',
   ].filter(Boolean)
   return limits.join('；') || '-'
+}
+
+function schemaFieldDisplayName(field: ApiSchemaFieldInput) {
+  const path = field.fieldPath || field.name || ''
+  if (!path) return '-'
+  const normalized = path.replace(/\[\]/g, '[]')
+  return normalized.split('.').filter(Boolean).pop() || normalized
+}
+
+function schemaFieldDescription(field: ApiSchemaFieldInput) {
+  return field.description?.trim() || '-'
+}
+
+function schemaFieldExampleText(field: ApiSchemaFieldInput) {
+  const value = field.example ?? field.defaultValue
+  const text = schemaEditableValue(value)
+  return text || '-'
+}
+
+function schemaFieldRuleText(field: ApiSchemaFieldInput) {
+  const enumText = schemaFieldEnum(field)
+  const limitText = schemaFieldLimit(field)
+  return [enumText !== '-' ? `枚举：${enumText}` : '', limitText !== '-' ? limitText : ''].filter(Boolean).join('；') || '-'
 }
 
 function schemaEditableValue(value: unknown) {
@@ -1957,6 +2287,16 @@ function setSchemaPathValue(root: Record<string, unknown>, fieldPath: string, va
     if (!cursor[key] || typeof cursor[key] !== 'object' || Array.isArray(cursor[key])) cursor[key] = {}
     cursor = cursor[key] as Record<string, unknown>
   })
+}
+
+function buildSchemaExampleText(fields: ApiSchemaFieldInput[]) {
+  if (!fields.length) return '-'
+  const root: Record<string, unknown> = {}
+  fields
+    .slice()
+    .sort((left, right) => schemaFieldDepth(left) - schemaFieldDepth(right))
+    .forEach(field => setSchemaPathValue(root, field.fieldPath || field.name || '', schemaGeneratedValue(field, fields)))
+  return toPrettyJson(root)
 }
 
 async function generateJsonFromBodySchema() {
@@ -3283,16 +3623,26 @@ function runOptionStorageKey(kind: 'environment' | 'variableSet') {
 
 function restoreRunOptions() {
   const environmentId = Number(localStorage.getItem(runOptionStorageKey('environment')) || '')
-  const variableSetId = Number(localStorage.getItem(runOptionStorageKey('variableSet')) || '')
   selectedEnvironmentId.value = environmentId && environments.value.some(item => item.id === environmentId) ? environmentId : null
-  selectedVariableSetId.value = variableSetId && variableSets.value.some(item => item.id === variableSetId) ? variableSetId : null
+  selectedVariableSetId.value = null
+  selectedMockBusinessScenarioId.value = null
+  localStorage.removeItem(runOptionStorageKey('variableSet'))
+}
+
+function persistRunOptions() {
+  if (selectedEnvironmentId.value) {
+    localStorage.setItem(runOptionStorageKey('environment'), String(selectedEnvironmentId.value))
+  } else {
+    localStorage.removeItem(runOptionStorageKey('environment'))
+  }
 }
 
 function currentRunPayload() {
   return {
     workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
     environmentId: selectedEnvironmentId.value || null,
-    variableSetId: selectedVariableSetId.value || null,
+    variableSetId: null,
+    mockBusinessScenarioId: selectedMockBusinessScenarioId.value || null,
   }
 }
 
@@ -3307,6 +3657,112 @@ function startsWithVariable(path: string) {
 function selectedEnvironmentHasBaseUrl() {
   const environment = environments.value.find(item => item.id === selectedEnvironmentId.value)
   return Boolean(environment?.baseUrl?.trim())
+}
+
+function formatApiEnvironmentWorkspace(environment: ApiAutomationEnvironmentItem) {
+  return environment.workspaceName || environment.workspaceCode || '全部空间'
+}
+
+function parseRunEnvironmentConfig(configJson: string) {
+  if (!configJson?.trim()) {
+    return {} as Record<string, unknown>
+  }
+  try {
+    const parsed = JSON.parse(configJson)
+    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+function normalizeRunEnvironmentHeaders(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as Array<{ key: string; value: string; enabled: boolean }>
+  }
+  return value
+    .filter((item): item is { key?: unknown; value?: unknown; enabled?: unknown } => typeof item === 'object' && item !== null)
+    .map(item => ({
+      key: typeof item.key === 'string' ? item.key : '',
+      value: typeof item.value === 'string' ? item.value : '',
+      enabled: item.enabled !== false,
+    }))
+    .filter(item => item.key)
+}
+
+function maskRunEnvironmentValue(key: string, value: string) {
+  if (!value) {
+    return '-'
+  }
+  return /authorization|token|secret|password|cookie/i.test(key) ? '••••••••' : value
+}
+
+function formatRunEnvironmentStatus(status: number | null | undefined) {
+  return status === 0 ? '停用' : '启用'
+}
+
+function formatRunEnvironmentTimeout() {
+  const value = runEnvironmentConfigJson.value.timeoutMs ?? runEnvironmentConfigJson.value.defaultTimeoutMs
+  return typeof value === 'number' ? `${value} ms` : '未配置'
+}
+
+function formatRunEnvironmentSsl() {
+  const ignoreSsl = runEnvironmentConfigJson.value.ignoreSsl === true || runEnvironmentConfigJson.value.ignoreHttpsErrors === true
+  return ignoreSsl ? '忽略 SSL 证书校验' : '校验证书'
+}
+
+async function openRunEnvironmentDrawer() {
+  if (!selectedEnvironment.value) {
+    ElMessage.info('请先选择运行环境')
+    return
+  }
+  runEnvironmentDrawerVisible.value = true
+  await loadRunEnvironmentDetail()
+}
+
+async function loadRunEnvironmentDetail() {
+  const environment = selectedEnvironment.value
+  if (!environment) {
+    return
+  }
+  runEnvironmentDetailLoading.value = true
+  runEnvironmentDetailErrorMessage.value = ''
+  runEnvironmentConfig.value = null
+  runEnvironmentMockBusinessScenarios.value = []
+  try {
+    const workspaceCode = environment.workspaceCode || props.workspaceCode
+    const [envPage, paramPage, mockPage] = await Promise.all([
+      configApi.getSettingsEnvs(workspaceCode, { keyword: environment.name }),
+      configApi.getSettingsParams(workspaceCode),
+      configApi.getMockApplications(workspaceCode),
+    ])
+    runEnvironmentConfig.value = envPage.items.find(item => item.id === environment.id) || null
+    runEnvironmentParamSets.value = paramPage.items
+    runEnvironmentMockApplications.value = mockPage.items
+    const mockApplicationId = runEnvironmentConfigJson.value.mockApplicationId
+    if (typeof mockApplicationId === 'number') {
+      const businessScenarioPage = await configApi.getMockBusinessScenarios(workspaceCode, {
+        appId: mockApplicationId,
+        status: 1,
+      })
+      runEnvironmentMockBusinessScenarios.value = businessScenarioPage.items
+      if (
+        selectedMockBusinessScenarioId.value
+        && !businessScenarioPage.items.some(item => item.id === selectedMockBusinessScenarioId.value)
+      ) {
+        selectedMockBusinessScenarioId.value = null
+      }
+    } else {
+      selectedMockBusinessScenarioId.value = null
+    }
+  } catch (error) {
+    runEnvironmentDetailErrorMessage.value = getRequestErrorMessage(error)
+  } finally {
+    runEnvironmentDetailLoading.value = false
+  }
+}
+
+function goConfigCenterEnv() {
+  void router.push('/config-center')
 }
 
 function guardRunEnvironmentForPath(path: string) {
@@ -3406,6 +3862,7 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
   const key = source?.id ? `definition:${source.id}:${Date.now()}` : `draft:${Date.now()}`
   const tab: EditorTab = {
     key,
+    resourceType: 'definition',
     definitionId: source?.id || null,
     title: editorTitle(detail),
     method: detail.requestConfig.method || detail.method || 'GET',
@@ -3423,6 +3880,63 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
     urlInputRef.value?.focus()
     scrollActiveEditorTabIntoView()
   })
+}
+
+function openAiCaseGenerationResultTab(editor: EditorTab, sourceState?: AiCaseGenerationTabState | null) {
+  const definitionId = sourceState?.definitionId || editor.definitionId
+  if (!definitionId) return null
+  const state: AiCaseGenerationTabState = {
+    definitionId,
+    workspaceCode: sourceState?.workspaceCode || editor.detail.workspaceCode || props.workspaceCode,
+    definitionName: sourceState?.definitionName || editor.detail.name || editor.title || '未命名接口',
+    method: sourceState?.method || editor.detail.requestConfig.method || editor.method || 'GET',
+    path: sourceState?.path || editor.detail.requestConfig.path || editor.detail.path || '',
+    description: sourceState?.description ?? editor.detail.description ?? null,
+    requestConfig: clone(sourceState?.requestConfig || editor.detail.requestConfig),
+    assertions: clone(sourceState?.assertions || editor.detail.assertions || []),
+    preProcessors: clone(sourceState?.preProcessors || editor.detail.preProcessors || []),
+    postProcessors: clone(sourceState?.postProcessors || editor.detail.postProcessors || []),
+    results: [],
+    generating: true,
+    message: '',
+    logs: [],
+  }
+  const detail = createDraftDetail()
+  detail.id = definitionId
+  detail.name = 'AI 生成单接口用例'
+  detail.method = state.method
+  detail.path = state.path
+  detail.requestConfig.method = state.method
+  detail.requestConfig.path = state.path
+  detail.workspaceCode = state.workspaceCode
+  const tab: EditorTab = {
+    key: `ai-case-generation:${definitionId}:${Date.now()}`,
+    resourceType: 'ai-case-generation',
+    definitionId,
+    title: `AI 用例 - ${state.definitionName}`,
+    method: 'AI',
+    dirty: false,
+    activeTab: 'cases',
+    responseTab: 'body',
+    detail,
+    runResult: null,
+    runError: '',
+    loading: false,
+    aiGeneration: state,
+  }
+  tabs.value.push(tab)
+  aiCaseGeneratedResults.value = state.results
+  aiCaseGenerationLogs.value = state.logs
+  aiCaseGenerationMessage.value = state.message
+  aiCaseResultFilter.value = 'pending'
+  aiCaseResultKeyword.value = ''
+  aiCaseResultGroup.value = ''
+  aiCaseResultType.value = ''
+  aiCaseSelectedResultIds.value = []
+  activeEditorKey.value = tab.key
+  aiCaseDrawerVisible.value = false
+  void nextTick(scrollActiveEditorTabIntoView)
+  return state
 }
 
 async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
@@ -3451,6 +3965,7 @@ async function openDefinition(item: ApiDefinitionItem, syncDirectory = true) {
 
   const tab: EditorTab = {
     key: `definition:${item.id}`,
+    resourceType: 'definition',
     definitionId: item.id,
     title: item.name,
     method: item.method,
@@ -3943,7 +4458,31 @@ function openImportDialog() {
   importUrl.value = ''
   importFileName.value = ''
   importFile.value = null
+  importGroupByTags.value = true
+  importDirectoryName.value = currentImportDirectoryName()
   importDialogVisible.value = true
+}
+
+function currentImportDirectoryName() {
+  if (selectedDirectoryKey.value.startsWith('module:')) {
+    const node = findDirectoryNodeByKey(directoryTree.value, selectedDirectoryKey.value)
+    return (node?.fullPath || '').trim()
+  }
+  if (selectedDirectoryKey.value.startsWith('request:')) {
+    const id = Number(selectedDirectoryKey.value.split(':')[1] || '')
+    const definition = definitions.value.find(item => item.id === id)
+    return (definition?.directoryName || '').trim()
+  }
+  return ''
+}
+
+function findDirectoryNodeByKey(nodes: DirectoryNode[], key: string): DirectoryNode | null {
+  for (const node of nodes) {
+    if (node.key === key) return node
+    const child = findDirectoryNodeByKey(node.children || [], key)
+    if (child) return child
+  }
+  return null
 }
 
 function closeImportDialog() {
@@ -3972,12 +4511,20 @@ async function submitImportDialog() {
   importSubmitting.value = true
   try {
     const result = importInputMode.value === 'file'
-      ? await apiAutomationApi.importDefinitionFile(props.workspaceCode, importMode.value, importFile.value!)
+      ? await apiAutomationApi.importDefinitionFile(
+          props.workspaceCode,
+          importMode.value,
+          importFile.value!,
+          importDirectoryName.value || null,
+          importMode.value === 'swagger' ? true : null,
+        )
       : await apiAutomationApi.importDefinitions(props.workspaceCode, {
           workspaceCode: props.workspaceCode,
           mode: importMode.value,
           inputType: 'url',
           url: importUrl.value.trim(),
+          directoryName: importDirectoryName.value || null,
+          groupByTags: importMode.value === 'swagger' ? true : null,
         })
     await loadWorkspaceData({ openDefaultTab: false })
     const firstImported = result.items[0]
@@ -4122,7 +4669,7 @@ async function loadAiCaseProviders() {
 }
 
 function openAiCaseDrawer() {
-  if (!activeEditor.value?.definitionId) {
+  if (!activeEditor.value?.definitionId && !activeAiCaseGenerationState.value?.definitionId) {
     ElMessage.warning('请先保存接口，再使用 AI 生成接口用例')
     return
   }
@@ -4143,9 +4690,17 @@ function generatedResultId(event: ApiAiCaseGenerationEvent, index: number) {
   return event.itemId || event.item?.typeKey || event.outline?.typeKey || `ai-case-${Date.now()}-${index}`
 }
 
-function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent) {
+function syncAiGenerationStateToPanel(state: AiCaseGenerationTabState) {
+  if (activeAiCaseGenerationState.value !== state) return
+  aiCaseGeneratedResults.value = state.results
+  aiCaseGenerationLogs.value = state.logs
+  aiCaseGenerationMessage.value = state.message
+}
+
+function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent, state?: AiCaseGenerationTabState | null) {
+  const results = state?.results || aiCaseGeneratedResults.value
   const draft = event.item || {
-    name: event.outline?.name || `AI 生成用例 ${aiCaseGeneratedResults.value.length + 1}`,
+    name: event.outline?.name || `AI 生成用例 ${results.length + 1}`,
     description: event.outline?.description || event.message || '',
     tags: event.outline?.tags || [],
     group: event.outline?.group || event.group || null,
@@ -4153,13 +4708,13 @@ function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent) {
     type: event.outline?.type || event.type || null,
     typeKey: event.outline?.typeKey || null,
     expected: event.outline?.expected || null,
-    requestConfig: clone(activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
-    assertions: [],
-    preProcessors: [],
-    postProcessors: [],
+    requestConfig: clone(state?.requestConfig || activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
+    assertions: clone(state?.assertions || []),
+    preProcessors: clone(state?.preProcessors || []),
+    postProcessors: clone(state?.postProcessors || []),
   }
-  const id = generatedResultId(event, aiCaseGeneratedResults.value.length)
-  const existed = aiCaseGeneratedResults.value.find(item => item.id === id)
+  const id = generatedResultId(event, results.length)
+  const existed = results.find(item => item.id === id)
   const next: ApiAiGeneratedCaseResult = {
     id,
     status: event.event === 'item_failed' ? 'failed' : existed?.status || 'pending',
@@ -4169,37 +4724,58 @@ function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent) {
   if (existed) {
     Object.assign(existed, next)
   } else {
-    aiCaseGeneratedResults.value.push(next)
+    results.push(next)
+  }
+  if (state) {
+    state.results = [...results]
+    syncAiGenerationStateToPanel(state)
   }
 }
 
-function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent) {
+function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent, state?: AiCaseGenerationTabState | null) {
+  const log = (message: string) => {
+    if (state) {
+      state.logs.push(message)
+      syncAiGenerationStateToPanel(state)
+    } else {
+      aiCaseLog(message)
+    }
+  }
   if (event.event === 'started') {
-    aiCaseLog(`开始生成，预计 ${event.total || selectedAiCaseOptions().length} 条`)
+    log(`开始生成，预计 ${event.total || selectedAiCaseOptions().length} 条`)
   } else if (event.event === 'item_outline') {
-    aiCaseLog(`生成大纲：${event.outline?.name || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event)
+    log(`生成大纲：${event.outline?.name || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event, state)
   } else if (event.event === 'item_completed') {
-    aiCaseLog(`生成完成：${event.item?.name || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event)
+    log(`生成完成：${event.item?.name || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event, state)
   } else if (event.event === 'item_failed') {
-    aiCaseLog(`单条失败：${event.message || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event)
+    log(`单条失败：${event.message || event.type || event.itemId || '-'}`)
+    mergeAiGeneratedResult(event, state)
   } else if (event.event === 'completed') {
     aiCaseGenerationStatus.value = 'done'
     aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例完成'
-    aiCaseLog(aiCaseGenerationMessage.value)
+    if (state) {
+      state.generating = false
+      state.message = aiCaseGenerationMessage.value
+    }
+    log(aiCaseGenerationMessage.value)
   } else if (event.event === 'failed') {
     aiCaseGenerationStatus.value = 'failed'
     aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例失败'
-    aiCaseLog(aiCaseGenerationMessage.value)
+    if (state) {
+      state.generating = false
+      state.message = aiCaseGenerationMessage.value
+    }
+    log(aiCaseGenerationMessage.value)
   } else {
-    aiCaseLog(event.message || event.event)
+    log(event.message || event.event)
   }
 }
 
 async function submitAiCaseGeneration() {
-  if (!activeEditor.value?.definitionId) {
+  const sourceState = activeAiCaseGenerationState.value
+  if (!activeEditor.value?.definitionId && !sourceState?.definitionId) {
     ElMessage.warning('请先保存接口，再使用 AI 生成接口用例')
     return
   }
@@ -4213,74 +4789,88 @@ async function submitAiCaseGeneration() {
   }
 
   const editor = activeEditor.value
-  const definitionId = editor.definitionId
+  if (!editor) return
+  const definitionId = sourceState?.definitionId || editor.definitionId
   if (!definitionId) return
   const detail = editor.detail
-  const targetWorkspaceCode = editor.detail.workspaceCode || props.workspaceCode
+  const targetWorkspaceCode = sourceState?.workspaceCode || editor.detail.workspaceCode || props.workspaceCode
   if (!requireConcreteCaseWorkspace(targetWorkspaceCode, 'AI 生成接口用例')) return
   aiCaseGenerationStatus.value = 'running'
   aiCaseGenerationMessage.value = ''
   aiCaseGenerationLogs.value = []
   aiCaseGeneratedResults.value = []
+  const generationState = openAiCaseGenerationResultTab(editor, sourceState)
+  if (!generationState) return
 
   try {
     await apiAutomationApi.streamAiCaseGeneration(targetWorkspaceCode, {
       workspaceCode: targetWorkspaceCode,
       definitionId,
-      definitionName: detail.name,
-      name: detail.name,
-      method: detail.requestConfig.method || detail.method,
-      path: detail.requestConfig.path || detail.path,
-      description: detail.description,
+      definitionName: sourceState?.definitionName || detail.name,
+      name: sourceState?.definitionName || detail.name,
+      method: sourceState?.method || detail.requestConfig.method || detail.method,
+      path: sourceState?.path || detail.requestConfig.path || detail.path,
+      description: sourceState?.description ?? detail.description,
       providerConnectionId: aiCaseSelectedProvider.value.id,
       modelName: aiCaseSelectedProvider.value.modelName || '',
       caseCount: aiCaseCount.value,
       noDuplicate: aiCaseNoDuplicate.value,
       prompt: aiCasePrompt.value || null,
       options: selectedAiCaseOptions(),
-      requestConfig: clone(detail.requestConfig),
-      assertions: clone(detail.assertions || []),
-      preProcessors: clone(detail.preProcessors || []),
-      postProcessors: clone(detail.postProcessors || []),
+      requestConfig: clone(sourceState?.requestConfig || detail.requestConfig),
+      assertions: clone(sourceState?.assertions || detail.assertions || []),
+      preProcessors: clone(sourceState?.preProcessors || detail.preProcessors || []),
+      postProcessors: clone(sourceState?.postProcessors || detail.postProcessors || []),
       existingCases: activeDefinitionCases.value.map(item => ({
         id: item.id,
         name: item.name,
         tags: item.tags || [],
       })),
-    }, handleAiCaseGenerationEvent)
+    }, event => handleAiCaseGenerationEvent(event, generationState))
 
     if (aiCaseGenerationStatus.value === 'running') {
       aiCaseGenerationStatus.value = 'done'
       aiCaseGenerationMessage.value = 'AI 生成接口用例完成'
+      generationState.generating = false
+      generationState.message = aiCaseGenerationMessage.value
+      syncAiGenerationStateToPanel(generationState)
     }
   } catch (error) {
     aiCaseGenerationStatus.value = 'failed'
     aiCaseGenerationMessage.value = getRequestErrorMessage(error)
-    aiCaseLog(aiCaseGenerationMessage.value)
+    generationState.generating = false
+    generationState.message = aiCaseGenerationMessage.value
+    generationState.logs.push(aiCaseGenerationMessage.value)
+    syncAiGenerationStateToPanel(generationState)
+  } finally {
+    generationState.generating = false
+    syncAiGenerationStateToPanel(generationState)
   }
 }
 
 async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
-  if (!activeEditor.value?.definitionId) return
-  const targetWorkspaceCode = resolveCaseItemWorkspaceCode()
+  const generationState = activeAiCaseGenerationState.value
+  const definitionId = generationState?.definitionId || activeEditor.value?.definitionId
+  if (!definitionId) return
+  const targetWorkspaceCode = generationState?.workspaceCode || resolveCaseItemWorkspaceCode()
   if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '保存 AI 生成用例')) return
   aiCaseSavingId.value = result.id
   try {
     const draft = result.draft
     await apiAutomationApi.createCase(targetWorkspaceCode, {
       workspaceCode: targetWorkspaceCode,
-      definitionId: activeEditor.value.definitionId,
+      definitionId,
       name: draft.name?.trim() || 'AI 生成接口用例',
       description: draft.description || draft.expected || null,
       tags: Array.isArray(draft.tags) ? draft.tags : [],
-      requestConfig: clone(draft.requestConfig || activeEditor.value.detail.requestConfig),
-      assertions: clone(draft.assertions || activeEditor.value.detail.assertions || []),
-      preProcessors: clone(draft.preProcessors || activeEditor.value.detail.preProcessors || []),
-      postProcessors: clone(draft.postProcessors || activeEditor.value.detail.postProcessors || []),
+      requestConfig: clone(draft.requestConfig || generationState?.requestConfig || activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
+      assertions: clone(draft.assertions || generationState?.assertions || activeEditor.value?.detail.assertions || []),
+      preProcessors: clone(draft.preProcessors || generationState?.preProcessors || activeEditor.value?.detail.preProcessors || []),
+      postProcessors: clone(draft.postProcessors || generationState?.postProcessors || activeEditor.value?.detail.postProcessors || []),
     })
     result.status = 'accepted'
     aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
-    await loadCasesForDefinition(activeEditor.value.definitionId, targetWorkspaceCode)
+    await loadCasesForDefinition(definitionId, targetWorkspaceCode)
     ElMessage.success('AI 生成用例已保存')
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -4311,9 +4901,86 @@ function toggleAiGeneratedCaseSelection(id: string, checked: string | number | b
   aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(item => item !== id)
 }
 
+function toggleAllAiGeneratedCaseSelection(checked: string | number | boolean) {
+  const selectableIds = aiCaseFilteredResults.value
+    .filter(item => item.status === 'pending')
+    .map(item => item.id)
+  if (!Boolean(checked)) {
+    aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => !selectableIds.includes(id))
+    return
+  }
+  aiCaseSelectedResultIds.value = Array.from(new Set([...aiCaseSelectedResultIds.value, ...selectableIds]))
+}
+
+async function runAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
+  const generationState = activeAiCaseGenerationState.value
+  const targetWorkspaceCode = generationState?.workspaceCode || resolveCaseItemWorkspaceCode()
+  if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '运行 AI 生成用例')) return
+  const requestConfig = clone(result.draft.requestConfig || generationState?.requestConfig || emptyRequestConfig())
+  if (!guardRunEnvironmentForPath(requestConfig.path || '')) return
+  result.runResult = '运行中'
+  result.runMessage = ''
+  try {
+    const runResult = await apiAutomationApi.debugRunDefinitionDraft(targetWorkspaceCode, {
+      ...currentRunPayload(),
+      workspaceCode: targetWorkspaceCode,
+      name: result.draft.name || 'AI 生成接口用例',
+      description: result.draft.description || result.draft.expected || null,
+      tags: result.draft.tags || [],
+      directoryName: null,
+      requestConfig,
+      assertions: clone(result.draft.assertions || generationState?.assertions || []),
+      extractors: [],
+      preProcessors: clone(result.draft.preProcessors || generationState?.preProcessors || []),
+      postProcessors: clone(result.draft.postProcessors || generationState?.postProcessors || []),
+    })
+    result.runResult = runResult.result === 'PASSED' ? '通过' : '失败'
+    result.runMessage = runResult.failureSummary || ''
+    ElMessage.success('AI 生成用例已运行')
+  } catch (error) {
+    result.runResult = '失败'
+    result.runMessage = getRequestErrorMessage(error)
+    ElMessage.error(result.runMessage)
+  }
+}
+
+async function runSelectedAiGeneratedCases() {
+  const selected = aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id))
+  if (!selected.length) {
+    ElMessage.info('请先勾选待运行的生成结果')
+    return
+  }
+  for (const item of selected) {
+    await runAiGeneratedCase(item)
+  }
+}
+
 function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {
   aiCaseDetailResult.value = result
   aiCaseDetailVisible.value = true
+}
+
+function aiGeneratedCaseStatusLabel(status: ApiAiGeneratedCaseStatus) {
+  if (status === 'accepted') return '已采纳'
+  if (status === 'discarded') return '已丢弃'
+  if (status === 'failed') return '失败'
+  return '待处理'
+}
+
+function aiGeneratedCaseMethod(result: ApiAiGeneratedCaseResult | null) {
+  return result?.draft.requestConfig?.method || activeEditor.value?.detail.requestConfig.method || '-'
+}
+
+function aiGeneratedCasePath(result: ApiAiGeneratedCaseResult | null) {
+  return result?.draft.requestConfig?.path || activeEditor.value?.detail.requestConfig.path || '-'
+}
+
+function aiGeneratedCaseGroupLabel(result: ApiAiGeneratedCaseResult | null) {
+  return result?.draft.group || result?.draft.groupKey || '未分组'
+}
+
+function aiGeneratedCaseTypeLabel(result: ApiAiGeneratedCaseResult | null) {
+  return result?.draft.type || result?.draft.typeKey || '接口用例'
 }
 
 function latestCaseRunHistories(items: ApiRunHistoryItem[]) {
@@ -4669,6 +5336,9 @@ watch(tabs, () => {
 }, { deep: true })
 
 watch(activeEditorKey, () => {
+  if (activeAiCaseGenerationState.value) {
+    syncAiGenerationStateToPanel(activeAiCaseGenerationState.value)
+  }
   void nextTick(updateEditorTabOverflow)
 })
 
@@ -4719,7 +5389,7 @@ onBeforeUnmount(() => {
           仅展示前 {{ DIRECTORY_SEARCH_RESULT_LIMIT }} 条结果，请输入更精确关键词
         </div>
 
-        <div v-loading="moduleLoading || definitionLoading" class="api-directory-body">
+        <div v-loading="moduleLoading || definitionLoading" class="api-directory-body app-soft-scrollbar">
           <div v-if="moduleErrorMessage || definitionErrorMessage" class="api-directory-error">
             {{ moduleErrorMessage || definitionErrorMessage }}
           </div>
@@ -4747,25 +5417,25 @@ onBeforeUnmount(() => {
                 <div class="api-directory-node__main">
                   <template v-if="data.type === 'request'">
                     <span :class="['api-method', requestMethodClass(data.method)]">{{ data.method }}</span>
-                    <span class="api-directory-node__name">{{ data.label }}</span>
+                    <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
                   </template>
                   <template v-else-if="data.type === 'placeholder'">
                     <span class="api-directory-node__placeholder-dot"></span>
-                    <span class="api-directory-node__placeholder-text">{{ data.label }}</span>
+                    <span class="api-directory-node__placeholder-text" :title="data.label">{{ data.label }}</span>
                   </template>
                   <template v-else>
                     <span :class="['api-directory-node__folder', { 'is-open': expandedKeys.includes(data.key) }]">
                       <LucideFolderOpen v-if="expandedKeys.includes(data.key)" class="api-directory-node__icon" />
                       <LucideFolder v-else class="api-directory-node__icon" />
                     </span>
-                    <span class="api-directory-node__name">{{ data.label }}</span>
+                    <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
                     <span
                       v-if="data.type === 'module' && isDefinitionModuleLoading(data.workspaceCode, data.moduleId, data.fullPath)"
                       class="api-directory-node__loading"
                     >
                       加载中
                     </span>
-                    <span class="api-directory-node__count">{{ data.count }}</span>
+                    <span v-if="data.type === 'workspace' || data.type === 'module'" class="api-directory-node__count">{{ data.count || 0 }}</span>
                   </template>
                 </div>
 
@@ -4864,6 +5534,147 @@ onBeforeUnmount(() => {
           <button type="button" @click="openNewRequestTab()">新建请求</button>
         </div>
 
+        <template v-else-if="isAiCaseGenerationTabActive">
+          <div class="ai-generation-workspace">
+            <div class="ai-generation-page-header">
+              <div>
+                <h3 class="ai-generation-title-line">
+                  <span>AI 生成单接口用例</span>
+                  <span class="ai-generation-title-source">
+                    <span class="ai-generation-source-name">{{ activeAiCaseGenerationState?.definitionName }}</span>
+                    <span :class="['api-method', requestMethodClass(activeAiCaseGenerationState?.method)]">
+                    {{ activeAiCaseGenerationState?.method || 'GET' }}
+                    </span>
+                    <span class="ai-generation-source-path">{{ activeAiCaseGenerationState?.path || '-' }}</span>
+                  </span>
+                </h3>
+              </div>
+              <button
+                type="button"
+                :class="['ai-generation-header-action', { 'is-stop': activeAiCaseGenerationState?.generating }]"
+                :disabled="activeAiCaseGenerationState?.generating"
+                @click="openAiCaseDrawer"
+              >
+                <MagicStick v-if="!activeAiCaseGenerationState?.generating" />
+                {{ activeAiCaseGenerationState?.generating ? '生成中...' : '生成新用例' }}
+              </button>
+            </div>
+
+            <div class="ai-generation-detail-workspace">
+              <div class="ai-generation-detail-status-row">
+                <div class="ai-generation-detail-status-tabs">
+                  <button type="button" :class="{ active: aiCaseResultFilter === 'pending' }" @click="aiCaseResultFilter = 'pending'">
+                    待处理 ({{ aiCasePendingResults.length }})
+                  </button>
+                  <button type="button" :class="{ active: aiCaseResultFilter === 'accepted' }" @click="aiCaseResultFilter = 'accepted'">
+                    已采纳 ({{ aiCaseAcceptedResults.length }})
+                  </button>
+                  <button type="button" :class="{ active: aiCaseResultFilter === 'discarded' }" @click="aiCaseResultFilter = 'discarded'">
+                    废弃 ({{ aiCaseDiscardedResults.length }})
+                  </button>
+                </div>
+              </div>
+
+              <div class="ai-generation-detail-toolbar">
+                <div class="ai-generation-detail-search">
+                  <Search />
+                  <input v-model="aiCaseResultKeyword" type="text" placeholder="搜索" />
+                </div>
+                <el-select v-model="aiCaseResultGroup" class="ai-generation-detail-filter" placeholder="分组" clearable>
+                  <el-option v-for="item in aiCaseResultGroupOptions" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+                <el-select v-model="aiCaseResultType" class="ai-generation-detail-filter is-wide" placeholder="类型" clearable>
+                  <el-option v-for="item in aiCaseResultTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
+                </el-select>
+                <div class="ai-generation-detail-actions">
+                  <button type="button" class="ai-generation-run-selected" :disabled="!selectedPendingAiCaseResults.length" @click="runSelectedAiGeneratedCases">
+                    <LucidePlay />
+                    运行选中
+                  </button>
+                  <button type="button" class="ai-generation-accept-selected" :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)" @click="batchAcceptAiGeneratedCases">采纳选中</button>
+                  <button type="button" class="ai-generation-discard-selected" :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)" @click="batchDiscardAiGeneratedCases">废弃选中</button>
+                </div>
+              </div>
+
+              <div class="ai-generation-detail-table">
+                <div class="ai-generation-detail-head">
+                  <div class="ai-generation-row-selector">
+                    <el-checkbox
+                      :model-value="aiCaseSelectionAllChecked"
+                      :indeterminate="aiCaseSelectionIndeterminate"
+                      @update:model-value="toggleAllAiGeneratedCaseSelection($event)"
+                    />
+                  </div>
+                  <span>名称</span>
+                  <span>类型</span>
+                  <span>分组</span>
+                  <span>运行结果</span>
+                  <span></span>
+                </div>
+
+                <div class="ai-generation-detail-body">
+                  <div v-if="!aiCaseFilteredResults.length" class="ai-generation-empty-state">
+                    <MagicStick />
+                    <span>{{ activeAiCaseGenerationState?.generating ? 'AI 正在生成用例，请稍候...' : '暂无生成结果' }}</span>
+                  </div>
+                  <div
+                    v-for="(row, index) in aiCaseFilteredResults"
+                    :key="row.id"
+                    class="ai-generation-detail-row"
+                    @click="openAiGeneratedCaseDetail(row)"
+                  >
+                    <div class="ai-generation-row-selector" @click.stop>
+                      <template v-if="row.runResult === '运行中'">
+                        <svg class="ai-generation-row-loading" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 40 60 16" aria-hidden="true" focusable="false">
+                          <circle fill="currentColor" stroke="none" cx="6" cy="50" r="6">
+                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.1s" />
+                          </circle>
+                          <circle fill="currentColor" stroke="none" cx="26" cy="50" r="6">
+                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.2s" />
+                          </circle>
+                          <circle fill="currentColor" stroke="none" cx="46" cy="50" r="6">
+                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.3s" />
+                          </circle>
+                        </svg>
+                      </template>
+                      <template v-else>
+                        <span class="ai-generation-row-index">{{ index + 1 }}</span>
+                        <el-checkbox
+                          v-if="row.status === 'pending'"
+                          class="ai-generation-row-checkbox"
+                          :model-value="aiCaseSelectedResultIds.includes(row.id)"
+                          @update:model-value="toggleAiGeneratedCaseSelection(row.id, $event)"
+                        />
+                      </template>
+                    </div>
+                    <div class="ai-generation-detail-name">
+                      <span>{{ row.draft.name || 'AI 生成接口用例' }}</span>
+                    </div>
+                    <div class="ai-generation-detail-group-cell">
+                      <span class="ai-generation-case-tag">{{ aiGeneratedCaseTypeLabel(row) }}</span>
+                    </div>
+                    <span :class="['ai-generation-detail-group-type', String(row.draft.groupKey || row.draft.group || '').includes('negative') ? 'is-negative' : 'is-positive']">{{ aiGeneratedCaseGroupLabel(row) }}</span>
+                    <span :class="['ai-generation-run-result', { 'is-success': row.runResult === '通过', 'is-failed': row.runResult === '失败' || row.status === 'failed' }]">
+                      {{ row.runResult || '-' }}
+                    </span>
+                    <div class="ai-generation-row-actions">
+                      <button type="button" class="ai-generation-row-run" :disabled="row.status !== 'pending' || row.runResult === '运行中'" @click.stop="runAiGeneratedCase(row)">
+                        <LucidePlay />
+                        运行
+                      </button>
+                      <button type="button" class="ai-generation-row-accept" :disabled="row.status !== 'pending' || aiCaseSavingId === row.id" @click.stop="saveAiGeneratedCase(row)">
+                        {{ aiCaseSavingId === row.id ? '保存中' : '采纳' }}
+                      </button>
+                      <button v-if="row.status === 'discarded'" type="button" class="ai-generation-row-discard" @click.stop="restoreAiGeneratedCase(row)">恢复</button>
+                      <button v-else type="button" class="ai-generation-row-discard" :disabled="row.runResult === '运行中'" @click.stop="discardAiGeneratedCase(row)">废弃</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <template v-else>
           <div class="api-request-line">
             <div class="api-url-compose">
@@ -4884,6 +5695,38 @@ onBeforeUnmount(() => {
                 @input="markDirty"
               />
               <button type="button" class="api-curl-button" @click="promptImportCurl">Curl</button>
+            </div>
+            <div class="api-run-environment-combo">
+              <el-tooltip
+                :content="selectedEnvironment ? '查看运行环境详情' : '选择运行环境后查看详情'"
+                placement="top"
+              >
+                <button
+                  type="button"
+                  class="api-run-environment-detail-button"
+                  :disabled="!selectedEnvironment"
+                  @click="openRunEnvironmentDrawer"
+                >
+                  <el-icon><InfoFilled /></el-icon>
+                </button>
+              </el-tooltip>
+              <el-select
+                v-model="selectedEnvironmentId"
+                class="api-run-environment-select"
+                clearable
+                filterable
+                :loading="runOptionsLoading"
+                placeholder="运行环境"
+                popper-class="api-run-env-popper"
+                @change="persistRunOptions"
+              >
+                <el-option
+                  v-for="environment in environments"
+                  :key="environment.id"
+                  :label="environment.name"
+                  :value="environment.id"
+                />
+              </el-select>
             </div>
             <button
               type="button"
@@ -5368,108 +6211,170 @@ onBeforeUnmount(() => {
                     <div class="api-definition-path">{{ activeEditor.detail.requestConfig.path || '-' }}</div>
                   </section>
 
-                  <section class="api-definition-section">
-                    <div class="api-definition-section__title">
-                      <strong>请求参数</strong>
-                      <span>Path / Query / Header</span>
-                    </div>
-                    <div class="api-definition-grid">
-                      <div class="api-definition-card">
-                        <div class="api-definition-card__title">Path</div>
-                        <div v-if="!pathSchemaFields.length" class="api-definition-empty">暂无 Path 参数</div>
-                        <div v-else class="api-schema-mini-list">
-                          <div v-for="field in pathSchemaFields" :key="`path-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
-                            <strong>{{ schemaFieldName(field) }}</strong>
-                            <span>{{ schemaFieldType(field) }}</span>
-                            <small>{{ field.description || '-' }}</small>
-                          </div>
+                  <div class="api-definition-main">
+                    <section
+                      v-if="definitionRequestSchemaGroups.length || bodySchemaFields.length"
+                      class="api-definition-section"
+                    >
+                      <div class="api-definition-section__title">
+                        <div>
+                          <strong>请求参数</strong>
                         </div>
                       </div>
-                      <div class="api-definition-card">
-                        <div class="api-definition-card__title">Query</div>
-                        <div v-if="!querySchemaFields.length" class="api-definition-empty">暂无 Query 参数</div>
-                        <div v-else class="api-schema-mini-list">
-                          <div v-for="field in querySchemaFields" :key="`query-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
-                            <strong>{{ schemaFieldName(field) }}</strong>
-                            <span>{{ schemaFieldType(field) }}</span>
-                            <small>{{ field.description || '-' }}</small>
+                      <div class="api-definition-group-list">
+                        <div v-for="group in definitionRequestSchemaGroups" :key="group.key" class="api-definition-group">
+                          <div class="api-definition-group__head">
+                            <div>
+                              <strong>{{ group.title }}</strong>
+                              <span>{{ group.description }}</span>
+                            </div>
+                          </div>
+                          <div class="api-doc-schema-table">
+                            <div class="api-doc-schema-head">
+                              <span>参数名</span>
+                              <span>类型</span>
+                              <span>必填</span>
+                              <span>说明</span>
+                              <span>示例/规则</span>
+                            </div>
+                            <div v-for="field in group.fields" :key="`${group.key}-schema-${field.fieldPath || field.name}`" class="api-doc-schema-row">
+                              <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
+                                <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
+                                <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
+                              </span>
+                              <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                              <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
+                              <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
+                              <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div class="api-definition-card">
-                        <div class="api-definition-card__title">Header</div>
-                        <div v-if="!headerSchemaFields.length" class="api-definition-empty">暂无 Header 参数</div>
-                        <div v-else class="api-schema-mini-list">
-                          <div v-for="field in headerSchemaFields" :key="`header-schema-${field.fieldPath || field.name}`" class="api-schema-mini-item">
-                            <strong>{{ schemaFieldName(field) }}</strong>
-                            <span>{{ schemaFieldType(field) }}</span>
-                            <small>{{ field.description || '-' }}</small>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </section>
 
-                  <section class="api-definition-section">
-                    <div class="api-definition-section__title">
-                      <div>
-                        <strong>Request Body Schema</strong>
-                        <span>{{ bodySchemaFields.length }} 个字段</span>
+                        <div v-if="bodySchemaFields.length" class="api-definition-group">
+                          <div class="api-definition-group__head">
+                            <div>
+                              <strong>Body 参数</strong>
+                            </div>
+                            <div class="api-definition-head-actions">
+                              <div class="api-definition-view-switch" aria-label="Body 参数展示方式">
+                                <button
+                                  type="button"
+                                  :class="{ 'is-active': definitionBodyViewMode === 'schema' }"
+                                  @click="definitionBodyViewMode = 'schema'"
+                                >
+                                  Schema
+                                </button>
+                                <span></span>
+                                <button
+                                  type="button"
+                                  :class="{ 'is-active': definitionBodyViewMode === 'json' }"
+                                  @click="definitionBodyViewMode = 'json'"
+                                >
+                                  JSON
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                          <div v-if="definitionBodyViewMode === 'schema'" class="api-doc-schema-table">
+                            <div class="api-doc-schema-head">
+                              <span>参数名</span>
+                              <span>类型</span>
+                              <span>必填</span>
+                              <span>说明</span>
+                              <span>示例/规则</span>
+                            </div>
+                            <div v-for="field in bodySchemaFields" :key="`body-schema-${field.fieldPath || field.name}`" class="api-doc-schema-row">
+                              <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
+                                <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
+                                <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
+                              </span>
+                              <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                              <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
+                              <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
+                              <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
+                            </div>
+                          </div>
+                          <div v-else class="api-definition-example-panel is-full">
+                            <pre>{{ definitionRequestExampleJson }}</pre>
+                          </div>
+                        </div>
                       </div>
-                      <div class="api-schema-actions is-inline">
-                        <button type="button" class="api-schema-action" @click="generateBodySchemaFromJson">从 JSON 生成 Schema</button>
-                      </div>
-                    </div>
-                    <div v-if="!bodySchemaFields.length" class="api-definition-empty is-panel">暂无请求体 Schema。导入 OpenAPI 后，如果文档中包含 requestBody schema，会显示在这里。</div>
-                    <div v-else class="api-schema-table">
-                      <div class="api-schema-header">
-                        <span>字段</span>
-                        <span>类型</span>
-                        <span>必填</span>
-                        <span>描述</span>
-                        <span>示例</span>
-                        <span>默认值</span>
-                        <span>枚举/限制</span>
-                      </div>
-                      <div v-for="field in bodySchemaFields" :key="`definition-body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
-                        <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                        <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                        <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
-                        <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
-                        <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
-                        <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
-                        <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
-                      </div>
-                    </div>
-                  </section>
+                    </section>
 
-                  <section class="api-definition-section">
-                    <div class="api-definition-section__title">
-                      <strong>Response Schema</strong>
-                      <span>{{ responseSchemaFields.length }} 个字段</span>
-                    </div>
-                    <div v-if="!responseSchemaFields.length" class="api-definition-empty is-panel">暂无响应 Schema。后续导入解析响应结构后，会在这里展示状态码与响应字段。</div>
-                    <div v-else class="api-schema-table">
-                      <div class="api-schema-header">
-                        <span>字段</span>
-                        <span>类型</span>
-                        <span>必填</span>
-                        <span>描述</span>
-                        <span>示例</span>
-                        <span>默认值</span>
-                        <span>枚举/限制</span>
+                    <section v-if="responseSchemaFields.length" class="api-definition-section">
+                      <div class="api-definition-section__title">
+                        <div>
+                          <strong>返回响应</strong>
+                        </div>
+                        <div v-if="responseSchemaGroups.length" class="api-definition-status-tabs">
+                          <button
+                            v-for="group in responseSchemaGroups"
+                            :key="group.code"
+                            type="button"
+                            :class="{ 'is-active': activeResponseSchemaGroup?.code === group.code }"
+                            @click="activeDefinitionResponseCode = group.code"
+                          >
+                            {{ group.code }}
+                          </button>
+                        </div>
                       </div>
-                      <div v-for="field in responseSchemaFields" :key="`response-schema-${field.fieldPath || field.name}`" class="api-schema-row">
-                        <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                        <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                        <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
-                        <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
-                        <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
-                        <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
-                        <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
+                      <div class="api-definition-group">
+                        <div class="api-definition-group__head">
+                          <div>
+                            <strong>响应 Body</strong>
+                          </div>
+                          <div class="api-definition-head-actions">
+                            <div class="api-definition-view-switch" aria-label="响应 Body 展示方式">
+                              <button
+                                type="button"
+                                :class="{ 'is-active': definitionResponseViewMode === 'schema' }"
+                                @click="definitionResponseViewMode = 'schema'"
+                              >
+                                Schema
+                              </button>
+                              <span></span>
+                              <button
+                                type="button"
+                                :class="{ 'is-active': definitionResponseViewMode === 'json' }"
+                                @click="definitionResponseViewMode = 'json'"
+                              >
+                                JSON
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div v-if="definitionResponseViewMode === 'schema'" class="api-doc-schema-table">
+                          <div class="api-doc-schema-head">
+                            <span>字段名</span>
+                            <span>类型</span>
+                            <span>必填</span>
+                            <span>说明</span>
+                            <span>示例/规则</span>
+                          </div>
+                          <div v-for="field in activeResponseSchemaFields" :key="`response-schema-${activeResponseSchemaGroup?.code || 'default'}-${field.fieldPath || field.name}`" class="api-doc-schema-row">
+                            <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
+                              <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
+                              <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
+                            </span>
+                            <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
+                            <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
+                            <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
+                            <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
+                          </div>
+                        </div>
+                        <div v-else class="api-definition-example-panel is-full">
+                          <pre>{{ definitionResponseExampleJson }}</pre>
+                        </div>
                       </div>
+                    </section>
+
+                    <div
+                      v-if="!definitionRequestSchemaGroups.length && !bodySchemaFields.length && !responseSchemaFields.length"
+                      class="api-definition-empty is-panel"
+                    >
+                      暂无接口定义字段。导入 OpenAPI 后，如果文档包含参数或响应 Schema，会显示在这里。
                     </div>
-                  </section>
+                  </div>
                 </div>
               </template>
 
@@ -6606,6 +7511,22 @@ onBeforeUnmount(() => {
                 @change="handleImportFileChange"
               >
             </label>
+            <div class="api-import-field">
+              <span>所属模块</span>
+              <el-select
+                v-model="importDirectoryName"
+                clearable
+                filterable
+                placeholder="根目录"
+              >
+                <el-option
+                  v-for="item in importModuleOptions"
+                  :key="`${item.workspaceCode}:${item.value || 'root'}`"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </div>
           </section>
         </div>
 
@@ -7170,26 +8091,71 @@ onBeforeUnmount(() => {
           </div>
     </ApiCaseDetailDrawer>
 
-    <el-drawer v-model="aiCaseDrawerVisible" size="820px" class="api-ai-case-drawer" append-to-body>
+    <el-drawer
+      v-model="aiCaseDrawerVisible"
+      size="640px"
+      class="api-ai-case-drawer"
+      append-to-body
+      :show-close="false"
+      destroy-on-close
+    >
       <template #header>
-        <div class="api-case-drawer-header">
-          <strong>AI 生成接口用例</strong>
-          <span>{{ activeEditor?.detail.name || '-' }} · {{ activeEditor?.detail.requestConfig.method || '-' }} {{ activeEditor?.detail.requestConfig.path || '-' }}</span>
+        <div class="ai-case-drawer-header">
+          <div>
+            <div class="ai-case-drawer-title">
+              <MagicStick />
+              <span>AI 生成接口用例</span>
+            </div>
+            <div class="ai-case-drawer-subtitle">{{ aiCaseActiveSourceName }} · {{ aiCaseActiveSourceMethod }} {{ aiCaseActiveSourcePath }}</div>
+          </div>
+          <button type="button" class="definition-import-close" @click="aiCaseDrawerVisible = false">
+            <LucideX />
+          </button>
         </div>
       </template>
 
-      <div class="api-ai-case-body">
-        <section class="api-ai-case-section">
-          <div class="api-ai-case-section__header">
-            <strong>生成配置</strong>
-            <span :class="['api-ai-status-pill', `is-${aiCaseGenerationStatus}`]">{{ aiCaseGenerationStatusText }}</span>
+      <div class="ai-case-drawer-body">
+        <section class="ai-case-section">
+          <div class="ai-case-section-title">
+            <span>选择生成的用例类型</span>
+            <small>已选 {{ aiCaseGenerateSelectedCount }} 项</small>
           </div>
           <div v-if="aiCaseProviderErrorMessage" class="api-case-failure-box">{{ aiCaseProviderErrorMessage }}</div>
           <div v-else-if="!aiCaseProvidersLoading && !aiCaseAvailableProviders.length" class="api-empty-body">
             暂无可用 AI 模型，请先到 AI 连接池配置个人模型。          </div>
-          <div class="api-ai-case-config-grid">
-            <label>模型</label>
-            <el-select v-model="aiCaseSelectedProviderId" :loading="aiCaseProvidersLoading" placeholder="选择 AI 模型">
+          <div class="ai-case-option-groups">
+            <div v-for="group in aiCaseGenerateGroups" :key="group.key" class="ai-case-option-group">
+              <div class="ai-case-option-group-title">
+                <strong>{{ group.label }}</strong>
+                <button type="button" class="ai-case-select-all-link" @click="toggleAiCaseGroup(group.key, !isAiCaseGroupAllSelected(group.key))">
+                  全选
+                </button>
+              </div>
+              <el-checkbox-group v-model="aiCaseSelectedOptionKeys" class="ai-case-option-list">
+                <el-checkbox v-for="option in group.options" :key="option.key" :value="option.key">
+                  {{ option.label }}
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
+          </div>
+        </section>
+
+        <section class="ai-case-section ai-case-form-section">
+          <label class="ai-case-form-field">
+            <span>用例数</span>
+            <el-select v-model="aiCaseCount" class="ai-case-form-control">
+              <el-option v-for="item in aiCaseCountOptions" :key="item.value" :label="item.label.replace('智能数量', '自动')" :value="item.value" />
+            </el-select>
+          </label>
+          <label class="ai-case-form-field">
+            <span>AI模型</span>
+            <el-select
+              v-model="aiCaseSelectedProviderId"
+              class="ai-case-form-control"
+              :loading="aiCaseProvidersLoading"
+              placeholder="选择 AI 连接池配置的模型"
+              empty-text="暂无可用 AI 模型"
+            >
               <el-option
                 v-for="item in aiCaseAvailableProviders"
                 :key="item.id"
@@ -7197,215 +8163,153 @@ onBeforeUnmount(() => {
                 :value="item.id"
               />
             </el-select>
-            <label>数量</label>
-            <el-select v-model="aiCaseCount">
-              <el-option v-for="item in aiCaseCountOptions" :key="item.value" :label="item.label" :value="item.value" />
-            </el-select>
-            <label>去重</label>
+          </label>
+          <div class="ai-case-form-switch">
             <el-switch v-model="aiCaseNoDuplicate" />
-            <label>补充要求</label>
-            <el-input v-model="aiCasePrompt" type="textarea" :rows="3" resize="none" placeholder="可补充业务规则、边界条件或特殊断言要求" />
+            <span>
+              <strong>不重复生成用例</strong>
+              <small>不生成与已有用例同用例类型的用例。关闭后，生成不受已有用例的影响</small>
+            </span>
           </div>
-          <div class="api-ai-case-options">
-            <el-checkbox-group v-model="aiCaseSelectedOptionKeys">
-              <el-checkbox v-for="item in aiCaseGenerationOptions" :key="item.key" :value="item.key">
-                {{ item.groupLabel }} · {{ item.label }}
-              </el-checkbox>
-            </el-checkbox-group>
-          </div>
-          <div class="api-ai-case-actions">
-            <button type="button" class="api-sidebar-primary" :disabled="!aiCaseCanGenerate" @click="submitAiCaseGeneration">
-              {{ aiCaseGenerationStatus === 'running' ? '生成中...' : '开始生成' }}
-            </button>
-            <button type="button" class="api-sidebar-secondary" @click="loadAiCaseProviders">刷新模型</button>
-          </div>
+          <label class="ai-case-form-field">
+            <el-input
+              v-model="aiCasePrompt"
+              type="textarea"
+              :autosize="{ minRows: 3, maxRows: 5 }"
+              placeholder="输入更多要求"
+              class="ai-case-form-control"
+            />
+          </label>
+          <button type="button" class="ai-case-generate-submit" :disabled="!aiCaseCanGenerate" @click="submitAiCaseGeneration">
+            <MagicStick />
+            {{ aiCaseGenerationStatus === 'running' ? '生成中...' : '生成' }}
+          </button>
+          <button type="button" class="ai-case-refresh-models" @click="loadAiCaseProviders">刷新模型</button>
           <div v-if="aiCaseGenerationMessage" class="api-ai-case-message">{{ aiCaseGenerationMessage }}</div>
         </section>
 
-        <section class="api-ai-case-section">
-          <div class="api-ai-case-section__header">
-            <strong>生成过程</strong>
-            <span>{{ aiCaseGenerationLogs.length }} 条事件</span>
+        <section v-if="activeAiCaseGenerationState" class="ai-case-section">
+          <div class="ai-case-section-title">
+            <span>生成结果</span>
+            <small>已在中间编辑区打开</small>
           </div>
-          <pre v-if="aiCaseGenerationLogs.length" class="api-ai-case-log">{{ aiCaseGenerationLogs.join('\n') }}</pre>
-          <div v-else class="api-empty-body">点击开始生成后，这里展示真实生成过程。</div>
+          <button type="button" class="ai-case-refresh-models" @click="activeEditorKey = tabs.find(item => item.aiGeneration === activeAiCaseGenerationState)?.key || activeEditorKey">
+            返回生成结果页
+          </button>
         </section>
 
-        <section class="api-ai-case-section">
-          <div class="api-ai-case-section__header">
-            <strong>生成结果</strong>
-            <span>共 {{ aiCaseGeneratedResults.length }} 条，待处理 {{ aiCasePendingResults.length }} 条</span>
+        <section v-if="aiCaseGenerationLogs.length" class="ai-case-section">
+          <div class="ai-case-section-title">
+            <span>生成过程</span>
+            <small>{{ aiCaseGenerationLogs.length }} 条事件</small>
           </div>
-          <div class="api-ai-result-toolbar">
-            <div class="api-ai-result-filters">
-              <button
-                v-for="item in aiCaseResultFilterOptions"
-                :key="item.value"
-                type="button"
-                :class="{ 'is-active': aiCaseResultFilter === item.value }"
-                @click="aiCaseResultFilter = item.value"
-              >
-                {{ item.label }} {{ item.count }}
-              </button>
-            </div>
-            <div class="api-ai-result-search">
-              <el-input v-model="aiCaseResultKeyword" clearable placeholder="搜索名称、预期或失败原因" />
-              <el-select v-model="aiCaseResultGroup" clearable placeholder="场景组">
-                <el-option v-for="item in aiCaseResultGroupOptions" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-              <el-select v-model="aiCaseResultType" clearable placeholder="类型">
-                <el-option v-for="item in aiCaseResultTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-            </div>
-            <div class="api-ai-result-actions">
-              <button
-                type="button"
-                class="api-sidebar-secondary"
-                :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)"
-                @click="batchDiscardAiGeneratedCases"
-              >
-                批量弃用
-              </button>
-              <button
-                type="button"
-                class="api-sidebar-primary"
-                :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)"
-                @click="batchAcceptAiGeneratedCases"
-              >
-                批量采纳
-              </button>
-            </div>
-          </div>
-          <div v-if="aiCaseGeneratedResults.length" class="api-ai-result-list">
-            <article v-for="item in aiCaseFilteredResults" :key="item.id" class="api-ai-result-card">
-              <div class="api-ai-result-card__head">
-                <el-checkbox
-                  v-if="item.status === 'pending'"
-                  :model-value="aiCaseSelectedResultIds.includes(item.id)"
-                  class="api-ai-result-card__check"
-                  @update:model-value="toggleAiGeneratedCaseSelection(item.id, $event)"
-                />
-                <div>
-                  <strong>{{ item.draft.name || 'AI 生成接口用例' }}</strong>
-                  <span>{{ item.draft.group || '未分组' }} · {{ item.draft.type || '接口用例' }}</span>
-                </div>
-                <span :class="['api-ai-result-status', `is-${item.status}`]">{{ item.status === 'accepted' ? '已采纳' : item.status === 'discarded' ? '已丢弃' : item.status === 'failed' ? '失败' : '待处理' }}</span>
-              </div>
-              <p v-if="item.draft.description">{{ item.draft.description }}</p>
-              <p v-if="item.draft.expected">预期：{{ item.draft.expected }}</p>
-              <div class="api-ai-result-card__meta">
-                <span>{{ item.draft.requestConfig?.method || activeEditor?.detail.requestConfig.method || '-' }}</span>
-                <span>{{ item.draft.requestConfig?.path || activeEditor?.detail.requestConfig.path || '-' }}</span>
-              </div>
-              <div v-if="item.message" class="api-case-failure-box">{{ item.message }}</div>
-              <div class="api-ai-result-card__actions">
-                <button type="button" class="api-sidebar-secondary" @click="openAiGeneratedCaseDetail(item)">查看详情</button>
-                <button
-                  v-if="item.status === 'pending'"
-                  type="button"
-                  class="api-sidebar-primary"
-                  :disabled="aiCaseSavingId === item.id"
-                  @click="saveAiGeneratedCase(item)"
-                >
-                  {{ aiCaseSavingId === item.id ? '保存中...' : '采纳保存' }}
-                </button>
-                <button
-                  v-if="item.status === 'pending'"
-                  type="button"
-                  class="api-sidebar-secondary"
-                  @click="discardAiGeneratedCase(item)"
-                >
-                  弃用
-                </button>
-                <button
-                  v-else-if="item.status === 'discarded'"
-                  type="button"
-                  class="api-sidebar-secondary"
-                  @click="restoreAiGeneratedCase(item)"
-                >
-                  恢复
-                </button>
-                <button v-else type="button" class="api-sidebar-secondary" disabled>
-                  {{ item.status === 'accepted' ? '已保存' : '不可操作' }}
-                </button>
-              </div>
-            </article>
-            <div v-if="!aiCaseFilteredResults.length" class="api-empty-body">当前筛选暂无生成结果</div>
-          </div>
-          <div v-else class="api-empty-body">暂无生成结果</div>
+          <pre class="api-ai-case-log">{{ aiCaseGenerationLogs.join('\n') }}</pre>
         </section>
       </div>
     </el-drawer>
 
-    <el-dialog
+    <el-drawer
       v-model="aiCaseDetailVisible"
       class="api-ai-case-detail-dialog"
-      title="生成用例详情"
-      width="720px"
+      size="760px"
       append-to-body
     >
-      <div v-if="aiCaseDetailResult" class="api-ai-case-detail">
-        <div class="api-ai-case-detail-summary">
-          <div>
-            <span>用例名称</span>
-            <strong>{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</strong>
-          </div>
-          <div>
-            <span>结果状态</span>
-            <strong>{{ aiCaseDetailResult.status === 'accepted' ? '已采纳' : aiCaseDetailResult.status === 'discarded' ? '已丢弃' : aiCaseDetailResult.status === 'failed' ? '失败' : '待处理' }}</strong>
-          </div>
-          <div>
-            <span>请求方法</span>
-            <strong>{{ aiCaseDetailResult.draft.requestConfig?.method || activeEditor?.detail.requestConfig.method || '-' }}</strong>
-          </div>
-          <div>
-            <span>请求路径</span>
-            <strong>{{ aiCaseDetailResult.draft.requestConfig?.path || activeEditor?.detail.requestConfig.path || '-' }}</strong>
-          </div>
+      <template #header>
+        <div v-if="aiCaseDetailResult" class="api-ai-case-detail-header">
+          <strong>{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</strong>
+          <span :class="['api-ai-result-status', `is-${aiCaseDetailResult.status}`]">{{ aiGeneratedCaseStatusLabel(aiCaseDetailResult.status) }}</span>
         </div>
-        <section v-if="aiCaseDetailResult.draft.description" class="api-ai-case-detail-section">
-          <strong>描述</strong>
-          <p>{{ aiCaseDetailResult.draft.description }}</p>
-        </section>
-        <section v-if="aiCaseDetailResult.draft.expected" class="api-ai-case-detail-section">
-          <strong>预期结果</strong>
-          <p>{{ aiCaseDetailResult.draft.expected }}</p>
-        </section>
-        <section v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason')" class="api-ai-case-detail-section">
-          <strong>生成原因</strong>
-          <p>{{ aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason') }}</p>
-        </section>
-        <section v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')" class="api-ai-case-detail-section">
-          <strong>覆盖率</strong>
-          <pre>{{ toPrettyJson(aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')) }}</pre>
-        </section>
-        <section v-if="aiCaseDetailResult.draft.tags?.length" class="api-ai-case-detail-section">
-          <strong>标签</strong>
-          <div class="api-ai-case-detail-tags">
-            <span v-for="tag in aiCaseDetailResult.draft.tags" :key="tag">{{ tag }}</span>
-          </div>
-        </section>
-        <section v-if="aiCaseDetailResult.message" class="api-case-failure-box">{{ aiCaseDetailResult.message }}</section>
-        <section class="api-ai-case-detail-section">
-          <strong>请求配置</strong>
-          <pre>{{ toPrettyJson(aiCaseDetailResult.draft.requestConfig || {}) }}</pre>
-        </section>
-        <section class="api-ai-case-detail-grid">
-          <div>
-            <span>断言</span>
+      </template>
+
+      <div v-if="aiCaseDetailResult" class="api-ai-case-detail">
+        <div class="api-ai-case-detail-grid">
+          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">用例名称</div>
+            <div class="api-ai-case-detail-text">{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</div>
+          </article>
+          <article>
+            <div class="api-ai-case-detail-label">场景组</div>
+            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseGroupLabel(aiCaseDetailResult) }}</div>
+          </article>
+          <article>
+            <div class="api-ai-case-detail-label">用例类型</div>
+            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseTypeLabel(aiCaseDetailResult) }}</div>
+          </article>
+          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">请求</div>
+            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseMethod(aiCaseDetailResult) }} {{ aiGeneratedCasePath(aiCaseDetailResult) }}</div>
+          </article>
+          <article v-if="aiCaseDetailResult.draft.description" class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">描述</div>
+            <div class="api-ai-case-detail-text is-rich">{{ aiCaseDetailResult.draft.description }}</div>
+          </article>
+          <article v-if="aiCaseDetailResult.draft.expected" class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">预期结果</div>
+            <div class="api-ai-case-detail-text is-rich">{{ aiCaseDetailResult.draft.expected }}</div>
+          </article>
+          <article v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason')" class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">生成原因</div>
+            <div class="api-ai-case-detail-text is-rich">{{ aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason') }}</div>
+          </article>
+          <article v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')" class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">覆盖点</div>
+            <pre>{{ toPrettyJson(aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')) }}</pre>
+          </article>
+          <article v-if="aiCaseDetailResult.draft.tags?.length" class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">标签</div>
+            <div class="api-ai-case-detail-tags">
+              <span v-for="tag in aiCaseDetailResult.draft.tags" :key="tag">{{ tag }}</span>
+            </div>
+          </article>
+          <article v-if="aiCaseDetailResult.message" class="api-case-failure-box api-ai-case-preview-block--full">
+            {{ aiCaseDetailResult.message }}
+          </article>
+          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">请求配置</div>
+            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.requestConfig || {}) }}</pre>
+          </article>
+          <article>
+            <div class="api-ai-case-detail-label">断言</div>
             <pre>{{ toPrettyJson(aiCaseDetailResult.draft.assertions || []) }}</pre>
-          </div>
-          <div>
-            <span>前置处理</span>
+          </article>
+          <article>
+            <div class="api-ai-case-detail-label">前置处理</div>
             <pre>{{ toPrettyJson(aiCaseDetailResult.draft.preProcessors || []) }}</pre>
-          </div>
-          <div>
-            <span>后置处理</span>
+          </article>
+          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
+            <div class="api-ai-case-detail-label">后置处理</div>
             <pre>{{ toPrettyJson(aiCaseDetailResult.draft.postProcessors || []) }}</pre>
-          </div>
-        </section>
+          </article>
+        </div>
       </div>
-    </el-dialog>
+      <template #footer>
+        <div class="api-ai-case-detail-footer">
+          <el-button @click="aiCaseDetailVisible = false">关闭</el-button>
+          <el-button
+            v-if="aiCaseDetailResult?.status === 'discarded'"
+            @click="restoreAiGeneratedCase(aiCaseDetailResult)"
+          >
+            恢复
+          </el-button>
+          <el-button
+            v-if="aiCaseDetailResult?.status === 'pending'"
+            type="danger"
+            plain
+            @click="discardAiGeneratedCase(aiCaseDetailResult)"
+          >
+            弃用
+          </el-button>
+          <el-button
+            v-if="aiCaseDetailResult?.status === 'pending'"
+            type="primary"
+            :loading="aiCaseSavingId === aiCaseDetailResult.id"
+            @click="saveAiGeneratedCase(aiCaseDetailResult)"
+          >
+            采纳保存
+          </el-button>
+        </div>
+      </template>
+    </el-drawer>
 
     <ApiCaseCreateEditDialog
       v-model="caseDialogVisible"
@@ -7435,6 +8339,122 @@ onBeforeUnmount(() => {
       :config="fastExtractionConfig"
       @apply="applyFastExtraction"
     />
+    <el-drawer
+      v-model="runEnvironmentDrawerVisible"
+      append-to-body
+      size="520px"
+      class="api-run-environment-drawer"
+      title="运行环境详情"
+    >
+      <div class="api-run-environment-detail" v-loading="runEnvironmentDetailLoading">
+        <el-alert
+          v-if="runEnvironmentDetailErrorMessage"
+          type="error"
+          :closable="false"
+          :title="runEnvironmentDetailErrorMessage"
+        />
+        <template v-if="selectedEnvironment">
+          <div class="api-run-environment-summary">
+            <div>
+              <strong>{{ selectedEnvironment.name }}</strong>
+              <span>{{ formatApiEnvironmentWorkspace(selectedEnvironment) }} · {{ formatRunEnvironmentStatus(selectedEnvironment.status) }}</span>
+            </div>
+            <small>{{ selectedEnvironment.baseUrl || '未配置 Base URL' }}</small>
+          </div>
+
+          <section class="api-run-environment-section">
+            <div class="api-run-environment-section__title">
+              <span>服务地址</span>
+              <em>{{ runEnvironmentServices.length }} 个</em>
+            </div>
+            <div v-if="runEnvironmentServices.length" class="api-run-environment-service-list">
+              <div
+                v-for="service in runEnvironmentServices"
+                :key="service.key"
+                class="api-run-environment-service"
+              >
+                <div>
+                  <strong>{{ service.name }}</strong>
+                  <span>{{ service.key }}</span>
+                </div>
+                <div class="api-run-environment-service__meta">
+                  <small>{{ service.baseUrl }}</small>
+                  <em v-if="service.isDefault">默认</em>
+                </div>
+              </div>
+            </div>
+            <div v-else class="api-run-environment-empty">未配置服务地址</div>
+          </section>
+
+          <section class="api-run-environment-section">
+            <div class="api-run-environment-section__title">
+              <span>运行绑定</span>
+            </div>
+            <div class="api-run-environment-binding-grid">
+              <div>
+                <span>默认变量集</span>
+                <strong>{{ runEnvironmentDefaultParamSet?.paramName || '未绑定' }}</strong>
+                <small v-if="runEnvironmentDefaultParamSet">
+                  {{ getParamValueText(runEnvironmentDefaultParamSet) }} · {{ getParamDescriptionText(runEnvironmentDefaultParamSet) }}
+                </small>
+                <small v-else>运行时只使用环境变量和接口配置</small>
+              </div>
+              <div>
+                <span>Mock 服务</span>
+                <strong>{{ runEnvironmentMockApplication?.appName || '未绑定' }}</strong>
+                <small v-if="runEnvironmentMockApplication">
+                  {{ runEnvironmentMockApplication.appCode }} · {{ runEnvironmentMockApplication.description || '未填写描述' }}
+                </small>
+                <small v-else>请求将按真实目标地址发送</small>
+              </div>
+              <div v-if="runEnvironmentMockApplication">
+                <span>本次 Mock 场景</span>
+                <el-select
+                  v-model="selectedMockBusinessScenarioId"
+                  clearable
+                  filterable
+                  placeholder="按 Mock 默认规则匹配"
+                  size="small"
+                >
+                  <el-option
+                    v-for="scenario in runEnvironmentMockBusinessScenarios"
+                    :key="scenario.id"
+                    :label="scenario.scenarioName"
+                    :value="scenario.id"
+                  />
+                </el-select>
+                <small>
+                  {{ selectedMockBusinessScenario?.description || '选择后本次运行只按该业务场景命中 Mock；不选择则使用 Mock 默认匹配。' }}
+                </small>
+              </div>
+            </div>
+          </section>
+
+          <section class="api-run-environment-section">
+            <div class="api-run-environment-section__title">
+              <span>请求策略</span>
+            </div>
+            <div class="api-run-environment-policy-list">
+              <span>超时 {{ formatRunEnvironmentTimeout() }}</span>
+              <span>{{ formatRunEnvironmentSsl() }}</span>
+              <span>Header {{ runEnvironmentHeaders.length ? `${runEnvironmentHeaders.length} 个` : '未配置' }}</span>
+            </div>
+            <div v-if="runEnvironmentHeaders.length" class="api-run-environment-header-list">
+              <div v-for="header in runEnvironmentHeaders" :key="header.key">
+                <span>{{ header.key }}</span>
+                <strong>{{ maskRunEnvironmentValue(header.key, header.value) }}</strong>
+              </div>
+            </div>
+          </section>
+        </template>
+      </div>
+      <template #footer>
+        <div class="api-run-environment-drawer-footer">
+          <el-button @click="runEnvironmentDrawerVisible = false">关闭</el-button>
+          <el-button type="primary" @click="goConfigCenterEnv">去配置中心编辑</el-button>
+        </div>
+      </template>
+    </el-drawer>
 
     <el-drawer
       v-model="reportDetailVisible"
@@ -7484,13 +8504,21 @@ onBeforeUnmount(() => {
                 <span>变量集</span>
                 <strong>{{ selectedReportContextVariableSetLabel }}</strong>
                 <small>
-                  ID {{ selectedReportContextSnapshot.variableSet?.id ?? selectedReportDetail.variableSetId ?? '-' }}
+                  <template v-if="selectedReportContextVariableSetDetails.length">
+                    {{ selectedReportContextVariableSetDetails.join(' / ') }}
+                  </template>
+                  <template v-else>ID {{ selectedReportContextSnapshot.variableSet?.id ?? selectedReportDetail.variableSetId ?? '-' }}</template>
                 </small>
               </div>
               <div>
-                <span>Mock 应用</span>
+                <span>Mock</span>
                 <strong>{{ selectedReportContextSnapshot.mock?.appName || '未启用 Mock' }}</strong>
-                <small>{{ selectedReportContextSnapshot.mock?.appCode || selectedReportContextSnapshot.mock?.baseUrl || '-' }}</small>
+                <small>
+                  <template v-if="selectedReportContextSnapshot.mock?.businessScenarioName">
+                    {{ selectedReportContextSnapshot.mock.businessScenarioName }}
+                  </template>
+                  <template v-else>{{ selectedReportContextSnapshot.mock?.appCode || selectedReportContextSnapshot.mock?.baseUrl || '-' }}</template>
+                </small>
               </div>
               <div>
                 <span>变量数量</span>
@@ -8625,32 +9653,41 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-node {
+  position: relative;
   display: flex;
   min-height: 30px;
   min-width: 0;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
   font-size: 14px;
   line-height: 21px;
 }
 
 .api-directory-node__main {
-  display: inline-flex;
+  display: flex;
   min-width: 0;
+  width: 100%;
   align-items: center;
   gap: 7px;
 }
 
 .api-directory-node__actions {
-  display: inline-flex;
-  flex: 0 0 auto;
+  position: absolute;
+  right: 0;
+  display: flex;
+  width: 0;
+  height: 30px;
   align-items: center;
   gap: 2px;
+  overflow: hidden;
+  padding-left: 4px;
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-muted);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  transition: width 0.15s ease, opacity 0.15s ease;
 }
 
 .api-directory-node__action {
@@ -8676,8 +9713,15 @@ onBeforeUnmount(() => {
 .api-directory-node:hover .api-directory-node__actions,
 .api-directory-node:focus-within .api-directory-node__actions,
 .api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__actions {
+  width: auto;
   opacity: 1;
   pointer-events: auto;
+}
+
+.api-directory-node:hover .api-directory-node__count,
+.api-directory-node:focus-within .api-directory-node__count,
+.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__count {
+  visibility: hidden;
 }
 
 .api-directory-node__action:hover {
@@ -8696,6 +9740,7 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-node__name {
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8725,6 +9770,8 @@ onBeforeUnmount(() => {
 }
 
 .api-directory-node__count {
+  flex: 0 0 auto;
+  margin-left: 2px;
   color: var(--app-text-subtle);
   font-size: var(--app-font-size-xs);
   line-height: 16px;
@@ -8901,7 +9948,7 @@ onBeforeUnmount(() => {
 
 .api-request-line {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) 96px auto;
+  grid-template-columns: minmax(320px, 1fr) 204px 96px auto;
   align-items: center;
   gap: 10px;
   padding: 12px 16px;
@@ -8920,31 +9967,257 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.api-run-options {
-  display: none;
-}
-
-.api-run-options .el-select {
-  width: 160px;
-}
-
-.api-run-options :deep(.el-select__wrapper) {
-  min-height: 32px;
-  border-radius: var(--app-radius-md);
-}
-
-.api-run-options small {
-  margin-left: 8px;
-  color: var(--app-text-subtle);
-}
-
-.api-run-options__hint {
-  max-width: 120px;
+.api-run-environment-combo {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
   overflow: hidden;
-  color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-md);
+  background: #fff;
+}
+
+.api-run-environment-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.api-run-environment-select :deep(.el-select__wrapper) {
+  height: 38px;
+  min-height: 38px;
+  padding-left: 10px;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.api-run-environment-select :deep(.el-select__selected-item),
+.api-run-environment-select :deep(.el-select__placeholder) {
+  font-size: 13px;
+}
+
+.api-run-environment-detail-button {
+  display: inline-flex;
+  width: 32px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-right: 1px solid var(--app-border);
+  border-radius: 0;
+  background: #f9fafb;
+  color: var(--app-text-muted);
+  cursor: pointer;
+}
+
+.api-run-environment-detail-button:hover:not(:disabled) {
+  background: #eff6ff;
+  color: var(--app-primary);
+}
+
+.api-run-environment-detail-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+:global(.api-run-env-popper .el-select-dropdown__item) {
+  font-size: 12px;
+}
+
+:global(.api-run-environment-drawer) {
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
+}
+
+.api-run-environment-detail {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+}
+
+.api-run-environment-summary {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.api-run-environment-summary div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.api-run-environment-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.api-run-environment-summary span,
+.api-run-environment-summary small {
+  color: #475569;
+  font-size: 12px;
+}
+
+.api-run-environment-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-run-environment-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-run-environment-section__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--app-text-primary);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.api-run-environment-section__title em {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.api-run-environment-service span,
+.api-run-environment-service small,
+.api-run-environment-binding-grid span,
+.api-run-environment-binding-grid small,
+.api-run-environment-empty,
+.api-run-environment-header-list span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-run-environment-service strong,
+.api-run-environment-binding-grid strong,
+.api-run-environment-header-list strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+
+.api-run-environment-service-list {
+  display: grid;
+  gap: 8px;
+}
+
+.api-run-environment-service {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.api-run-environment-service div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.api-run-environment-service em {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: var(--app-primary);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.api-run-environment-service__meta {
+  margin-top: 3px;
+}
+
+.api-run-environment-binding-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.api-run-environment-binding-grid > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.api-run-environment-binding-grid :deep(.el-select__wrapper) {
+  min-height: 30px;
+  box-shadow: 0 0 0 1px var(--app-border) inset;
+}
+
+.api-run-environment-policy-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.api-run-environment-policy-list span {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  padding: 0 9px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.api-run-environment-header-list {
+  display: grid;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.api-run-environment-header-list div {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.45fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.api-run-environment-drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .api-method-select :deep(.el-select__wrapper),
@@ -9677,7 +10950,7 @@ onBeforeUnmount(() => {
 
 .api-definition-section {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .api-definition-section__title {
@@ -9687,6 +10960,12 @@ onBeforeUnmount(() => {
   gap: 12px;
   color: var(--app-text-primary);
   font-size: 13px;
+}
+
+.api-definition-section__title > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
 }
 
 .api-definition-section__title span {
@@ -9724,28 +11003,91 @@ onBeforeUnmount(() => {
   color: var(--app-primary-hover);
 }
 
-.api-definition-grid {
+.api-definition-main {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  min-width: 0;
+  gap: 16px;
 }
 
-.api-definition-card {
+.api-definition-group-list {
+  display: grid;
+  gap: 12px;
+}
+
+.api-definition-group {
   min-width: 0;
-  min-height: 132px;
+  overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: #fff;
 }
 
-.api-definition-card__title {
-  height: 36px;
-  padding: 0 12px;
+.api-definition-group__head {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--app-border-soft);
+  background: #fbfcfe;
+}
+
+.api-definition-group__head > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.api-definition-group__head strong {
+  overflow: hidden;
   color: var(--app-text-primary);
   font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-group__head span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-definition-head-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.api-definition-view-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.api-definition-view-switch button {
+  min-height: 24px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 36px;
+}
+
+.api-definition-view-switch button:hover,
+.api-definition-view-switch button.is-active {
+  color: var(--app-primary);
+}
+
+.api-definition-view-switch span {
+  width: 1px;
+  height: 13px;
+  background: var(--app-border);
 }
 
 .api-definition-empty {
@@ -9761,44 +11103,171 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.api-schema-mini-list {
-  display: grid;
+.api-definition-status-tabs {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: #fff;
 }
 
-.api-schema-mini-item {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 100px;
-  gap: 4px 8px;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--app-border-soft);
+.api-definition-status-tabs button {
+  min-width: 44px;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
   font-size: 12px;
+  font-weight: 600;
+  text-align: center;
 }
 
-.api-schema-mini-item:last-child {
+.api-definition-status-tabs button.is-active {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.api-doc-schema-table {
+  overflow: auto;
+}
+
+.api-doc-schema-head,
+.api-doc-schema-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.1fr) 116px 64px minmax(170px, 1fr) minmax(150px, 0.9fr);
+  align-items: center;
+  column-gap: 12px;
+  min-width: 840px;
+  padding: 0 12px;
+}
+
+.api-doc-schema-head {
+  height: 34px;
+  border-bottom: 1px solid var(--app-border-soft);
+  background: #f9fafb;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-doc-schema-row {
+  min-height: 42px;
+  border-bottom: 1px solid var(--app-border-soft);
+  color: var(--app-text-primary);
+  font-size: 13px;
+}
+
+.api-doc-schema-row:last-child {
   border-bottom: 0;
 }
 
-.api-schema-mini-item strong,
-.api-schema-mini-item span,
-.api-schema-mini-item small {
+.api-doc-field-cell {
+  display: flex;
   min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-doc-field-name {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 22px;
+  align-items: center;
   overflow: hidden;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: #eef6ff;
+  color: #2563eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.api-schema-mini-item strong {
-  color: var(--app-text-primary);
-}
-
-.api-schema-mini-item span {
-  color: #374151;
+.api-doc-field-cell small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-placeholder);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.api-schema-mini-item small {
-  grid-column: 1 / -1;
+.api-doc-required {
   color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-doc-required.is-required {
+  color: #d97706;
+  font-weight: 600;
+}
+
+.api-doc-muted {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-example-panel {
+  min-width: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.api-definition-example-panel.is-full {
+  border-top: 0;
+}
+
+.api-definition-example-panel__head {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--app-border-soft);
+  background: #fbfcfe;
+}
+
+.api-definition-example-panel__head strong {
+  color: var(--app-text-primary);
+  font-size: 13px;
+}
+
+.api-definition-example-panel__head span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-definition-example-panel pre {
+  min-height: 220px;
+  max-height: 420px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+@media (max-width: 900px) {
+  .api-definition-summary {
+    display: grid;
+  }
+
+  .api-definition-path {
+    max-width: 100%;
+    text-align: left;
+  }
 }
 
 .api-drag-cell,
@@ -11421,77 +12890,253 @@ onBeforeUnmount(() => {
 }
 
 .api-ai-case-drawer :deep(.el-drawer__header) {
-  margin-bottom: 0;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--app-border);
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid #f3f4f6;
 }
 
 .api-ai-case-drawer :deep(.el-drawer__body) {
   padding: 0;
-  background: var(--app-bg-panel);
+  background: #ffffff;
 }
 
-.api-ai-case-body {
-  display: grid;
-  gap: 12px;
-  padding: 14px 18px 18px;
-}
-
-.api-ai-case-section {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--app-border-soft);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-panel);
-}
-
-.api-ai-case-section__header,
-.api-ai-case-actions,
-.api-ai-result-card__head,
-.api-ai-result-card__actions,
-.api-ai-result-card__meta {
+.ai-case-drawer-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.api-ai-case-section__header,
-.api-ai-result-card__head {
   justify-content: space-between;
+  min-height: 64px;
+  padding: 16px 20px;
 }
 
-.api-ai-case-section__header strong,
-.api-ai-result-card__head strong {
-  color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
-}
-
-.api-ai-case-section__header span,
-.api-ai-result-card__head span,
-.api-ai-result-card__meta {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
-}
-
-.api-ai-case-config-grid {
-  display: grid;
-  grid-template-columns: 84px minmax(0, 1fr);
+.ai-case-drawer-title {
+  display: inline-flex;
   align-items: center;
-  gap: 10px 12px;
-}
-
-.api-ai-case-config-grid label {
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  gap: 8px;
+  color: #111827;
+  font-size: 16px;
   font-weight: 700;
 }
 
-.api-ai-case-options :deep(.el-checkbox-group) {
+.ai-case-drawer-title svg {
+  width: 18px;
+  height: 18px;
+  color: #2563eb;
+}
+
+.ai-case-drawer-subtitle {
+  margin-top: 5px;
+  max-width: 420px;
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-case-drawer-body {
+  display: block;
+  min-height: 0;
+  overflow: auto;
+}
+
+.ai-case-section {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 10px;
+  gap: 12px;
+  padding: 18px 24px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.ai-case-section-title,
+.ai-case-option-group-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-case-section-title {
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.ai-case-section-title small {
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ai-case-option-groups {
+  display: grid;
+  gap: 20px;
+}
+
+.ai-case-option-group {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ai-case-option-group:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.ai-case-option-group-title strong {
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.ai-case-select-all-link,
+.ai-case-refresh-models {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.ai-case-option-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, max-content));
+  gap: 12px 18px;
+  justify-content: start;
+}
+
+.ai-case-option-list :deep(.el-checkbox) {
+  height: 18px;
+  min-width: 0;
+  margin-right: 0;
+  color: #374151;
+  font-size: 14px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.ai-case-section :deep(.el-checkbox__input.is-checked .el-checkbox__inner),
+.ai-case-section :deep(.el-checkbox__input.is-indeterminate .el-checkbox__inner) {
+  border-color: #2563eb;
+  background: #2563eb;
+}
+
+.ai-case-section :deep(.el-checkbox__input.is-checked + .el-checkbox__label) {
+  color: #374151;
+}
+
+.api-ai-case-drawer :deep(.el-switch.is-checked .el-switch__core) {
+  border-color: #2563eb;
+  background-color: #2563eb;
+}
+
+.ai-case-form-section {
+  gap: 16px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.ai-case-form-field {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-case-form-field > span {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.ai-case-form-control {
+  width: 100%;
+}
+
+.ai-case-form-control :deep(.el-select__wrapper),
+.ai-case-form-control :deep(.el-textarea__inner) {
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px #dbe2ea;
+}
+
+.ai-case-form-control :deep(.el-select__wrapper) {
+  min-height: 36px;
+  font-size: 13px;
+}
+
+.ai-case-form-control :deep(.el-textarea__inner) {
+  min-height: 98px !important;
+  padding: 12px;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.ai-case-form-control :deep(.el-select__wrapper.is-focused),
+.ai-case-form-control :deep(.el-textarea__inner:focus) {
+  box-shadow: inset 0 0 0 1px #2563eb, 0 0 0 2px rgba(37, 99, 235, 0.14);
+}
+
+.ai-case-form-switch {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ai-case-form-switch :deep(.el-switch) {
+  height: 20px;
+}
+
+.ai-case-form-switch > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.ai-case-form-switch strong {
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.ai-case-form-switch small {
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.ai-case-generate-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ai-case-generate-submit:hover {
+  background: #1d4ed8;
+}
+
+.ai-case-generate-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ai-case-generate-submit svg {
+  width: 16px;
+  height: 16px;
 }
 
 .api-ai-case-message {
@@ -11513,11 +13158,6 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 18px;
   white-space: pre-wrap;
-}
-
-.api-ai-result-list {
-  display: grid;
-  gap: 10px;
 }
 
 .api-ai-result-toolbar {
@@ -11573,34 +13213,6 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.api-ai-result-card {
-  display: grid;
-  gap: 7px;
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
-}
-
-.api-ai-result-card p {
-  margin: 0;
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
-  line-height: 20px;
-}
-
-.api-ai-result-card__head > div {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  flex: 1;
-}
-
-.api-ai-result-card__check {
-  flex: 0 0 auto;
-}
-
 .api-ai-result-status,
 .api-ai-status-pill {
   display: inline-flex;
@@ -11637,86 +13249,598 @@ onBeforeUnmount(() => {
   color: var(--app-text-muted);
 }
 
-.api-ai-case-detail-dialog :deep(.el-dialog) {
-  border-radius: 12px;
+.api-ai-result-table-wrap {
   overflow: hidden;
-}
-
-.api-ai-case-detail-dialog :deep(.el-dialog__header) {
-  display: flex;
-  align-items: center;
-  min-height: 56px;
-  margin-right: 0;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--app-border-soft);
-}
-
-.api-ai-case-detail-dialog :deep(.el-dialog__title) {
-  color: var(--app-text-primary);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.api-ai-case-detail-dialog :deep(.el-dialog__headerbtn) {
-  top: 12px;
-}
-
-.api-ai-case-detail-dialog :deep(.el-dialog__body) {
-  padding: 14px 18px 18px;
-}
-
-.api-ai-case-detail {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-}
-
-.api-ai-case-detail-summary {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.api-ai-case-detail-summary > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 10px 12px;
   border: 1px solid var(--app-border);
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-subtle);
+  border-radius: 8px;
+  background: var(--app-bg-panel);
 }
 
-.api-ai-case-detail-summary span,
-.api-ai-case-detail-grid span {
+.api-ai-result-table :deep(.el-table__header-wrapper th) {
+  height: 38px;
+  background: #f8fafc;
   color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.api-ai-case-detail-summary strong {
+.api-ai-result-table :deep(.el-table__cell) {
+  padding: 8px 0;
+}
+
+.api-ai-result-name {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.api-ai-result-name strong,
+.api-ai-result-cell-text,
+.api-ai-result-request span:last-child {
+  min-width: 0;
   overflow: hidden;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.api-ai-case-detail-section {
-  display: grid;
-  gap: 6px;
+.api-ai-result-name strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.api-ai-result-name span {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.api-ai-result-request {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.api-ai-result-table-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.api-ai-result-table-actions :deep(.el-button) {
+  padding: 0 3px;
+  font-size: 12px;
+}
+
+.api-ai-case-detail-dialog :deep(.el-drawer__header) {
+  min-height: 58px;
+  margin-bottom: 0;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.api-ai-case-detail-dialog :deep(.el-drawer__body) {
+  padding: 16px;
+  background: var(--app-bg-muted);
+}
+
+.api-ai-case-detail-dialog :deep(.el-drawer__footer) {
+  padding: 12px 16px;
+  border-top: 1px solid var(--app-border);
+}
+
+.api-ai-case-detail-header,
+.api-ai-case-detail-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.api-ai-case-detail-header {
   min-width: 0;
 }
 
-.api-ai-case-detail-section > strong {
+.api-ai-case-detail-header strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--app-text-primary);
-  font-size: var(--app-font-size-sm);
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.api-ai-case-detail-section p {
+.api-ai-case-detail-footer {
+  justify-content: flex-end;
+}
+
+.api-ai-case-detail {
+  display: grid;
+  min-width: 0;
+}
+
+.api-ai-case-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.api-ai-case-detail-grid > article {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-bg-panel);
+}
+
+.api-ai-case-preview-block--full {
+  grid-column: 1 / -1;
+}
+
+.api-ai-case-detail-label {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.api-ai-case-detail-text {
+  color: var(--app-text-main);
+  font-size: 14px;
+  line-height: 22px;
+  word-break: break-word;
+}
+
+.api-ai-case-detail-text.is-rich {
+  min-height: 76px;
+  padding: 12px 14px;
+  border: 1px solid var(--app-border-soft);
+  border-radius: 8px;
+  background: var(--app-bg-muted);
+  white-space: pre-wrap;
+}
+
+.ai-generation-workspace {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px 16px 0;
+  background: #ffffff;
+}
+
+.ai-generation-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 0 12px;
+}
+
+.ai-generation-page-header h3 {
   margin: 0;
-  color: var(--app-text-secondary);
-  font-size: var(--app-font-size-sm);
-  line-height: 20px;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.ai-generation-title-line {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.ai-generation-title-source {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding-left: 12px;
+  border-left: 1px solid #e5e7eb;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.ai-generation-source-name,
+.ai-generation-source-path {
+  display: inline-block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-generation-source-name {
+  max-width: 160px;
+  color: #475569;
+}
+
+.ai-generation-source-path {
+  max-width: 360px;
+  color: #344054;
+}
+
+.ai-generation-header-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 86px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ai-generation-header-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ai-generation-header-action.is-stop {
+  border-color: #d1d5db;
+  color: #374151;
+}
+
+.ai-generation-header-action svg {
+  width: 13px;
+  height: 13px;
+  color: #64748b;
+}
+
+.ai-generation-detail-workspace {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.ai-generation-detail-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.ai-generation-detail-status-tabs {
+  display: inline-flex;
+  overflow: hidden;
+  min-width: 360px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #f5f7fb;
+}
+
+.ai-generation-detail-status-tabs button {
+  min-width: 112px;
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ai-generation-detail-status-tabs button.active {
+  background: #ffffff;
+  color: #334155;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+}
+
+.ai-generation-detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.ai-generation-detail-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 160px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.ai-generation-detail-search .el-icon,
+.ai-generation-detail-search svg {
+  width: 14px;
+  height: 14px;
+  color: #94a3b8;
+}
+
+.ai-generation-detail-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: #334155;
+  font-size: 12px;
+}
+
+.ai-generation-detail-search input::placeholder {
+  color: #cbd5e1;
+}
+
+.ai-generation-detail-filter {
+  width: 112px;
+}
+
+.ai-generation-detail-filter.is-wide {
+  width: 168px;
+}
+
+.ai-generation-detail-filter :deep(.el-select__wrapper) {
+  min-height: 28px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px #e5e7eb;
+}
+
+.ai-generation-detail-filter :deep(.el-select__placeholder),
+.ai-generation-detail-filter :deep(.el-select__selected-item) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ai-generation-detail-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ai-generation-detail-actions button,
+.ai-generation-row-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ai-generation-detail-actions button:disabled,
+.ai-generation-row-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.ai-generation-detail-actions svg,
+.ai-generation-row-actions svg {
+  width: 13px;
+  height: 13px;
+}
+
+.ai-generation-run-selected,
+.ai-generation-row-run {
+  border: 0;
+  background: #334155;
+  color: #ffffff;
+}
+
+.ai-generation-accept-selected,
+.ai-generation-row-accept {
+  border: 0;
+  background: #5b7cff;
+  color: #ffffff;
+}
+
+.ai-generation-discard-selected,
+.ai-generation-row-discard {
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #475569;
+}
+
+.ai-generation-detail-table {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  scrollbar-color: rgba(148, 163, 184, 0.64) transparent;
+  scrollbar-width: thin;
+}
+
+.ai-generation-detail-table::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.ai-generation-detail-table::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.64);
+  background-clip: padding-box;
+}
+
+.ai-generation-detail-table::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ai-generation-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 180px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ai-generation-empty-state svg {
+  width: 16px;
+  height: 16px;
+  color: #3b82f6;
+}
+
+.ai-generation-detail-head,
+.ai-generation-detail-row {
+  display: grid;
+  grid-template-columns: 32px minmax(320px, 1fr) 170px 92px 110px 190px;
+  align-items: center;
+  column-gap: 12px;
+}
+
+.ai-generation-detail-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 34px;
+  border-bottom: 1px solid #eef2f7;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ai-generation-detail-head span {
+  text-align: left;
+}
+
+.ai-generation-detail-row {
+  min-height: 42px;
+  border-bottom: 1px solid #edf2f7;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.ai-generation-detail-row:hover {
+  background: #f4f7fb;
+}
+
+.ai-generation-row-selector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  justify-self: center;
+}
+
+.ai-generation-row-index {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.ai-generation-row-loading {
+  width: 16px;
+  height: 16px;
+  color: #3b82f6;
+}
+
+.ai-generation-row-checkbox {
+  display: none;
+}
+
+.ai-generation-detail-row:hover .ai-generation-row-index {
+  display: none;
+}
+
+.ai-generation-detail-row:hover .ai-generation-row-checkbox {
+  display: inline-flex;
+}
+
+.ai-generation-detail-name {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.ai-generation-detail-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-generation-detail-group-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.ai-generation-case-tag {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  overflow: hidden;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-generation-detail-group-type {
+  color: #334155;
+  font-size: 12px;
+}
+
+.ai-generation-detail-group-type.is-negative {
+  color: #475569;
+}
+
+.ai-generation-run-result {
+  color: #94a3b8;
+}
+
+.ai-generation-run-result.is-success {
+  color: #16a34a;
+}
+
+.ai-generation-run-result.is-failed {
+  color: #dc2626;
+}
+
+.ai-generation-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  opacity: 0;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ai-generation-detail-row:hover .ai-generation-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ai-generation-row-actions button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .api-ai-case-detail-tags {
@@ -11735,20 +13859,6 @@ onBeforeUnmount(() => {
   line-height: 22px;
 }
 
-.api-ai-case-detail-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  min-width: 0;
-}
-
-.api-ai-case-detail-grid > div {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.api-ai-case-detail-section pre,
 .api-ai-case-detail-grid pre {
   max-height: 220px;
   overflow: auto;
@@ -13398,6 +15508,63 @@ onBeforeUnmount(() => {
 .api-import-upload small {
   color: #9ca3af;
   font-size: 12px;
+}
+
+.api-import-field {
+  display: grid;
+  gap: 6px;
+}
+
+.api-import-field > span {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.api-import-field small {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.api-import-field :deep(.el-select__wrapper) {
+  min-height: 38px;
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 1px #d1d5db;
+}
+
+.api-import-field :deep(.el-select__wrapper.is-focused) {
+  box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.16);
+}
+
+.api-import-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.api-import-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.api-import-option strong {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.api-import-option small {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .api-import-footer {

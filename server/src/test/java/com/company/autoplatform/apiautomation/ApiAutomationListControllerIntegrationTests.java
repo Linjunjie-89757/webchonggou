@@ -78,6 +78,13 @@ class ApiAutomationListControllerIntegrationTests extends IntegrationTestSupport
                 "tag-alpha"
         );
 
+        mockMvc.perform(get("/api/automation/api/definition-modules")
+                        .header(WorkspaceScope.HEADER, WORKSPACE_CODE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data[?(@.id == %s)].definitionCount", parentModule.id()).value(hasItem(2)))
+                .andExpect(jsonPath("$.data[?(@.id == %s)].children[0].definitionCount", parentModule.id()).value(hasItem(2)));
+
         mockMvc.perform(get("/api/automation/api/definitions")
                         .header(WorkspaceScope.HEADER, WORKSPACE_CODE)
                         .param("keyword", "tag-alpha")

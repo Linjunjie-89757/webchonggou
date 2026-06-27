@@ -56,7 +56,16 @@ export function createConfigParamFormFromItem(item: ParamSetItem): ConfigParamFo
     value: content.value,
     description: content.description,
     sensitive: content.sensitive,
-    variables: variables.length > 0 ? variables : [createDefaultWebUiVariable()],
+    variables: variables.length > 0
+      ? variables
+      : content.value
+        ? [{
+            name: item.paramName || '',
+            value: content.value,
+            sensitive: content.sensitive,
+            description: content.description,
+          }]
+        : [createDefaultWebUiVariable()],
     status: item.status,
   }
 }
@@ -65,18 +74,12 @@ export function buildCreateParamPayload(form: ConfigParamForm): CreateParamPaylo
   const contentJson = isVariableSetParamType(form.paramType)
     ? JSON.stringify(
         form.variables
-          .map(variable => form.paramType === 'WEB_UI_VARIABLE_SET'
-            ? {
-                name: variable.name.trim(),
-                value: variable.value,
-                sensitive: variable.sensitive,
-                description: variable.description.trim(),
-              }
-            : {
-                name: variable.name.trim(),
-                value: variable.value,
-                sensitive: variable.sensitive,
-              })
+          .map(variable => ({
+            name: variable.name.trim(),
+            value: variable.value,
+            sensitive: variable.sensitive,
+            description: variable.description.trim(),
+          }))
           .filter(variable => variable.name),
       )
     : JSON.stringify({
@@ -95,6 +98,9 @@ export function buildCreateParamPayload(form: ConfigParamForm): CreateParamPaylo
 }
 
 export function validateConfigParamForm(form: ConfigParamForm) {
+  if (!form.workspaceCode.trim() || form.workspaceCode === 'ALL') {
+    return '请选择具体目标空间'
+  }
   if (!form.paramName.trim()) {
     return '请输入名称'
   }
@@ -170,7 +176,7 @@ export function parseWebUiVariables(contentJson: string): WebUiVariableItem[] {
 }
 
 export function isVariableSetParamType(paramType: string) {
-  return paramType === 'WEB_UI_VARIABLE_SET' || paramType === 'API_VARIABLE_SET'
+  return ['GLOBAL', 'BUSINESS', 'PAYMENT_CHANNEL', 'WEB_UI_VARIABLE_SET', 'APP_UI_VARIABLE_SET', 'API_VARIABLE_SET'].includes(paramType)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

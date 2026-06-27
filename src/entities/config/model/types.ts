@@ -201,6 +201,46 @@ export interface CreateMockScenarioPayload {
   status?: ConfigStatus
 }
 
+export interface MockBusinessScenarioStepItem {
+  id: number
+  businessScenarioId: number
+  appId: number
+  endpointId: number
+  endpointName: string
+  scenarioId: number
+  scenarioName: string
+  sortOrder: number
+  status: ConfigStatus
+}
+
+export interface MockBusinessScenarioItem {
+  id: number
+  workspaceCode: string
+  workspaceName: string
+  appId: number
+  appName: string
+  scenarioName: string
+  description: string | null
+  variablesJson: string
+  status: ConfigStatus
+  items: MockBusinessScenarioStepItem[]
+}
+
+export interface CreateMockBusinessScenarioPayload {
+  workspaceCode?: string
+  appId: number
+  scenarioName: string
+  description?: string | null
+  variablesJson?: string
+  status?: ConfigStatus
+  items?: Array<{
+    endpointId?: number | null
+    scenarioId: number
+    sortOrder?: number
+    status?: ConfigStatus
+  }>
+}
+
 export interface MockCallLogItem {
   id: number
   workspaceCode: string
@@ -211,6 +251,8 @@ export interface MockCallLogItem {
   endpointName: string | null
   scenarioId: number | null
   scenarioName: string | null
+  businessScenarioId: number | null
+  businessScenarioName: string | null
   httpMethod: string
   requestPath: string
   requestHeadersJson: string | null

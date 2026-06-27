@@ -151,6 +151,79 @@ class WebUiExecutionControllerIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void localRunnerCaseRunCreatesFormalRunAndPersistsFinalResult() throws Exception {
+        Long caseId = createCase(uniquePrefix("local-runner"), List.of(
+                openStep("Open page", "https://example.com", 1),
+                clickStep("Submit", "CSS", "#submit", false, 2)
+        ));
+
+        String createResponse = mockMvc.perform(post("/api/automation/web/cases/{id}/local-runner-run", caseId)
+                        .header(WorkspaceScope.HEADER, WORKSPACE_CODE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.run.status").value("RUNNING"))
+                .andExpect(jsonPath("$.data.runnerTask.taskType").value("WEB_CASE_RUN"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        JsonNode createData = objectMapper.readTree(createResponse).path("data");
+        Long webRunId = createData.at("/run/runId").asLong();
+        String localRunId = createData.at("/runnerTask/runId").asText();
+        String executionToken = createData.at("/runnerTask/envelope/executionToken").asText();
+
+        Map<String, Object> finalResult = new LinkedHashMap<>();
+        finalResult.put("runnerId", "local-runner");
+        finalResult.put("executionToken", executionToken);
+        finalResult.put("status", "SUCCESS");
+        finalResult.put("durationMs", 88);
+        finalResult.put("summary", Map.of(
+                "total", 2,
+                "passed", 2,
+                "failed", 0,
+                "skipped", 0
+        ));
+        finalResult.put("reportData", Map.of(
+                "stepResults", List.of(
+                        Map.of(
+                                "stepId", "1",
+                                "status", "SUCCESS",
+                                "durationMs", 25,
+                                "extra", Map.of("sortOrder", 1)
+                        ),
+                        Map.of(
+                                "stepId", "2",
+                                "status", "SUCCESS",
+                                "durationMs", 30,
+                                "extra", Map.of("sortOrder", 2)
+                        )
+                )
+        ));
+
+        mockMvc.perform(post("/api/public/local-runner/tasks/{runId}/result", localRunId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(finalResult)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        mockMvc.perform(get("/api/automation/web/runs/{id}", webRunId)
+                        .header(WorkspaceScope.HEADER, WORKSPACE_CODE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.summary.executionLocation").value("LOCAL_RUNNER"))
+                .andExpect(jsonPath("$.data.summary.localRunnerRunId").value(localRunId))
+                .andExpect(jsonPath("$.data.context.executionLocation").value("LOCAL_RUNNER"))
+                .andExpect(jsonPath("$.data.context.localRunnerRunId").value(localRunId))
+                .andExpect(jsonPath("$.data.summary.totalSteps").value(2))
+                .andExpect(jsonPath("$.data.summary.passedSteps").value(2))
+                .andExpect(jsonPath("$.data.steps.length()").value(2))
+                .andExpect(jsonPath("$.data.steps[0].status").value("PASSED"))
+                .andExpect(jsonPath("$.data.steps[1].status").value("PASSED"));
+    }
+
+    @Test
     void artifactDownloadRequiresArtifactToBelongToRun() throws Exception {
         mockMvc.perform(get("/api/automation/web/runs/{runId}/artifacts/{artifactId}/download", 999999, 888888)
                         .header(WorkspaceScope.HEADER, WORKSPACE_CODE))
@@ -735,22 +808,28 @@ class WebUiExecutionControllerIntegrationTests extends IntegrationTestSupport {
                   "browserType": "CHROMIUM",
                   "headless": true,
                   "defaultTimeoutMs": 15000,
-                  "defaultVariableSetId": %d
+                  "defaultVariableSetId": %d,
+                  "envGroup": "TEST",
+                  "defaultServiceKey": "admin-web",
+                  "services": [
+                    {"key": "admin-web", "name": "后台页面", "baseUrl": "https://public.example.test"}
+                  ]
                 }
                 """.formatted(defaultVariableSetId);
         jdbcTemplate.update("""
                         insert into tb_env_config (
                             workspace_id, env_type, env_name, base_url, config_json, status, created_at, updated_at
-                        ) values (?, 'WEB_UI', ?, 'https://public.example.test', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        ) values (?, 'TEST', ?, 'https://legacy-public.example.test', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                         """,
                 workspaceId,
                 environmentName,
                 configJson
         );
         Long publicId = jdbcTemplate.queryForObject(
-                "select max(id) from tb_env_config where workspace_id = ? and env_type = 'WEB_UI'",
+                "select max(id) from tb_env_config where workspace_id = ? and env_name = ?",
                 Long.class,
-                workspaceId
+                workspaceId,
+                environmentName
         );
         return -publicId;
     }

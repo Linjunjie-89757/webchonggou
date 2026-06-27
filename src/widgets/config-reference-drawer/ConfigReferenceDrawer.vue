@@ -18,6 +18,14 @@ const props = withDefaults(
 )
 
 const items = computed(() => props.summary?.items || [])
+const sourceGroups = computed(() => {
+  const counter = new Map<string, number>()
+  for (const item of items.value) {
+    const sourceType = item.sourceType || '未知来源'
+    counter.set(sourceType, (counter.get(sourceType) || 0) + 1)
+  }
+  return Array.from(counter.entries()).map(([sourceType, count]) => ({ sourceType, count }))
+})
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -34,13 +42,27 @@ function formatDate(value: string | null) {
     :title="title"
     size="720px"
   >
-    <div v-loading="loading" class="config-reference-drawer__body">
+    <div v-loading="loading" class="config-reference-drawer__body app-soft-scrollbar">
       <div v-if="summary" class="config-reference-drawer__summary">
         <div>
           <span>配置对象</span>
           <strong>{{ summary.resourceName }}</strong>
         </div>
         <el-tag type="info" effect="light">引用 {{ summary.totalCount || 0 }}</el-tag>
+      </div>
+
+      <div v-if="summary && sourceGroups.length" class="config-reference-drawer__impact">
+        <div class="config-reference-drawer__impact-title">影响范围</div>
+        <div class="config-reference-drawer__impact-tags">
+          <el-tag
+            v-for="group in sourceGroups"
+            :key="group.sourceType"
+            effect="plain"
+          >
+            {{ group.sourceType }} {{ group.count }}
+          </el-tag>
+        </div>
+        <p>删除前需要先调整仍在使用该配置的场景、套件或历史引用；列表按来源展示最近引用记录。</p>
       </div>
 
       <el-table
@@ -105,6 +127,33 @@ function formatDate(value: string | null) {
 .config-reference-drawer__summary strong {
   color: var(--app-text-primary);
   font-size: var(--app-font-size-md);
+}
+
+.config-reference-drawer__impact {
+  margin-bottom: var(--app-space-4);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border-color);
+  border-radius: var(--app-radius-md);
+}
+
+.config-reference-drawer__impact-title {
+  margin-bottom: var(--app-space-2);
+  color: var(--app-text-primary);
+  font-weight: 600;
+}
+
+.config-reference-drawer__impact-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--app-space-2);
+  margin-bottom: var(--app-space-2);
+}
+
+.config-reference-drawer__impact p {
+  margin: 0;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  line-height: var(--app-line-height-xs);
 }
 
 .config-reference-drawer__name {

@@ -463,6 +463,15 @@ public class WebUiAutomationController {
         return ApiResponse.ok(webUiAutomationService.runCase(id, workspaceCode, request), "Web UI case run completed");
     }
 
+    @PostMapping("/cases/{id}/local-runner-run")
+    public ApiResponse<WebUiLocalRunnerRunResponse> createLocalRunnerRun(
+            @PathVariable Long id,
+            @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,
+            @RequestBody(required = false) WebUiRunRequest request
+    ) {
+        return ApiResponse.ok(webUiAutomationService.createLocalRunnerRun(id, workspaceCode, request), "Web UI local runner run created");
+    }
+
     @PostMapping("/batches/run")
     public ApiResponse<WebUiBatchRunResponse> runBatch(
             @RequestHeader(value = WorkspaceScope.HEADER, required = false) String workspaceCode,

@@ -62,6 +62,9 @@ public class ApiRequestExecutionSupport {
         headers.putAll(variableResolver.toEnabledMap(defaultList(environment.headers()), variables));
         headers.putAll(variableResolver.toEnabledMap(defaultList(config.headers()), variables));
         headers.entrySet().removeIf(entry -> "authorization".equalsIgnoreCase(entry.getKey()));
+        if (environment.mockBusinessScenarioId() != null && isMockRequest(url, environment.mockBaseUrl())) {
+            headers.put("X-Mock-Business-Scenario-Id", String.valueOf(environment.mockBusinessScenarioId()));
+        }
 
         LinkedHashMap<String, String> cookies = new LinkedHashMap<>(variableResolver.toEnabledMap(defaultList(config.cookies()), variables));
 
@@ -85,6 +88,13 @@ public class ApiRequestExecutionSupport {
             headers.put("Cookie", buildCookieHeader(cookies));
         }
         return new ResolvedRequest(config.method().toUpperCase(), url, headers, body, bodyConfig, normalizedAuthConfig);
+    }
+
+    private boolean isMockRequest(String url, String mockBaseUrl) {
+        return url != null
+                && mockBaseUrl != null
+                && !mockBaseUrl.isBlank()
+                && url.regionMatches(true, 0, mockBaseUrl, 0, mockBaseUrl.length());
     }
 
     SentRequestResult sendRequest(

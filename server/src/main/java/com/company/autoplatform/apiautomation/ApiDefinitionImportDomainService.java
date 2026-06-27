@@ -63,6 +63,7 @@ public class ApiDefinitionImportDomainService {
             String bodyWorkspaceCode,
             String mode,
             String directoryName,
+            Boolean groupByTags,
             MultipartFile file
     ) {
         if (file == null || file.isEmpty()) {
@@ -71,7 +72,7 @@ public class ApiDefinitionImportDomainService {
         try {
             String content = new String(file.getBytes(), StandardCharsets.UTF_8);
             return importDefinitions(headerWorkspaceCode,
-                    new ApiDefinitionImportRequest(bodyWorkspaceCode, mode, "file", null, content, directoryName),
+                    new ApiDefinitionImportRequest(bodyWorkspaceCode, mode, "file", null, content, directoryName, groupByTags),
                     content);
         } catch (IOException exception) {
             throw new BadRequestException("Failed to read import file");
@@ -83,7 +84,7 @@ public class ApiDefinitionImportDomainService {
         JsonNode root = readDocument(content, mode);
         String directoryName = blankToFallback(request.directoryName(), defaultDirectoryName(mode));
         List<SaveApiDefinitionRequest> definitions = switch (mode) {
-            case "swagger" -> parseOpenApi(root, request.workspaceCode(), directoryName);
+            case "swagger" -> parseOpenApi(root, request.workspaceCode(), directoryName, true);
             case "postman" -> parsePostman(root, request.workspaceCode(), directoryName);
             case "har" -> parseHar(root, request.workspaceCode(), directoryName);
             default -> throw new BadRequestException("Unsupported import mode");
@@ -115,7 +116,7 @@ public class ApiDefinitionImportDomainService {
         return new ApiDefinitionImportResult(createdCount, errors.size(), items, errors);
     }
 
-    private List<SaveApiDefinitionRequest> parseOpenApi(JsonNode root, String workspaceCode, String directoryName) {
+    private List<SaveApiDefinitionRequest> parseOpenApi(JsonNode root, String workspaceCode, String directoryName, boolean groupByTags) {
         JsonNode paths = root.path("paths");
         if (!paths.isObject()) {
             return List.of();
@@ -135,10 +136,11 @@ public class ApiDefinitionImportDomainService {
                 List<JsonNode> parameters = new ArrayList<>(pathParameters);
                 parameters.addAll(collectOpenApiParameters(operation.path("parameters")));
                 String method = methodKey.toUpperCase(Locale.ROOT);
+                String resolvedDirectoryName = resolveOpenApiDirectoryName(directoryName, path, operation, groupByTags);
                 definitions.add(new SaveApiDefinitionRequest(
                         workspaceCode,
                         firstText(operation, "summary", firstText(operation, "operationId", method + " " + path)),
-                        directoryName,
+                        resolvedDirectoryName,
                         blankToNull(firstText(operation, "description", null)),
                         List.of("imported", "openapi"),
                         new ApiRequestConfigInput(
@@ -160,6 +162,66 @@ public class ApiDefinitionImportDomainService {
             }
         }
         return definitions;
+    }
+
+    private String resolveOpenApiDirectoryName(String baseDirectoryName, String path, JsonNode operation, boolean groupByTags) {
+        String base = normalizeDirectoryName(baseDirectoryName);
+        String group = null;
+        if (groupByTags) {
+            group = firstOpenApiTag(operation);
+        }
+        if (group == null) {
+            group = firstPathSegment(path);
+        }
+        String normalizedGroup = normalizeDirectoryName(group);
+        if (normalizedGroup == null) {
+            return base;
+        }
+        if (base == null) {
+            return normalizedGroup;
+        }
+        return base + "/" + normalizedGroup;
+    }
+
+    private String firstOpenApiTag(JsonNode operation) {
+        JsonNode tags = operation.path("tags");
+        if (!tags.isArray()) {
+            return null;
+        }
+        for (JsonNode tag : tags) {
+            String value = blankToNull(tag.asText(null));
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String firstPathSegment(String path) {
+        String normalizedPath = normalizePath(path);
+        for (String segment : normalizedPath.split("/")) {
+            String value = blankToNull(segment);
+            if (value != null && !value.startsWith("{") && !value.startsWith(":")) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeDirectoryName(String value) {
+        String normalized = blankToNull(value);
+        if (normalized == null) {
+            return null;
+        }
+        normalized = normalized.replace('\\', '/');
+        List<String> parts = new ArrayList<>();
+        for (String part : normalized.split("/")) {
+            String trimmed = blankToNull(part);
+            if (trimmed != null) {
+                parts.add(trimmed);
+            }
+        }
+        return parts.isEmpty() ? null : String.join("/", parts);
     }
 
     private List<SaveApiDefinitionRequest> parsePostman(JsonNode root, String workspaceCode, String directoryName) {
@@ -317,19 +379,16 @@ public class ApiDefinitionImportDomainService {
         if (!responses.isObject()) {
             return;
         }
-        JsonNode response = null;
         Iterator<Map.Entry<String, JsonNode>> responseFields = responses.fields();
         while (responseFields.hasNext()) {
             Map.Entry<String, JsonNode> entry = responseFields.next();
             String code = entry.getKey();
-            if (response == null || code.startsWith("2") || "default".equalsIgnoreCase(code)) {
-                response = entry.getValue();
-            }
-            if (code.startsWith("2")) {
-                break;
-            }
+            collectOpenApiResponseSchemaFields(root, fields, normalizeOpenApiResponseCode(code), entry.getValue());
         }
-        response = resolveOpenApiRef(root, response);
+    }
+
+    private void collectOpenApiResponseSchemaFields(JsonNode root, List<ApiSchemaFieldInput> fields, String responseCode, JsonNode responseNode) {
+        JsonNode response = resolveOpenApiRef(root, responseNode);
         if (response == null || response.isMissingNode() || response.isNull()) {
             return;
         }
@@ -337,13 +396,18 @@ public class ApiDefinitionImportDomainService {
         if (content.isObject()) {
             Iterator<Map.Entry<String, JsonNode>> contentFields = content.fields();
             while (contentFields.hasNext()) {
-                collectOpenApiSchemaFields(root, fields, "response", "", contentFields.next().getValue().path("schema"), Set.of(), SCHEMA_PLACEHOLDER_MAX_DEPTH);
+                collectOpenApiSchemaFields(root, fields, "response", responseCode, "", contentFields.next().getValue().path("schema"), Set.of(), SCHEMA_PLACEHOLDER_MAX_DEPTH);
                 return;
             }
         }
         if (response.has("schema")) {
-            collectOpenApiSchemaFields(root, fields, "response", "", response.path("schema"), Set.of(), SCHEMA_PLACEHOLDER_MAX_DEPTH);
+            collectOpenApiSchemaFields(root, fields, "response", responseCode, "", response.path("schema"), Set.of(), SCHEMA_PLACEHOLDER_MAX_DEPTH);
         }
+    }
+
+    private String normalizeOpenApiResponseCode(String code) {
+        String normalized = blankToNull(code);
+        return normalized == null ? "default" : normalized;
     }
 
     private void collectOpenApiSchemaFields(
@@ -355,29 +419,42 @@ public class ApiDefinitionImportDomainService {
             Set<String> parentRequired,
             int depth
     ) {
+        collectOpenApiSchemaFields(root, fields, location, null, parentPath, schema, parentRequired, depth);
+    }
+
+    private void collectOpenApiSchemaFields(
+            JsonNode root,
+            List<ApiSchemaFieldInput> fields,
+            String location,
+            String responseCode,
+            String parentPath,
+            JsonNode schema,
+            Set<String> parentRequired,
+            int depth
+    ) {
         if (schema == null || schema.isMissingNode() || schema.isNull() || depth <= 0) {
             return;
         }
         JsonNode resolvedSchema = resolveOpenApiSchemaRef(root, schema);
         if (resolvedSchema != schema) {
-            collectOpenApiSchemaFields(root, fields, location, parentPath, resolvedSchema, parentRequired, depth - 1);
+            collectOpenApiSchemaFields(root, fields, location, responseCode, parentPath, resolvedSchema, parentRequired, depth - 1);
             return;
         }
         JsonNode allOf = schema.path("allOf");
         if (allOf.isArray()) {
             for (JsonNode item : allOf) {
-                collectOpenApiSchemaFields(root, fields, location, parentPath, item, parentRequired, depth - 1);
+                collectOpenApiSchemaFields(root, fields, location, responseCode, parentPath, item, parentRequired, depth - 1);
             }
             return;
         }
         JsonNode oneOf = schema.path("oneOf");
         if (oneOf.isArray() && !oneOf.isEmpty()) {
-            collectOpenApiSchemaFields(root, fields, location, parentPath, oneOf.get(0), parentRequired, depth - 1);
+            collectOpenApiSchemaFields(root, fields, location, responseCode, parentPath, oneOf.get(0), parentRequired, depth - 1);
             return;
         }
         JsonNode anyOf = schema.path("anyOf");
         if (anyOf.isArray() && !anyOf.isEmpty()) {
-            collectOpenApiSchemaFields(root, fields, location, parentPath, anyOf.get(0), parentRequired, depth - 1);
+            collectOpenApiSchemaFields(root, fields, location, responseCode, parentPath, anyOf.get(0), parentRequired, depth - 1);
             return;
         }
 
@@ -396,15 +473,16 @@ public class ApiDefinitionImportDomainService {
                         entry.getKey(),
                         propertySchema,
                         requiredNames.contains(entry.getKey()) || parentRequired.contains(entry.getKey()),
-                        propertySchema.path("description").asText(null)
+                        propertySchema.path("description").asText(null),
+                        responseCode
                 ));
-                collectOpenApiSchemaFields(root, fields, location, fieldPath, propertySchema, requiredNames, depth - 1);
+                collectOpenApiSchemaFields(root, fields, location, responseCode, fieldPath, propertySchema, requiredNames, depth - 1);
             });
             return;
         }
         if ("array".equals(type)) {
             String arrayPath = parentPath.isBlank() ? "[]" : parentPath + "[]";
-            collectOpenApiSchemaFields(root, fields, location, arrayPath, schema.path("items"), Set.of(), depth - 1);
+            collectOpenApiSchemaFields(root, fields, location, responseCode, arrayPath, schema.path("items"), Set.of(), depth - 1);
         }
     }
 
@@ -429,6 +507,18 @@ public class ApiDefinitionImportDomainService {
             boolean required,
             String fallbackDescription
     ) {
+        return schemaField(location, fieldPath, name, schema, required, fallbackDescription, null);
+    }
+
+    private ApiSchemaFieldInput schemaField(
+            String location,
+            String fieldPath,
+            String name,
+            JsonNode schema,
+            boolean required,
+            String fallbackDescription,
+            String responseCode
+    ) {
         JsonNode resolvedSchema = schema == null ? jsonMapper.missingNode() : schema;
         List<String> enumValues = new ArrayList<>();
         if (resolvedSchema.path("enum").isArray()) {
@@ -448,7 +538,8 @@ public class ApiDefinitionImportDomainService {
                 resolvedSchema.has("minLength") ? resolvedSchema.path("minLength").asInt() : null,
                 resolvedSchema.has("maxLength") ? resolvedSchema.path("maxLength").asInt() : null,
                 resolvedSchema.has("minimum") ? resolvedSchema.path("minimum").asText() : null,
-                resolvedSchema.has("maximum") ? resolvedSchema.path("maximum").asText() : null
+                resolvedSchema.has("maximum") ? resolvedSchema.path("maximum").asText() : null,
+                responseCode
         );
     }
 

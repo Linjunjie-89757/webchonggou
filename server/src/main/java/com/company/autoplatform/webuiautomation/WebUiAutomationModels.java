@@ -1,5 +1,6 @@
 package com.company.autoplatform.webuiautomation;
 
+import com.company.autoplatform.runner.LocalRunnerModels.RunnerTaskDetailResponse;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -795,6 +796,8 @@ public final class WebUiAutomationModels {
             Integer failedSteps,
             Integer skippedSteps,
             String operatorName,
+            String executionLocation,
+            String localRunnerRunId,
             LocalDateTime startedAt,
             LocalDateTime finishedAt,
             LocalDateTime createdAt
@@ -840,6 +843,12 @@ public final class WebUiAutomationModels {
             Integer failedSteps,
             Integer skippedSteps,
             List<WebUiRunStepResult> stepResults
+    ) {
+    }
+
+    public record WebUiLocalRunnerRunResponse(
+            WebUiRunResponse run,
+            RunnerTaskDetailResponse runnerTask
     ) {
     }
 

@@ -28,6 +28,7 @@ public class ApiScenarioDomainService {
 
     private static final String API_ENV_TYPE = "API";
     private static final String API_VARIABLE_SET_TYPE = "API_VARIABLE_SET";
+    private static final String PAYMENT_CHANNEL_VARIABLE_SET_TYPE = "PAYMENT_CHANNEL";
     private static final String SCENARIO_RESOURCE_TYPE_DEFINITION = "DEFINITION";
     private static final String SCENARIO_RESOURCE_TYPE_CASE = "CASE";
     private static final String SCENARIO_STEP_API = "API";
@@ -538,7 +539,7 @@ public class ApiScenarioDomainService {
 
     private EnvConfigEntity requireEnvironment(Long id) {
         EnvConfigEntity entity = envConfigMapper.selectById(id);
-        if (entity == null || !API_ENV_TYPE.equals(entity.getEnvType())) {
+        if (entity == null || !ApiEnvironmentTypeSupport.isApiUsable(entity.getEnvType())) {
             throw new NotFoundException("API environment not found");
         }
         return entity;
@@ -546,10 +547,15 @@ public class ApiScenarioDomainService {
 
     private ParamSetEntity requireVariableSet(Long id) {
         ParamSetEntity entity = paramSetMapper.selectById(id);
-        if (entity == null || !API_VARIABLE_SET_TYPE.equals(entity.getParamType())) {
+        if (entity == null || !isApiRuntimeVariableSet(entity.getParamType())) {
             throw new NotFoundException("API variable set not found");
         }
         return entity;
+    }
+
+    private boolean isApiRuntimeVariableSet(String paramType) {
+        return API_VARIABLE_SET_TYPE.equals(paramType)
+                || PAYMENT_CHANNEL_VARIABLE_SET_TYPE.equals(paramType);
     }
 
     private void ensureScenarioModuleNameUnique(Long workspaceId, Long parentId, Long excludeId, String name) {

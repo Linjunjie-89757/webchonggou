@@ -24,6 +24,7 @@ import {
   buildWebUiDraftFromTemplateDetail,
   formatBrowserType,
   formatDurationMs,
+  formatExecutionLocation,
   formatLocatorType,
   formatStepType,
   formatWebUiDateTime,
@@ -242,8 +243,19 @@ const workspaceLoading = computed(() => {
 })
 
 function formatRunEnvironmentLabel(environment: WebUiEnvironmentItem) {
-  const source = environment.source === 'CONFIG_CENTER' ? '配置中心' : 'Web UI'
-  return `[${source}] ${environment.name} - ${environment.baseUrl}`
+  return `${environment.name} - ${environment.baseUrl || '未配置 Base URL'}`
+}
+
+function formatEnvironmentSource(environment: WebUiEnvironmentItem) {
+  return environment.source === 'CONFIG_CENTER' ? '配置中心' : 'Web UI'
+}
+
+function formatEnvironmentWorkspace(environment: WebUiEnvironmentItem) {
+  return environment.workspaceName || environment.workspaceCode || '全部空间'
+}
+
+function formatRunEnvironmentBaseUrl(environment: WebUiEnvironmentItem | null) {
+  return environment?.baseUrl?.trim() || '未配置 Base URL'
 }
 
 function formatRunContextTip(
@@ -1713,6 +1725,19 @@ watch(
               <WebUiRunStatusBadge :status="row.status" />
             </template>
           </el-table-column>
+          <el-table-column label="执行位置" width="128">
+            <template #default="{ row }">
+              <el-tag
+                v-if="row.executionLocation === 'LOCAL_RUNNER'"
+                size="small"
+                type="success"
+                effect="light"
+              >
+                {{ formatExecutionLocation(row.executionLocation) }}
+              </el-tag>
+              <span v-else>{{ formatExecutionLocation(row.executionLocation) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="environmentName" label="环境" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">
               {{ row.environmentName || '-' }}
@@ -1945,14 +1970,31 @@ watch(
           <span>{{ pendingRunCase?.name || '-' }}</span>
         </el-form-item>
         <el-form-item label="运行环境">
-          <el-select v-model="runForm.environmentId" clearable placeholder="使用用例默认配置">
+          <el-select
+            v-model="runForm.environmentId"
+            clearable
+            placeholder="使用用例默认配置"
+            popper-class="web-ui-run-env-popper"
+          >
             <el-option
               v-for="environment in enabledEnvironments"
               :key="environment.id"
               :label="formatRunEnvironmentLabel(environment)"
               :value="environment.id"
-            />
+            >
+              <div class="web-ui-run-env-option">
+                <div>
+                  <strong>{{ environment.name }}</strong>
+                  <span>{{ formatEnvironmentSource(environment) }} · {{ formatEnvironmentWorkspace(environment) }}</span>
+                </div>
+                <small>{{ formatRunEnvironmentBaseUrl(environment) }}</small>
+              </div>
+            </el-option>
           </el-select>
+          <div v-if="selectedRunEnvironment" class="web-ui-run-env-summary">
+            <strong>{{ selectedRunEnvironment.name }}</strong>
+            <span>{{ formatEnvironmentSource(selectedRunEnvironment) }} · {{ formatEnvironmentWorkspace(selectedRunEnvironment) }} · {{ formatRunEnvironmentBaseUrl(selectedRunEnvironment) }}</span>
+          </div>
           <div class="web-ui-run-context-tip">
             {{ formatRunContextTip(selectedRunEnvironment, selectedRunVariableSet, '未选择运行环境，将使用用例自身配置。') }}
           </div>
@@ -1995,14 +2037,31 @@ watch(
           <span>{{ selectedCases.length }} 条</span>
         </el-form-item>
         <el-form-item label="运行环境">
-          <el-select v-model="batchForm.environmentId" clearable placeholder="使用各用例默认配置">
+          <el-select
+            v-model="batchForm.environmentId"
+            clearable
+            placeholder="使用各用例默认配置"
+            popper-class="web-ui-run-env-popper"
+          >
             <el-option
               v-for="environment in enabledEnvironments"
               :key="environment.id"
               :label="formatRunEnvironmentLabel(environment)"
               :value="environment.id"
-            />
+            >
+              <div class="web-ui-run-env-option">
+                <div>
+                  <strong>{{ environment.name }}</strong>
+                  <span>{{ formatEnvironmentSource(environment) }} · {{ formatEnvironmentWorkspace(environment) }}</span>
+                </div>
+                <small>{{ formatRunEnvironmentBaseUrl(environment) }}</small>
+              </div>
+            </el-option>
           </el-select>
+          <div v-if="selectedBatchEnvironment" class="web-ui-run-env-summary">
+            <strong>{{ selectedBatchEnvironment.name }}</strong>
+            <span>{{ formatEnvironmentSource(selectedBatchEnvironment) }} · {{ formatEnvironmentWorkspace(selectedBatchEnvironment) }} · {{ formatRunEnvironmentBaseUrl(selectedBatchEnvironment) }}</span>
+          </div>
           <div class="web-ui-run-context-tip">
             {{ formatRunContextTip(selectedBatchEnvironment, selectedBatchVariableSet, '未选择运行环境，将使用各用例自身配置。') }}
           </div>
@@ -2473,6 +2532,77 @@ watch(
   color: var(--app-text-muted);
   font-size: var(--app-font-size-xs);
   line-height: var(--app-line-height-md);
+}
+
+.web-ui-run-env-summary {
+  display: grid;
+  gap: 2px;
+  margin-top: var(--app-space-2);
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-muted);
+}
+
+.web-ui-run-env-summary strong,
+.web-ui-run-env-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-ui-run-env-summary strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+.web-ui-run-env-summary span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+:global(.web-ui-run-env-popper .el-select-dropdown__item) {
+  height: auto !important;
+  min-height: 54px;
+  padding: 6px 12px;
+  line-height: 18px !important;
+}
+
+:global(.web-ui-run-env-popper .web-ui-run-env-option) {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 4px 0;
+  line-height: 18px;
+}
+
+:global(.web-ui-run-env-popper .web-ui-run-env-option div) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+:global(.web-ui-run-env-popper .web-ui-run-env-option strong),
+:global(.web-ui-run-env-popper .web-ui-run-env-option span),
+:global(.web-ui-run-env-popper .web-ui-run-env-option small) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.web-ui-run-env-popper .web-ui-run-env-option strong) {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+  font-weight: 600;
+}
+
+:global(.web-ui-run-env-popper .web-ui-run-env-option span),
+:global(.web-ui-run-env-popper .web-ui-run-env-option small) {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
 }
 
 .web-ui-ci-panel {
