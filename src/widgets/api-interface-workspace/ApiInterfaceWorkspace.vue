@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch, type Component } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -91,7 +91,7 @@ type ApiCaseDetailRequestTab = 'headers' | 'body' | 'params' | 'auth' | 'pre' | 
 type ApiCaseHistoryView = 'list' | 'detail'
 type ApiCaseHistoryResponseTab = Exclude<ResponseTab, 'actualRequest'>
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
-type ApiAiGeneratedCaseStatus = 'pending' | 'accepted' | 'discarded' | 'failed'
+type ApiAiGeneratedCaseStatus = 'generating' | 'pending' | 'accepted' | 'discarded' | 'failed'
 type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
@@ -133,6 +133,7 @@ const DIRECTORY_SEARCH_RESULT_LIMIT = 150
 const DIRECTORY_MODULE_REQUEST_PAGE_SIZE = 200
 const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
+const aiCaseGenerationFinishedIcon = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMu b3JnLzIwMDAvc3ZnIj4KICA8ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfMTA2NV8yMTk5MDQpIj4KICAgIDxwYXRoCiAgICAgIGQ9Ik01LjI0MTIxIDMuMDYxNTJDNS40MjgyOCAyLjE0NjI4IDYuNzM1NzggMi4xNDYyOCA2LjkyMjg1IDMuMDYxNTJDNy4zMzYxIDUuMDgyODEgOC45MTYxNyA2LjY2MzAzIDEwLjkzNzUgNy4wNzYxN0MxMS44NTI3IDcuMjYzMjcgMTEuODUyNyA4LjU3MDc1IDEwLjkzNzUgOC43NTc4MUM4LjkxNjI0IDkuMTcxMDMgNy4zMzYwNiAxMC43NTAyIDYuOTIyODUgMTIuNzcxNUM2LjczNTY4IDEzLjY4NjUgNS40MjgzOCAxMy42ODY1IDUuMjQxMjEgMTIuNzcxNUM0LjgyNzk4IDEwLjc1MDQgMy4yNDg2MiA5LjE3MTEgMS4yMjc1NCA4Ljc1NzgxQzAuMzEyMzA1IDguNTcwNzUgMC4zMTIzMzQgNy4yNjMyNyAxLjIyNzU0IDcuMDc2MTdDMy4yNDg2OSA2LjY2Mjk1IDQuODI3OTQgNS4wODI2NSA1LjI0MTIxIDMuMDYxNTJaTTEwLjY2MTEgMS4yMzkyNkMxMC43MzAxIDAuOTAyMDYxIDExLjIxMjMgMC45MDIwNjEgMTEuMjgxMiAxLjIzOTI2QzExLjQzMzYgMS45ODM3MSAxMi4wMTUzIDIuNTY1NDcgMTIuNzU5OCAyLjcxNzc3QzEzLjA5NyAyLjc4NjY5IDEzLjA5NyAzLjI2ODk3IDEyLjc1OTggMy4zMzc4OUMxMi4wMTUzIDMuNDkwMjQgMTEuNDMzNSA0LjA3MTg0IDExLjI4MTIgNC44MTY0MUMxMS4yMTIzIDUuMTUzNiAxMC43MzAxIDUuMTUzNiAxMC42NjExIDQuODE2NDFDMTAuNTA4OSA0LjA3MTggOS45MjcyMSAzLjQ5MDE2IDkuMTgyNjIgMy4zMzc4OUM4Ljg0NTU0IDMuMjY4OTEgOC44NDU1NCAyLjc4Njc1IDkuMTgyNjIgMi43MTc3N0M5LjkyNzE1IDIuNTY1NTQgMTAuNTA4OCAxLjk4Mzc1IDEwLjY2MTEgMS4yMzkyNloiCiAgICAgIGZpbGw9InVybCgjcGFpbnQwX2xpbmVhcl8xMDY1XzIxOTkwNCkiIC8+CiAgPC9nPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwYWludDBfbGluZWFyXzEwNjVfMjE5OTA0IiB4MT0iMC41NDEwMTYiIHkxPSIzLjUzMTQ2IiB4Mj0iMTMuMTEwNSIgeTI9IjMuNzAxNzUiCiAgICAgIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iI0U5NTZFOSIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIwLjcyIiBzdG9wLWNvbG9yPSIjRkY1ODVFIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNGRkEzMDAiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGNsaXBQYXRoIGlkPSJjbGlwMF8xMDY1XzIxOTkwNCI+CiAgICAgIDxyZWN0IHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgZmlsbD0id2hpdGUiIC8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KPC9zdmc+Cg=='.replace(/\s/g, '')
 
 interface ApiAiGeneratedCaseResult {
   id: string
@@ -158,6 +159,7 @@ interface AiCaseGenerationTabState {
   generating: boolean
   message: string
   logs: string[]
+  abortController?: AbortController | null
 }
 
 interface ApiAssertionConfig {
@@ -395,6 +397,8 @@ const caseDialogSaving = ref(false)
 const caseDialogDebugRunning = ref(false)
 const caseDialogDebugResult = ref<ApiRunResult | null>(null)
 const caseDialogDebugError = ref('')
+const aiGeneratedCaseDraftDetail = ref<ApiDefinitionCaseDetail | null>(null)
+const aiGeneratedCaseDialogSource = ref<ApiAiGeneratedCaseResult | null>(null)
 const caseDetailLoading = ref(false)
 const caseDetailErrorMessage = ref('')
 const editingCaseItem = ref<ApiDefinitionCaseItem | null>(null)
@@ -449,7 +453,23 @@ const aiCaseSelectedProviderId = ref<number | null>(null)
 const aiCaseCount = ref('AUTO')
 const aiCaseNoDuplicate = ref(true)
 const aiCasePrompt = ref('')
-const aiCaseSelectedOptionKeys = ref<string[]>(['required-only', 'missing-required', 'max-min'])
+const aiCaseSelectedOptionKeys = ref<string[]>([
+  'required-only',
+  'valid-semantics',
+  'sample-combination',
+  'other-positive',
+  'empty-value',
+  'missing-required',
+  'format-error',
+  'type-error',
+  'semantic-invalid',
+  'other-negative',
+  'max-min',
+  'over-boundary',
+  'null-empty',
+  'string-length',
+  'auth-control',
+])
 const aiCaseGenerationStatus = ref<ApiAiCaseGenerationStatus>('idle')
 const aiCaseGenerationMessage = ref('')
 const aiCaseGenerationLogs = ref<string[]>([])
@@ -460,8 +480,6 @@ const aiCaseResultKeyword = ref('')
 const aiCaseResultGroup = ref('')
 const aiCaseResultType = ref('')
 const aiCaseSelectedResultIds = ref<string[]>([])
-const aiCaseDetailVisible = ref(false)
-const aiCaseDetailResult = ref<ApiAiGeneratedCaseResult | null>(null)
 const fastExtractionVisible = ref(false)
 const fastExtractionTarget = ref<FastExtractionTarget | null>(null)
 const processorExtractMoreSettingsVisibleKey = ref<string | null>(null)
@@ -507,13 +525,6 @@ const aiCaseGenerationOptions: ApiAiCaseGenerationOptionPayload[] = [
   { id: 'command-injection', key: 'command-injection', group: 'security', groupLabel: '安全性', label: '命令行注入' },
   { id: 'json-injection', key: 'json-injection', group: 'security', groupLabel: '安全性', label: 'JSON注入' },
   { id: 'nosql-injection', key: 'nosql-injection', group: 'security', groupLabel: '安全性', label: 'NoSQL注入' },
-]
-
-const aiCaseCountOptions = [
-  { label: '智能数量', value: 'AUTO' },
-  { label: '10 条', value: '10' },
-  { label: '20 条', value: '20' },
-  { label: '40 条', value: '40' },
 ]
 
 const importCapabilityItems: Array<{
@@ -1050,22 +1061,13 @@ const aiCaseSelectedProvider = computed(() =>
   aiCaseAvailableProviders.value.find(item => item.id === aiCaseSelectedProviderId.value) || null,
 )
 const aiCaseCanGenerate = computed(() =>
-  Boolean(activeEditor.value?.definitionId)
+  Boolean(activeEditor.value?.definitionId || activeAiCaseGenerationState.value?.definitionId)
   && Boolean(aiCaseSelectedProvider.value)
   && aiCaseSelectedOptionKeys.value.length > 0
   && aiCaseGenerationStatus.value !== 'running',
 )
-const aiCaseActiveSourceName = computed(() =>
-  activeAiCaseGenerationState.value?.definitionName || activeEditor.value?.detail.name || '-',
-)
-const aiCaseActiveSourceMethod = computed(() =>
-  activeAiCaseGenerationState.value?.method || activeEditor.value?.detail.requestConfig.method || '-',
-)
-const aiCaseActiveSourcePath = computed(() =>
-  activeAiCaseGenerationState.value?.path || activeEditor.value?.detail.requestConfig.path || '-',
-)
 const aiCasePendingResults = computed(() =>
-  aiCaseGeneratedResults.value.filter(item => item.status === 'pending'),
+  aiCaseGeneratedResults.value.filter(item => item.status !== 'accepted' && item.status !== 'discarded'),
 )
 const aiCaseAcceptedResults = computed(() =>
   aiCaseGeneratedResults.value.filter(item => item.status === 'accepted'),
@@ -1073,10 +1075,23 @@ const aiCaseAcceptedResults = computed(() =>
 const aiCaseDiscardedResults = computed(() =>
   aiCaseGeneratedResults.value.filter(item => item.status === 'discarded'),
 )
+const aiCaseGenerationEmptyStateText = computed(() => {
+  if (activeAiCaseGenerationState.value?.generating) {
+    return 'AI 正在生成用例大纲，生成后的用例会逐条显示'
+  }
+  if (activeAiCaseGenerationState.value?.message && aiCaseGenerationStatus.value === 'failed') {
+    return activeAiCaseGenerationState.value.message
+  }
+  if (aiCaseGeneratedResults.value.length > 0) {
+    return '当前筛选条件下没有可展示的用例'
+  }
+  return '本次没有生成可展示的用例，请检查模型是否按要求返回结构化内容'
+})
 const aiCaseFilteredResults = computed(() => {
   const keyword = aiCaseResultKeyword.value.trim().toLowerCase()
   return aiCaseGeneratedResults.value.filter((item) => {
-    if (aiCaseResultFilter.value !== 'all' && item.status !== aiCaseResultFilter.value) return false
+    if (aiCaseResultFilter.value === 'pending' && (item.status === 'accepted' || item.status === 'discarded')) return false
+    if (aiCaseResultFilter.value !== 'all' && aiCaseResultFilter.value !== 'pending' && item.status !== aiCaseResultFilter.value) return false
     if (aiCaseResultGroup.value && (item.draft.groupKey || item.draft.group || '') !== aiCaseResultGroup.value) return false
     if (aiCaseResultType.value && (item.draft.typeKey || item.draft.type || '') !== aiCaseResultType.value) return false
     if (!keyword) return true
@@ -1107,16 +1122,16 @@ const aiCaseResultTypeOptions = computed(() => {
   return Array.from(options, ([value, label]) => ({ value, label }))
 })
 const selectedPendingAiCaseResults = computed(() =>
-  aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id)),
+  aiCasePendingResults.value.filter(item => item.status !== 'generating' && item.status !== 'failed' && aiCaseSelectedResultIds.value.includes(item.id)),
 )
 const aiCaseSelectionAllChecked = computed(() =>
-  aiCaseFilteredResults.value.some(item => item.status === 'pending')
+  aiCaseFilteredResults.value.some(item => item.status !== 'generating' && item.status !== 'failed' && item.status === 'pending')
   && aiCaseFilteredResults.value
-    .filter(item => item.status === 'pending')
+    .filter(item => item.status !== 'generating' && item.status !== 'failed' && item.status === 'pending')
     .every(item => aiCaseSelectedResultIds.value.includes(item.id)),
 )
 const aiCaseSelectionIndeterminate = computed(() => {
-  const pending = aiCaseFilteredResults.value.filter(item => item.status === 'pending')
+  const pending = aiCaseFilteredResults.value.filter(item => item.status !== 'generating' && item.status !== 'failed' && item.status === 'pending')
   if (!pending.length) return false
   const selectedCount = pending.filter(item => aiCaseSelectedResultIds.value.includes(item.id)).length
   return selectedCount > 0 && selectedCount < pending.length
@@ -3885,7 +3900,7 @@ function openNewRequestTab(source?: ApiDefinitionDetail) {
 function openAiCaseGenerationResultTab(editor: EditorTab, sourceState?: AiCaseGenerationTabState | null) {
   const definitionId = sourceState?.definitionId || editor.definitionId
   if (!definitionId) return null
-  const state: AiCaseGenerationTabState = {
+  const state = reactive<AiCaseGenerationTabState>({
     definitionId,
     workspaceCode: sourceState?.workspaceCode || editor.detail.workspaceCode || props.workspaceCode,
     definitionName: sourceState?.definitionName || editor.detail.name || editor.title || '未命名接口',
@@ -3900,7 +3915,8 @@ function openAiCaseGenerationResultTab(editor: EditorTab, sourceState?: AiCaseGe
     generating: true,
     message: '',
     logs: [],
-  }
+    abortController: null,
+  })
   const detail = createDraftDetail()
   detail.id = definitionId
   detail.name = 'AI 生成单接口用例'
@@ -4018,6 +4034,7 @@ async function closeEditorTab(key: string, force = false) {
     const confirmed = await confirmApiAction('当前请求有未保存修改，关闭后会丢失，确认关闭吗？', '关闭标签')
     if (!confirmed) return
   }
+  tabs.value[index].aiGeneration?.abortController?.abort()
   tabs.value.splice(index, 1)
   if (activeEditorKey.value === key) {
     activeEditorKey.value = tabs.value[Math.max(index - 1, 0)]?.key || ''
@@ -4605,6 +4622,23 @@ function applyCurlToActiveEditor(input: string) {
 }
 
 function currentDefinitionSummary(): ApiDefinitionItem | null {
+  if (aiGeneratedCaseDraftDetail.value) {
+    const detail = aiGeneratedCaseDraftDetail.value
+    return {
+      id: detail.definitionId,
+      workspaceCode: detail.workspaceCode,
+      workspaceName: detail.workspaceName,
+      name: detail.definitionName || activeAiCaseGenerationState.value?.definitionName || '',
+      method: detail.method,
+      path: detail.path,
+      directoryName: null,
+      description: null,
+      tags: [],
+      lastRunResult: null,
+      lastRunAt: null,
+      updatedAt: null,
+    }
+  }
   if (!activeEditor.value?.definitionId) return null
   const detail = activeEditor.value.detail
   return {
@@ -4624,6 +4658,9 @@ function currentDefinitionSummary(): ApiDefinitionItem | null {
 }
 
 function currentCaseDraftDetail(): ApiDefinitionCaseDetail | null {
+  if (aiGeneratedCaseDraftDetail.value) {
+    return aiGeneratedCaseDraftDetail.value
+  }
   if (!activeEditor.value?.definitionId) return null
   const detail = activeEditor.value.detail
   return {
@@ -4686,50 +4723,149 @@ function selectedAiCaseOptions() {
   return selected.length ? selected : aiCaseGenerationOptions.slice(0, 1)
 }
 
-function generatedResultId(event: ApiAiCaseGenerationEvent, index: number) {
-  return event.itemId || event.item?.typeKey || event.outline?.typeKey || `ai-case-${Date.now()}-${index}`
+function aiCaseGenerationOptionGroupLabel(groupKey?: string | null) {
+  return aiCaseGenerateGroups.value.find(item => item.key === groupKey)?.label || groupKey || '其他'
+}
+
+function buildAiCaseGenerationRequestOptions(): ApiAiCaseGenerationOptionPayload[] {
+  const selected = selectedAiCaseOptions()
+  const targetCount = resolveAiCaseGenerationTargetCount(selected.length)
+  return Array.from({ length: targetCount }, (_, index) => {
+    const option = selected[index % selected.length]
+    return {
+      id: `ai-case-${Date.now()}-${index}`,
+      key: option.key,
+      group: option.group,
+      label: option.label,
+      groupLabel: option.groupLabel || aiCaseGenerationOptionGroupLabel(option.group),
+    }
+  })
+}
+
+function resolveAiCaseGenerationTargetCount(selectedCount: number) {
+  if (aiCaseCount.value === 'AUTO') {
+    return Math.min(Math.max(selectedCount, 1), 12)
+  }
+  return Math.max(1, Math.min(80, Number(aiCaseCount.value) || selectedCount || 1))
+}
+
+function createAiGeneratedCasePlaceholder(option: ApiAiCaseGenerationOptionPayload, index: number): ApiAiGeneratedCaseResult {
+  return {
+    id: option.id || `ai-case-${Date.now()}-${index}`,
+    status: 'generating',
+    draft: {
+      name: option.label,
+      description: 'AI 正在生成接口用例',
+      tags: [option.groupLabel || aiCaseGenerationOptionGroupLabel(option.group), option.label],
+      group: option.groupLabel || aiCaseGenerationOptionGroupLabel(option.group),
+      groupKey: option.group || null,
+      type: option.label,
+      typeKey: option.key || null,
+      expected: '生成完成后展示预期结果',
+      requestConfig: clone(activeAiCaseGenerationState.value?.requestConfig || activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
+      assertions: [],
+      preProcessors: [],
+      postProcessors: [],
+    },
+    message: null,
+    runResult: null,
+    runMessage: null,
+  }
 }
 
 function syncAiGenerationStateToPanel(state: AiCaseGenerationTabState) {
-  if (activeAiCaseGenerationState.value !== state) return
+  const activeState = activeAiCaseGenerationState.value
+  if (activeState !== state && toRaw(activeState) !== toRaw(state)) return
   aiCaseGeneratedResults.value = state.results
   aiCaseGenerationLogs.value = state.logs
   aiCaseGenerationMessage.value = state.message
 }
 
-function mergeAiGeneratedResult(event: ApiAiCaseGenerationEvent, state?: AiCaseGenerationTabState | null) {
+function createAiGeneratedCasePlaceholderFromEvent(event: ApiAiCaseGenerationEvent, index: number) {
+  const fallbackOption = aiCaseGenerationOptions.find(item => item.label === event.type || item.key === event.itemId)
+  return createAiGeneratedCasePlaceholder({
+    id: event.itemId || `stream-${index}`,
+    key: fallbackOption?.key || event.itemId || `stream-${index}`,
+    group: fallbackOption?.group || 'positive',
+    label: event.type || fallbackOption?.label || `用例 ${index + 1}`,
+    groupLabel: fallbackOption?.groupLabel || aiCaseGenerationOptionGroupLabel(fallbackOption?.group || 'positive'),
+  }, index)
+}
+
+function findFirstAiGeneratedCasePlaceholder(results: ApiAiGeneratedCaseResult[], itemId?: string | null) {
+  if (itemId) {
+    return results.find(item => item.id === itemId)
+  }
+  return results.find(item => item.status === 'generating')
+}
+
+function findOrCreateAiGeneratedCaseResult(event: ApiAiCaseGenerationEvent, state?: AiCaseGenerationTabState | null) {
   const results = state?.results || aiCaseGeneratedResults.value
-  const draft = event.item || {
-    name: event.outline?.name || `AI 生成用例 ${results.length + 1}`,
-    description: event.outline?.description || event.message || '',
-    tags: event.outline?.tags || [],
-    group: event.outline?.group || event.group || null,
-    groupKey: event.outline?.groupKey || null,
-    type: event.outline?.type || event.type || null,
-    typeKey: event.outline?.typeKey || null,
-    expected: event.outline?.expected || null,
-    requestConfig: clone(state?.requestConfig || activeEditor.value?.detail.requestConfig || emptyRequestConfig()),
-    assertions: clone(state?.assertions || []),
-    preProcessors: clone(state?.preProcessors || []),
-    postProcessors: clone(state?.postProcessors || []),
+  const existing = findFirstAiGeneratedCasePlaceholder(results, event.itemId)
+  if (existing) {
+    return existing
   }
-  const id = generatedResultId(event, results.length)
-  const existed = results.find(item => item.id === id)
-  const next: ApiAiGeneratedCaseResult = {
-    id,
-    status: event.event === 'item_failed' ? 'failed' : existed?.status || 'pending',
-    draft,
-    message: event.message || null,
+  const result = createAiGeneratedCasePlaceholderFromEvent(event, results.length)
+  if (event.itemId) {
+    result.id = event.itemId
   }
-  if (existed) {
-    Object.assign(existed, next)
-  } else {
-    results.push(next)
-  }
+  results.push(result)
   if (state) {
     state.results = [...results]
     syncAiGenerationStateToPanel(state)
   }
+  return result
+}
+
+function normalizeAiGeneratedCaseName(name: string | null | undefined, type: string | null | undefined, expected?: string | null) {
+  const cleanName = (name || type || 'AI 生成用例')
+    .replace(/^【[^】]+】\s*/, '')
+    .replace(/^\[[^\]]+]\s*/, '')
+    .replace(/^(正向|反向|负向|边界|安全性|安全)\s*[-–—:：]\s*/, '')
+    .trim()
+  const cleanType = (type || '').trim()
+  if (!cleanType || cleanName.startsWith(`${cleanType} – `) || cleanName.startsWith(`${cleanType} - `)) {
+    return cleanName
+  }
+  const cleanExpected = (expected || '').trim()
+  return cleanExpected
+    ? `${cleanType} – ${cleanName} – ${cleanExpected}`
+    : `${cleanType} – ${cleanName}`
+}
+
+function applyAiGeneratedOutlineToResult(target: ApiAiGeneratedCaseResult, outline: NonNullable<ApiAiCaseGenerationEvent['outline']>, event: ApiAiCaseGenerationEvent) {
+  const draft = target.draft
+  draft.name = normalizeAiGeneratedCaseName(outline.name || draft.name, outline.type || draft.type || event.type, outline.expected || draft.expected)
+  draft.description = outline.description || draft.description
+  draft.tags = Array.isArray(outline.tags) ? [...outline.tags] : draft.tags
+  draft.group = outline.group || event.group || draft.group
+  draft.groupKey = outline.groupKey || draft.groupKey
+  draft.type = outline.type || event.type || draft.type
+  draft.typeKey = outline.typeKey || draft.typeKey
+  draft.expected = outline.expected || draft.expected
+  target.status = 'generating'
+  target.message = null
+}
+
+function applyAiGeneratedDraftToResult(target: ApiAiGeneratedCaseResult, draft: ApiAiGeneratedCaseDraft) {
+  const nextDraft = clone(draft)
+  nextDraft.name = normalizeAiGeneratedCaseName(nextDraft.name || target.draft.name, nextDraft.type || target.draft.type, nextDraft.expected || target.draft.expected)
+  nextDraft.description = nextDraft.description || target.draft.description
+  nextDraft.tags = Array.isArray(nextDraft.tags) ? [...nextDraft.tags] : target.draft.tags
+  nextDraft.group = nextDraft.group || target.draft.group
+  nextDraft.groupKey = nextDraft.groupKey || target.draft.groupKey
+  nextDraft.type = nextDraft.type || target.draft.type
+  nextDraft.typeKey = nextDraft.typeKey || target.draft.typeKey
+  nextDraft.expected = nextDraft.expected || target.draft.expected
+  nextDraft.requestConfig = clone(nextDraft.requestConfig || target.draft.requestConfig || emptyRequestConfig())
+  nextDraft.assertions = clone(nextDraft.assertions || [])
+  nextDraft.preProcessors = clone(nextDraft.preProcessors || [])
+  nextDraft.postProcessors = clone(nextDraft.postProcessors || [])
+  target.draft = nextDraft
+  target.status = 'pending'
+  target.message = null
+  target.runResult = null
+  target.runMessage = null
 }
 
 function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent, state?: AiCaseGenerationTabState | null) {
@@ -4745,13 +4881,38 @@ function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent, state?: Ai
     log(`开始生成，预计 ${event.total || selectedAiCaseOptions().length} 条`)
   } else if (event.event === 'item_outline') {
     log(`生成大纲：${event.outline?.name || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event, state)
+    if (event.outline) {
+      const target = findOrCreateAiGeneratedCaseResult(event, state)
+      applyAiGeneratedOutlineToResult(target, event.outline, event)
+      if (state) {
+        state.results = [...state.results]
+        syncAiGenerationStateToPanel(state)
+      }
+    }
   } else if (event.event === 'item_completed') {
     log(`生成完成：${event.item?.name || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event, state)
+    if (event.item) {
+      const target = findOrCreateAiGeneratedCaseResult(event, state)
+      applyAiGeneratedDraftToResult(target, event.item)
+      if (state) {
+        state.results = [...state.results]
+        syncAiGenerationStateToPanel(state)
+      }
+    }
   } else if (event.event === 'item_failed') {
     log(`单条失败：${event.message || event.type || event.itemId || '-'}`)
-    mergeAiGeneratedResult(event, state)
+    const target = findOrCreateAiGeneratedCaseResult(event, state)
+    if (event.outline) {
+      applyAiGeneratedOutlineToResult(target, event.outline, event)
+    }
+    target.status = 'failed'
+    target.message = event.message || '生成失败'
+    target.runResult = '失败'
+    target.runMessage = event.message || '生成失败'
+    if (state) {
+      state.results = [...state.results]
+      syncAiGenerationStateToPanel(state)
+    }
   } else if (event.event === 'completed') {
     aiCaseGenerationStatus.value = 'done'
     aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例完成'
@@ -4764,6 +4925,7 @@ function handleAiCaseGenerationEvent(event: ApiAiCaseGenerationEvent, state?: Ai
     aiCaseGenerationStatus.value = 'failed'
     aiCaseGenerationMessage.value = event.message || 'AI 生成接口用例失败'
     if (state) {
+      markRemainingAiGeneratedCasesFailed(state, aiCaseGenerationMessage.value)
       state.generating = false
       state.message = aiCaseGenerationMessage.value
     }
@@ -4793,14 +4955,19 @@ async function submitAiCaseGeneration() {
   const definitionId = sourceState?.definitionId || editor.definitionId
   if (!definitionId) return
   const detail = editor.detail
+  const sourceRequestConfig = clone(sourceState?.requestConfig || detail.requestConfig)
   const targetWorkspaceCode = sourceState?.workspaceCode || editor.detail.workspaceCode || props.workspaceCode
   if (!requireConcreteCaseWorkspace(targetWorkspaceCode, 'AI 生成接口用例')) return
   aiCaseGenerationStatus.value = 'running'
   aiCaseGenerationMessage.value = ''
   aiCaseGenerationLogs.value = []
+  const requestOptions = buildAiCaseGenerationRequestOptions()
   aiCaseGeneratedResults.value = []
   const generationState = openAiCaseGenerationResultTab(editor, sourceState)
   if (!generationState) return
+  syncAiGenerationStateToPanel(generationState)
+  const abortController = new AbortController()
+  generationState.abortController = abortController
 
   try {
     await apiAutomationApi.streamAiCaseGeneration(targetWorkspaceCode, {
@@ -4808,16 +4975,16 @@ async function submitAiCaseGeneration() {
       definitionId,
       definitionName: sourceState?.definitionName || detail.name,
       name: sourceState?.definitionName || detail.name,
-      method: sourceState?.method || detail.requestConfig.method || detail.method,
-      path: sourceState?.path || detail.requestConfig.path || detail.path,
+      method: sourceState?.method || sourceRequestConfig.method || detail.method,
+      path: sourceState?.path || sourceRequestConfig.path || detail.path,
       description: sourceState?.description ?? detail.description,
       providerConnectionId: aiCaseSelectedProvider.value.id,
       modelName: aiCaseSelectedProvider.value.modelName || '',
       caseCount: aiCaseCount.value,
       noDuplicate: aiCaseNoDuplicate.value,
       prompt: aiCasePrompt.value || null,
-      options: selectedAiCaseOptions(),
-      requestConfig: clone(sourceState?.requestConfig || detail.requestConfig),
+      options: requestOptions,
+      requestConfig: sourceRequestConfig,
       assertions: clone(sourceState?.assertions || detail.assertions || []),
       preProcessors: clone(sourceState?.preProcessors || detail.preProcessors || []),
       postProcessors: clone(sourceState?.postProcessors || detail.postProcessors || []),
@@ -4826,7 +4993,7 @@ async function submitAiCaseGeneration() {
         name: item.name,
         tags: item.tags || [],
       })),
-    }, event => handleAiCaseGenerationEvent(event, generationState))
+    }, event => handleAiCaseGenerationEvent(event, generationState), { signal: abortController.signal })
 
     if (aiCaseGenerationStatus.value === 'running') {
       aiCaseGenerationStatus.value = 'done'
@@ -4836,14 +5003,25 @@ async function submitAiCaseGeneration() {
       syncAiGenerationStateToPanel(generationState)
     }
   } catch (error) {
+    if ((error as Error).name === 'AbortError') {
+      aiCaseGenerationStatus.value = 'failed'
+      aiCaseGenerationMessage.value = '已停止生成'
+      generationState.generating = false
+      generationState.abortController = null
+      generationState.message = aiCaseGenerationMessage.value
+      markRemainingAiGeneratedCasesFailed(generationState, aiCaseGenerationMessage.value)
+      return
+    }
     aiCaseGenerationStatus.value = 'failed'
     aiCaseGenerationMessage.value = getRequestErrorMessage(error)
     generationState.generating = false
     generationState.message = aiCaseGenerationMessage.value
     generationState.logs.push(aiCaseGenerationMessage.value)
+    markRemainingAiGeneratedCasesFailed(generationState, aiCaseGenerationMessage.value)
     syncAiGenerationStateToPanel(generationState)
   } finally {
     generationState.generating = false
+    generationState.abortController = null
     syncAiGenerationStateToPanel(generationState)
   }
 }
@@ -4884,10 +5062,25 @@ function discardAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
   aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
 }
 
-function restoreAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
-  if (result.status === 'discarded') {
-    result.status = 'pending'
-  }
+function markRemainingAiGeneratedCasesFailed(state: AiCaseGenerationTabState, message: string) {
+  state.results.forEach((item) => {
+    if (item.status === 'generating') {
+      item.status = 'failed'
+      item.message = item.message || message
+    }
+  })
+  state.results = [...state.results]
+  syncAiGenerationStateToPanel(state)
+}
+
+function stopAiCaseGeneration() {
+  const state = activeAiCaseGenerationState.value
+  if (!state) return
+  state.abortController?.abort()
+  state.generating = false
+  state.abortController = null
+  state.message = '已停止生成'
+  markRemainingAiGeneratedCasesFailed(state, '已停止生成')
 }
 
 function toggleAiGeneratedCaseSelection(id: string, checked: string | number | boolean) {
@@ -4913,6 +5106,7 @@ function toggleAllAiGeneratedCaseSelection(checked: string | number | boolean) {
 }
 
 async function runAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
+  if (!ensureAiGeneratedCaseReady(result)) return
   const generationState = activeAiCaseGenerationState.value
   const targetWorkspaceCode = generationState?.workspaceCode || resolveCaseItemWorkspaceCode()
   if (!requireConcreteCaseWorkspace(targetWorkspaceCode, '运行 AI 生成用例')) return
@@ -4945,7 +5139,7 @@ async function runAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
 }
 
 async function runSelectedAiGeneratedCases() {
-  const selected = aiCasePendingResults.value.filter(item => aiCaseSelectedResultIds.value.includes(item.id))
+  const selected = selectedPendingAiCaseResults.value
   if (!selected.length) {
     ElMessage.info('请先勾选待运行的生成结果')
     return
@@ -4956,23 +5150,8 @@ async function runSelectedAiGeneratedCases() {
 }
 
 function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {
-  aiCaseDetailResult.value = result
-  aiCaseDetailVisible.value = true
-}
-
-function aiGeneratedCaseStatusLabel(status: ApiAiGeneratedCaseStatus) {
-  if (status === 'accepted') return '已采纳'
-  if (status === 'discarded') return '已丢弃'
-  if (status === 'failed') return '失败'
-  return '待处理'
-}
-
-function aiGeneratedCaseMethod(result: ApiAiGeneratedCaseResult | null) {
-  return result?.draft.requestConfig?.method || activeEditor.value?.detail.requestConfig.method || '-'
-}
-
-function aiGeneratedCasePath(result: ApiAiGeneratedCaseResult | null) {
-  return result?.draft.requestConfig?.path || activeEditor.value?.detail.requestConfig.path || '-'
+  if (!ensureAiGeneratedCaseReady(result)) return
+  openAiGeneratedCaseInCaseDialog(result)
 }
 
 function aiGeneratedCaseGroupLabel(result: ApiAiGeneratedCaseResult | null) {
@@ -4989,14 +5168,70 @@ function latestCaseRunHistories(items: ApiRunHistoryItem[]) {
     .slice(0, CASE_RUN_HISTORY_LIMIT)
 }
 
-function aiGeneratedDraftExtra(result: ApiAiGeneratedCaseResult | null, key: string) {
-  if (!result) return null
-  return (result.draft as unknown as Record<string, unknown>)[key] ?? null
+function ensureAiGeneratedCaseReady(result: ApiAiGeneratedCaseResult) {
+  if (result.status === 'generating') {
+    ElMessage.info('生成中，请稍后')
+    return false
+  }
+  if (result.status === 'failed') {
+    ElMessage.warning(result.message || '该用例生成失败')
+    return false
+  }
+  return true
+}
+
+function buildCaseDraftFromAiGeneratedCase(result: ApiAiGeneratedCaseResult): ApiDefinitionCaseDetail {
+  const state = activeAiCaseGenerationState.value
+  const definition = activeEditor.value?.detail
+  const requestConfig = clone(result.draft.requestConfig || state?.requestConfig || definition?.requestConfig || emptyRequestConfig())
+  return {
+    id: 0,
+    workspaceCode: state?.workspaceCode || definition?.workspaceCode || props.workspaceCode,
+    workspaceName: definition?.workspaceName || '',
+    definitionId: state?.definitionId || activeEditor.value?.definitionId || 0,
+    definitionName: state?.definitionName || definition?.name || '',
+    name: normalizeAiGeneratedCaseName(result.draft.name, result.draft.type, result.draft.expected),
+    method: requestConfig.method || state?.method || definition?.requestConfig.method || 'GET',
+    path: requestConfig.path || state?.path || definition?.requestConfig.path || '',
+    description: result.draft.description || result.draft.expected || null,
+    tags: [...(result.draft.tags || [])],
+    lastRunResult: result.runResult || null,
+    lastRunAt: null,
+    updatedAt: null,
+    createdAt: null,
+    requestConfig,
+    assertions: clone(result.draft.assertions || []),
+    extractors: [],
+    preProcessors: clone(result.draft.preProcessors || []),
+    postProcessors: clone(result.draft.postProcessors || []),
+  }
+}
+
+function openAiGeneratedCaseInCaseDialog(result: ApiAiGeneratedCaseResult) {
+  aiGeneratedCaseDialogSource.value = result
+  aiGeneratedCaseDraftDetail.value = buildCaseDraftFromAiGeneratedCase(result)
+  resetCaseDialogDebugState()
+  caseDialogMode.value = 'create'
+  editingCaseItem.value = null
+  editingCaseDetail.value = null
+  caseDetailErrorMessage.value = ''
+  caseDialogVisible.value = true
+}
+
+function syncAiGeneratedCaseFromPayload(result: ApiAiGeneratedCaseResult, payload: SaveApiDefinitionCasePayload) {
+  result.draft.name = normalizeAiGeneratedCaseName(payload.name, result.draft.type, result.draft.expected)
+  result.draft.description = payload.description || ''
+  result.draft.tags = [...(payload.tags || [])]
+  result.draft.requestConfig = clone(payload.requestConfig)
+  result.draft.assertions = clone(payload.assertions || [])
+  result.draft.preProcessors = clone(payload.preProcessors || [])
+  result.draft.postProcessors = clone(payload.postProcessors || [])
 }
 
 async function batchAcceptAiGeneratedCases() {
   let pending = selectedPendingAiCaseResults.value
-  if (!pending.length && aiCasePendingResults.value.length) {
+  const pendingResults = aiCasePendingResults.value.filter(item => item.status === 'pending')
+  if (!pending.length && pendingResults.length) {
     try {
       const confirmed = await confirmApiAction('当前未勾选生成结果，是否采纳全部待处理结果？', '批量采纳', {
         confirmText: '采纳全部',
@@ -5005,7 +5240,7 @@ async function batchAcceptAiGeneratedCases() {
     } catch {
       return
     }
-    pending = aiCasePendingResults.value
+    pending = pendingResults
   }
   if (!pending.length) {
     ElMessage.info('暂无待采纳的生成结果')
@@ -5020,7 +5255,8 @@ async function batchAcceptAiGeneratedCases() {
 
 async function batchDiscardAiGeneratedCases() {
   let pending = selectedPendingAiCaseResults.value
-  if (!pending.length && aiCasePendingResults.value.length) {
+  const pendingResults = aiCasePendingResults.value.filter(item => item.status === 'pending')
+  if (!pending.length && pendingResults.length) {
     try {
       const confirmed = await confirmApiAction('当前未勾选生成结果，是否弃用全部待处理结果？', '批量弃用', {
         confirmText: '弃用全部',
@@ -5030,7 +5266,7 @@ async function batchDiscardAiGeneratedCases() {
     } catch {
       return
     }
-    pending = aiCasePendingResults.value
+    pending = pendingResults
   }
   if (!pending.length) {
     ElMessage.info('暂无待弃用的生成结果')
@@ -5047,6 +5283,8 @@ function openCreateCaseDialog() {
     ElMessage.warning('请先保存接口，再新建用例')
     return
   }
+  aiGeneratedCaseDialogSource.value = null
+  aiGeneratedCaseDraftDetail.value = null
   resetCaseDialogDebugState()
   caseDialogMode.value = 'create'
   editingCaseItem.value = null
@@ -5056,6 +5294,8 @@ function openCreateCaseDialog() {
 }
 
 async function openEditCaseDialog(item: ApiDefinitionCaseItem) {
+  aiGeneratedCaseDialogSource.value = null
+  aiGeneratedCaseDraftDetail.value = null
   resetCaseDialogDebugState()
   caseDialogMode.value = 'edit'
   editingCaseItem.value = item
@@ -5189,7 +5429,7 @@ function resolveCaseDialogWorkspaceCode(payload: SaveApiDefinitionCasePayload) {
 }
 
 async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
-  if (!activeEditor.value?.definitionId) return
+  if (!activeEditor.value?.definitionId && !aiGeneratedCaseDraftDetail.value?.definitionId) return
   const targetWorkspaceCode = resolveCaseDialogWorkspaceCode(payload)
   if (targetWorkspaceCode === 'ALL') {
     ElMessage.warning('请先切换到具体工作空间后再保存用例')
@@ -5208,8 +5448,17 @@ async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
       await apiAutomationApi.createCase(targetWorkspaceCode, requestPayload)
       ElMessage.success('用例已创建')
     }
+    if (aiGeneratedCaseDialogSource.value) {
+      syncAiGeneratedCaseFromPayload(aiGeneratedCaseDialogSource.value, payload)
+      aiGeneratedCaseDialogSource.value.status = 'accepted'
+      aiGeneratedCaseDialogSource.value = null
+      aiGeneratedCaseDraftDetail.value = null
+    }
     caseDialogVisible.value = false
-    await loadCasesForDefinition(activeEditor.value.definitionId, targetWorkspaceCode)
+    const definitionId = activeEditor.value?.definitionId || payload.definitionId || editingCaseDetail.value?.definitionId
+    if (definitionId) {
+      await loadCasesForDefinition(definitionId, targetWorkspaceCode)
+    }
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -5218,8 +5467,7 @@ async function submitCaseDialog(payload: SaveApiDefinitionCasePayload) {
 }
 
 async function debugCaseDialog(payload: SaveApiDefinitionCasePayload) {
-  if (!activeEditor.value) return
-  const editor = activeEditor.value
+  if (!activeEditor.value && !aiGeneratedCaseDraftDetail.value) return
   const targetWorkspaceCode = resolveCaseDialogWorkspaceCode(payload)
   if (targetWorkspaceCode === 'ALL') {
     caseDialogDebugError.value = '请先切换到具体工作空间后再发送用例请求'
@@ -5237,7 +5485,7 @@ async function debugCaseDialog(payload: SaveApiDefinitionCasePayload) {
       ...currentRunPayload(),
       workspaceCode: targetWorkspaceCode,
       name: payload.name,
-      directoryName: editor.detail.directoryName || null,
+      directoryName: null,
       description: payload.description,
       tags: payload.tags,
       requestConfig: clone(payload.requestConfig),
@@ -5246,6 +5494,11 @@ async function debugCaseDialog(payload: SaveApiDefinitionCasePayload) {
       preProcessors: clone(payload.preProcessors || []),
       postProcessors: clone(payload.postProcessors || []),
     })
+    if (aiGeneratedCaseDialogSource.value) {
+      syncAiGeneratedCaseFromPayload(aiGeneratedCaseDialogSource.value, payload)
+      aiGeneratedCaseDialogSource.value.runResult = caseDialogDebugResult.value.result === 'PASSED' || caseDialogDebugResult.value.result === 'SUCCESS' ? '通过' : '失败'
+      aiGeneratedCaseDialogSource.value.runMessage = caseDialogDebugResult.value.failureSummary || ''
+    }
     ElMessage.success('用例请求已发送')
   } catch (error) {
     caseDialogDebugError.value = getRequestErrorMessage(error)
@@ -5494,7 +5747,18 @@ onBeforeUnmount(() => {
               :title="item.title"
               @click="activeEditorKey = item.key"
             >
-              <span :class="['api-method', requestMethodClass(item.method)]">{{ item.method }}</span>
+              <span
+                v-if="item.resourceType === 'ai-case-generation' && item.aiGeneration?.generating"
+                :class="['ai-generation-tab-spinner', { spinning: item.aiGeneration?.generating }]"
+                aria-hidden="true"
+              ></span>
+              <img
+                v-else-if="item.resourceType === 'ai-case-generation'"
+                :src="aiCaseGenerationFinishedIcon"
+                alt="ai"
+                class="ai-generation-tab-finished-icon"
+              >
+              <span v-else :class="['api-method', requestMethodClass(item.method)]">{{ item.method }}</span>
               <span class="api-editor-tab__label">{{ item.title }}</span>
               <span v-if="item.dirty" class="api-editor-tab__dot"></span>
               <span v-if="tabs.length > 1" class="api-editor-tab__close" @click.stop="closeEditorTab(item.key)">
@@ -5552,11 +5816,10 @@ onBeforeUnmount(() => {
               <button
                 type="button"
                 :class="['ai-generation-header-action', { 'is-stop': activeAiCaseGenerationState?.generating }]"
-                :disabled="activeAiCaseGenerationState?.generating"
-                @click="openAiCaseDrawer"
+                @click="activeAiCaseGenerationState?.generating ? stopAiCaseGeneration() : openAiCaseDrawer()"
               >
                 <MagicStick v-if="!activeAiCaseGenerationState?.generating" />
-                {{ activeAiCaseGenerationState?.generating ? '生成中...' : '生成新用例' }}
+                {{ activeAiCaseGenerationState?.generating ? '停止' : '生成新用例' }}
               </button>
             </div>
 
@@ -5591,7 +5854,7 @@ onBeforeUnmount(() => {
                     <LucidePlay />
                     运行选中
                   </button>
-                  <button type="button" class="ai-generation-accept-selected" :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)" @click="batchAcceptAiGeneratedCases">采纳选中</button>
+                  <button type="button" class="ai-generation-accept-selected" :disabled="!selectedPendingAiCaseResults.length || Boolean(aiCaseSavingId)" @click="batchAcceptAiGeneratedCases">采纳选中</button>
                   <button type="button" class="ai-generation-discard-selected" :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)" @click="batchDiscardAiGeneratedCases">废弃选中</button>
                 </div>
               </div>
@@ -5615,7 +5878,7 @@ onBeforeUnmount(() => {
                 <div class="ai-generation-detail-body">
                   <div v-if="!aiCaseFilteredResults.length" class="ai-generation-empty-state">
                     <MagicStick />
-                    <span>{{ activeAiCaseGenerationState?.generating ? 'AI 正在生成用例，请稍候...' : '暂无生成结果' }}</span>
+                    <span>{{ aiCaseGenerationEmptyStateText }}</span>
                   </div>
                   <div
                     v-for="(row, index) in aiCaseFilteredResults"
@@ -5624,7 +5887,7 @@ onBeforeUnmount(() => {
                     @click="openAiGeneratedCaseDetail(row)"
                   >
                     <div class="ai-generation-row-selector" @click.stop>
-                      <template v-if="row.runResult === '运行中'">
+                      <template v-if="row.status === 'generating' || row.runResult === '运行中'">
                         <svg class="ai-generation-row-loading" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 40 60 16" aria-hidden="true" focusable="false">
                           <circle fill="currentColor" stroke="none" cx="6" cy="50" r="6">
                             <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.1s" />
@@ -5658,15 +5921,14 @@ onBeforeUnmount(() => {
                       {{ row.runResult || '-' }}
                     </span>
                     <div class="ai-generation-row-actions">
-                      <button type="button" class="ai-generation-row-run" :disabled="row.status !== 'pending' || row.runResult === '运行中'" @click.stop="runAiGeneratedCase(row)">
+                      <button type="button" class="ai-generation-row-run" :disabled="row.status === 'generating' || row.status === 'failed' || row.status !== 'pending' || row.runResult === '运行中'" @click.stop="runAiGeneratedCase(row)">
                         <LucidePlay />
                         运行
                       </button>
-                      <button type="button" class="ai-generation-row-accept" :disabled="row.status !== 'pending' || aiCaseSavingId === row.id" @click.stop="saveAiGeneratedCase(row)">
+                      <button type="button" class="ai-generation-row-accept" :disabled="row.status === 'generating' || row.status === 'failed' || row.status !== 'pending' || aiCaseSavingId === row.id" @click.stop="saveAiGeneratedCase(row)">
                         {{ aiCaseSavingId === row.id ? '保存中' : '采纳' }}
                       </button>
-                      <button v-if="row.status === 'discarded'" type="button" class="ai-generation-row-discard" @click.stop="restoreAiGeneratedCase(row)">恢复</button>
-                      <button v-else type="button" class="ai-generation-row-discard" :disabled="row.runResult === '运行中'" @click.stop="discardAiGeneratedCase(row)">废弃</button>
+                      <button type="button" class="ai-generation-row-discard" :disabled="row.status === 'generating' || row.status === 'discarded' || row.runResult === '运行中'" @click.stop="discardAiGeneratedCase(row)">废弃</button>
                     </div>
                   </div>
                 </div>
@@ -8106,7 +8368,6 @@ onBeforeUnmount(() => {
               <MagicStick />
               <span>AI 生成接口用例</span>
             </div>
-            <div class="ai-case-drawer-subtitle">{{ aiCaseActiveSourceName }} · {{ aiCaseActiveSourceMethod }} {{ aiCaseActiveSourcePath }}</div>
           </div>
           <button type="button" class="definition-import-close" @click="aiCaseDrawerVisible = false">
             <LucideX />
@@ -8120,9 +8381,6 @@ onBeforeUnmount(() => {
             <span>选择生成的用例类型</span>
             <small>已选 {{ aiCaseGenerateSelectedCount }} 项</small>
           </div>
-          <div v-if="aiCaseProviderErrorMessage" class="api-case-failure-box">{{ aiCaseProviderErrorMessage }}</div>
-          <div v-else-if="!aiCaseProvidersLoading && !aiCaseAvailableProviders.length" class="api-empty-body">
-            暂无可用 AI 模型，请先到 AI 连接池配置个人模型。          </div>
           <div class="ai-case-option-groups">
             <div v-for="group in aiCaseGenerateGroups" :key="group.key" class="ai-case-option-group">
               <div class="ai-case-option-group-title">
@@ -8144,7 +8402,11 @@ onBeforeUnmount(() => {
           <label class="ai-case-form-field">
             <span>用例数</span>
             <el-select v-model="aiCaseCount" class="ai-case-form-control">
-              <el-option v-for="item in aiCaseCountOptions" :key="item.value" :label="item.label.replace('智能数量', '自动')" :value="item.value" />
+              <el-option label="自动" value="AUTO" />
+              <el-option label="10 条" value="10" />
+              <el-option label="20 条" value="20" />
+              <el-option label="40 条" value="40" />
+              <el-option label="80 条" value="80" />
             </el-select>
           </label>
           <label class="ai-case-form-field">
@@ -8184,131 +8446,8 @@ onBeforeUnmount(() => {
             <MagicStick />
             {{ aiCaseGenerationStatus === 'running' ? '生成中...' : '生成' }}
           </button>
-          <button type="button" class="ai-case-refresh-models" @click="loadAiCaseProviders">刷新模型</button>
-          <div v-if="aiCaseGenerationMessage" class="api-ai-case-message">{{ aiCaseGenerationMessage }}</div>
-        </section>
-
-        <section v-if="activeAiCaseGenerationState" class="ai-case-section">
-          <div class="ai-case-section-title">
-            <span>生成结果</span>
-            <small>已在中间编辑区打开</small>
-          </div>
-          <button type="button" class="ai-case-refresh-models" @click="activeEditorKey = tabs.find(item => item.aiGeneration === activeAiCaseGenerationState)?.key || activeEditorKey">
-            返回生成结果页
-          </button>
-        </section>
-
-        <section v-if="aiCaseGenerationLogs.length" class="ai-case-section">
-          <div class="ai-case-section-title">
-            <span>生成过程</span>
-            <small>{{ aiCaseGenerationLogs.length }} 条事件</small>
-          </div>
-          <pre class="api-ai-case-log">{{ aiCaseGenerationLogs.join('\n') }}</pre>
         </section>
       </div>
-    </el-drawer>
-
-    <el-drawer
-      v-model="aiCaseDetailVisible"
-      class="api-ai-case-detail-dialog"
-      size="760px"
-      append-to-body
-    >
-      <template #header>
-        <div v-if="aiCaseDetailResult" class="api-ai-case-detail-header">
-          <strong>{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</strong>
-          <span :class="['api-ai-result-status', `is-${aiCaseDetailResult.status}`]">{{ aiGeneratedCaseStatusLabel(aiCaseDetailResult.status) }}</span>
-        </div>
-      </template>
-
-      <div v-if="aiCaseDetailResult" class="api-ai-case-detail">
-        <div class="api-ai-case-detail-grid">
-          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">用例名称</div>
-            <div class="api-ai-case-detail-text">{{ aiCaseDetailResult.draft.name || 'AI 生成接口用例' }}</div>
-          </article>
-          <article>
-            <div class="api-ai-case-detail-label">场景组</div>
-            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseGroupLabel(aiCaseDetailResult) }}</div>
-          </article>
-          <article>
-            <div class="api-ai-case-detail-label">用例类型</div>
-            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseTypeLabel(aiCaseDetailResult) }}</div>
-          </article>
-          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">请求</div>
-            <div class="api-ai-case-detail-text">{{ aiGeneratedCaseMethod(aiCaseDetailResult) }} {{ aiGeneratedCasePath(aiCaseDetailResult) }}</div>
-          </article>
-          <article v-if="aiCaseDetailResult.draft.description" class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">描述</div>
-            <div class="api-ai-case-detail-text is-rich">{{ aiCaseDetailResult.draft.description }}</div>
-          </article>
-          <article v-if="aiCaseDetailResult.draft.expected" class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">预期结果</div>
-            <div class="api-ai-case-detail-text is-rich">{{ aiCaseDetailResult.draft.expected }}</div>
-          </article>
-          <article v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason')" class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">生成原因</div>
-            <div class="api-ai-case-detail-text is-rich">{{ aiGeneratedDraftExtra(aiCaseDetailResult, 'generationReason') }}</div>
-          </article>
-          <article v-if="aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')" class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">覆盖点</div>
-            <pre>{{ toPrettyJson(aiGeneratedDraftExtra(aiCaseDetailResult, 'coveragePoints')) }}</pre>
-          </article>
-          <article v-if="aiCaseDetailResult.draft.tags?.length" class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">标签</div>
-            <div class="api-ai-case-detail-tags">
-              <span v-for="tag in aiCaseDetailResult.draft.tags" :key="tag">{{ tag }}</span>
-            </div>
-          </article>
-          <article v-if="aiCaseDetailResult.message" class="api-case-failure-box api-ai-case-preview-block--full">
-            {{ aiCaseDetailResult.message }}
-          </article>
-          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">请求配置</div>
-            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.requestConfig || {}) }}</pre>
-          </article>
-          <article>
-            <div class="api-ai-case-detail-label">断言</div>
-            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.assertions || []) }}</pre>
-          </article>
-          <article>
-            <div class="api-ai-case-detail-label">前置处理</div>
-            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.preProcessors || []) }}</pre>
-          </article>
-          <article class="api-ai-case-preview-block api-ai-case-preview-block--full">
-            <div class="api-ai-case-detail-label">后置处理</div>
-            <pre>{{ toPrettyJson(aiCaseDetailResult.draft.postProcessors || []) }}</pre>
-          </article>
-        </div>
-      </div>
-      <template #footer>
-        <div class="api-ai-case-detail-footer">
-          <el-button @click="aiCaseDetailVisible = false">关闭</el-button>
-          <el-button
-            v-if="aiCaseDetailResult?.status === 'discarded'"
-            @click="restoreAiGeneratedCase(aiCaseDetailResult)"
-          >
-            恢复
-          </el-button>
-          <el-button
-            v-if="aiCaseDetailResult?.status === 'pending'"
-            type="danger"
-            plain
-            @click="discardAiGeneratedCase(aiCaseDetailResult)"
-          >
-            弃用
-          </el-button>
-          <el-button
-            v-if="aiCaseDetailResult?.status === 'pending'"
-            type="primary"
-            :loading="aiCaseSavingId === aiCaseDetailResult.id"
-            @click="saveAiGeneratedCase(aiCaseDetailResult)"
-          >
-            采纳保存
-          </el-button>
-        </div>
-      </template>
     </el-drawer>
 
     <ApiCaseCreateEditDialog
@@ -9889,6 +10028,33 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ai-generation-tab-spinner {
+  position: relative;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 9999px;
+}
+
+.ai-generation-tab-spinner.spinning {
+  animation: ai-generation-spin 0.8s linear infinite;
+}
+
+.ai-generation-tab-finished-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+@keyframes ai-generation-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .api-editor-tab__dot {
@@ -12889,15 +13055,43 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.api-ai-case-drawer :deep(.el-drawer__header) {
+:global(.api-ai-case-drawer .el-drawer__header) {
   margin: 0;
   padding: 0;
   border-bottom: 1px solid #f3f4f6;
 }
 
-.api-ai-case-drawer :deep(.el-drawer__body) {
+:global(.api-ai-case-drawer .el-drawer__body) {
   padding: 0;
   background: #ffffff;
+}
+
+:global(.api-ai-case-drawer .el-drawer__footer) {
+  padding: 0;
+  border-top: 1px solid #f3f4f6;
+}
+
+.definition-import-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+}
+
+.definition-import-close:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.definition-import-close svg {
+  width: 16px;
+  height: 16px;
 }
 
 .ai-case-drawer-header {

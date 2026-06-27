@@ -438,6 +438,7 @@ async function streamJsonEvents<T>(
   payload: unknown,
   headers: Record<string, string>,
   onEvent: (event: T) => void,
+  signal?: AbortSignal,
 ) {
   const response = await fetch(`${env.apiBaseUrl}${path}`, {
     method: 'POST',
@@ -447,11 +448,23 @@ async function streamJsonEvents<T>(
       ...headers,
     },
     body: JSON.stringify(payload),
+    signal,
   })
 
   if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `Request failed with status ${response.status}`)
+    let message = `Request failed with status ${response.status}`
+    try {
+      const text = await response.text()
+      try {
+        const errorPayload = JSON.parse(text) as { message?: string }
+        message = errorPayload.message || text || message
+      } catch {
+        message = text || message
+      }
+    } catch {
+      // keep the status based fallback
+    }
+    throw new Error(message)
   }
   if (!response.body) {
     throw new Error('Streaming response is not available')
@@ -460,41 +473,53 @@ async function streamJsonEvents<T>(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  const consumeStreamText = (chunk: string) => {
+    const blocks = chunk.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() ?? ''
+    for (const block of blocks) {
+      const dataLines = block
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trim())
+
+      if (!dataLines.length) {
+        continue
+      }
+
+      const data = dataLines.join('\n')
+      if (!data || data === '[DONE]') {
+        continue
+      }
+
+      try {
+        onEvent(JSON.parse(data) as T)
+      } catch {
+        // Ignore malformed SSE fragments and keep consuming later events.
+      }
+    }
+  }
 
   while (true) {
     const { done, value } = await reader.read()
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-    const chunks = buffer.split(/\r?\n\r?\n/)
-    buffer = chunks.pop() || ''
-
-    chunks.forEach((chunk) => {
-      const data = chunk
+    if (done) {
+      break
+    }
+    consumeStreamText(buffer + decoder.decode(value, { stream: true }))
+  }
+  consumeStreamText(buffer + decoder.decode())
+  if (buffer.trim()) {
+    try {
+      const data = buffer
         .split(/\r?\n/)
         .filter(line => line.startsWith('data:'))
         .map(line => line.slice(5).trim())
         .join('\n')
-
       if (!data || data === '[DONE]') {
         return
       }
-
       onEvent(JSON.parse(data) as T)
-    })
-
-    if (done) {
-      break
-    }
-  }
-
-  const rest = buffer.trim()
-  if (rest.startsWith('data:')) {
-    const data = rest
-      .split(/\r?\n/)
-      .filter(line => line.startsWith('data:'))
-      .map(line => line.slice(5).trim())
-      .join('\n')
-    if (data && data !== '[DONE]') {
-      onEvent(JSON.parse(data) as T)
+    } catch {
+      // Ignore malformed trailing stream content.
     }
   }
 }
@@ -1288,12 +1313,14 @@ export const apiAutomationApi = {
     workspaceCode = 'ALL',
     data: ApiAiCaseGenerationPayload,
     onEvent: (event: ApiAiCaseGenerationEvent) => void,
+    options?: { signal?: AbortSignal },
   ) {
     await streamJsonEvents<ApiAiCaseGenerationEvent>(
       '/automation/api/ai-case-generation/stream',
       data,
       workspaceHeaders(workspaceCode),
       onEvent,
+      options?.signal,
     )
   },
 }
