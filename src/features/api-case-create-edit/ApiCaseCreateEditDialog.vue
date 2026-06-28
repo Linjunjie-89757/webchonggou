@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { X } from '@lucide/vue'
 
 import {
   type ApiDefinitionCaseDetail,
@@ -14,6 +13,7 @@ import {
 import ApiCodeEditor from '@/widgets/api-interface-workspace/ApiCodeEditor.vue'
 
 import ApiCaseAdvancedEditor from './ApiCaseAdvancedEditor.vue'
+import ApiCaseDrawer from './ApiCaseDrawer.vue'
 import {
   buildSaveApiCasePayload,
   createApiCaseFormFromDetail,
@@ -31,8 +31,8 @@ const REQUEST_TABS = [
   { label: '请求体', value: 'body' },
   { label: 'Params', value: 'params' },
   { label: 'Auth', value: 'auth' },
-  { label: '前置处理', value: 'pre' },
-  { label: '后置处理', value: 'post' },
+  { label: '前置操作', value: 'pre' },
+  { label: '后置操作', value: 'post' },
   { label: '断言', value: 'tests' },
   { label: '设置', value: 'settings' },
 ] as const
@@ -50,6 +50,7 @@ const BODY_FORM_PARAM_TYPE_OPTIONS = ['string', 'number', 'boolean', 'array', 'o
 
 type ApiCaseEditTab = typeof REQUEST_TABS[number]['value']
 type ApiCaseBodyType = typeof BODY_MODES[number]['value']
+type BatchAddMode = 'header' | 'query' | 'body-form'
 
 const props = withDefaults(
   defineProps<{
@@ -98,10 +99,13 @@ const formError = reactive({
 const activeTab = ref<ApiCaseEditTab>('body')
 const binaryFileInputRef = ref<HTMLInputElement | null>(null)
 const draggingKeyValueRow = ref<{ rows: ApiKeyValueInput[], index: number } | null>(null)
+const batchAddVisible = ref(false)
+const batchAddMode = ref<BatchAddMode>('header')
+const batchAddInput = ref('')
+const batchAddError = ref('')
 
 const drawerTitle = computed(() => props.mode === 'create' ? '创建用例' : '编辑用例')
 const drawerSubtitle = computed(() => form.definitionName || props.definition?.name || '未选择接口')
-const submitLabel = computed(() => props.mode === 'create' ? '创建' : '保存')
 const primaryActionLabel = computed(() => props.debugRunning ? '发送中...' : '发送')
 const canSubmit = computed(() => !props.loadingDetail && !props.detailErrorMessage && !props.saving)
 const canSend = computed(() => Boolean(form.method?.trim() && form.path?.trim()) && !props.loadingDetail && !props.debugRunning)
@@ -117,6 +121,12 @@ const rawBodyLanguage = computed(() => {
   if (requestConfig.value.body.type === 'RAW_JSON') return 'json'
   if (requestConfig.value.body.type === 'RAW_XML') return 'xml'
   return 'text'
+})
+const bodyFormParamTypeOptions = computed(() => {
+  if (requestConfig.value.body.type === 'FORM_DATA') {
+    return BODY_FORM_PARAM_TYPE_OPTIONS
+  }
+  return BODY_FORM_PARAM_TYPE_OPTIONS.filter(option => option !== 'file')
 })
 
 const timeoutModel = computed({
@@ -155,7 +165,7 @@ const latestResponseBodyForExtraction = computed(() => String(responseStep.value
 const responseHeaders = computed(() => JSON.stringify(responseStep.value?.response?.headers ?? {}, null, 2))
 const responseConsole = computed(() => buildConsolePreview(props.debugError, responseStep.value))
 const responseActualRequest = computed(() => JSON.stringify(actualRequestPreview(responseStep.value?.request ?? null), null, 2))
-const responseAssertionRows = computed(() => responseStep.value?.assertionResults ?? [])
+const responseAssertionRows = computed(() => (responseStep.value?.assertionResults ?? []).filter(row => !isAssertionResultEmpty(row as unknown as Record<string, unknown>)))
 const responseBodyLanguage = computed<'json' | 'xml' | 'text'>(() => {
   const content = String(responseStep.value?.response?.body || '')
   const contentType = responseStep.value?.response?.contentType || ''
@@ -164,6 +174,25 @@ const responseBodyLanguage = computed<'json' | 'xml' | 'text'>(() => {
   return 'text'
 })
 const hasResponseContent = computed(() => Boolean(responseStep.value || props.debugError))
+const showResponseEmptyState = computed(() => !hasResponseContent.value)
+const responseErrorBanner = computed(() => props.debugError || responseStep.value?.errorMessage || '')
+const headerTableSelectionModel = computed({
+  get: () => tableSelectionState(requestConfig.value.headers).checked,
+  set: (enabled: boolean) => toggleTableSelection(requestConfig.value.headers, enabled),
+})
+const queryTableSelectionModel = computed({
+  get: () => tableSelectionState(requestConfig.value.queryParams).checked,
+  set: (enabled: boolean) => toggleTableSelection(requestConfig.value.queryParams, enabled),
+})
+const bodyFormTableSelectionModel = computed({
+  get: () => tableSelectionState(requestConfig.value.body.formItems).checked,
+  set: (enabled: boolean) => toggleTableSelection(requestConfig.value.body.formItems, enabled),
+})
+const batchAddTitle = computed(() => {
+  if (batchAddMode.value === 'query') return '批量添加 Query 参数'
+  if (batchAddMode.value === 'body-form') return '批量添加 Body 参数'
+  return '批量添加请求头'
+})
 
 const tagsModel = computed<string[]>({
   get: () => parseTags(form.tagsText),
@@ -190,6 +219,7 @@ function resetForm() {
           : createDefaultApiCaseForm(props.definition, props.defaultWorkspaceCode)
 
   Object.assign(form, nextForm)
+  ensureEditableRows()
   if (!form.workspaceName && props.definition?.workspaceName) {
     form.workspaceName = props.definition.workspaceName
   }
@@ -226,15 +256,149 @@ function createEmptyRow(): ApiKeyValueInput {
   }
 }
 
-function addRow(rows: ApiKeyValueInput[]) {
-  rows.push(createEmptyRow())
+function createRowWithDefaults(defaults: Partial<ApiKeyValueInput> = {}): ApiKeyValueInput {
+  return {
+    ...createEmptyRow(),
+    ...defaults,
+  }
 }
 
-function removeRow(rows: ApiKeyValueInput[], index: number) {
-  rows.splice(index, 1)
+function headerParamDefaults(): Partial<ApiKeyValueInput> {
+  return { paramType: '', required: false, encode: false }
+}
+
+function queryParamDefaults(): Partial<ApiKeyValueInput> {
+  return { paramType: 'string', required: false, encode: false }
+}
+
+function bodyFormParamDefaults(): Partial<ApiKeyValueInput> {
+  return { paramType: 'string', required: false, encode: false }
+}
+
+function isKeyValueRowEmpty(row: ApiKeyValueInput) {
+  return ![row.key, row.value, row.description, row.fileName, row.fileBase64]
+    .some(value => String(value ?? '').trim())
+}
+
+function syncRows(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  const normalizedRows = rows
+    .map(row => ({ ...createRowWithDefaults(defaults), ...row }))
+    .filter((row, index, allRows) => !isKeyValueRowEmpty(row) || index === allRows.length - 1)
+  rows.splice(0, rows.length, ...normalizedRows)
   if (!rows.length) {
-    rows.push(createEmptyRow())
+    rows.push(createRowWithDefaults(defaults))
+    return
   }
+  if (!isKeyValueRowEmpty(rows[rows.length - 1])) {
+    rows.push(createRowWithDefaults(defaults))
+  }
+}
+
+function ensureTrailingRow(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  rows.forEach((row) => {
+    Object.assign(row, { ...createRowWithDefaults(defaults), ...row })
+  })
+  if (!rows.length || !isKeyValueRowEmpty(rows[rows.length - 1])) {
+    rows.push(createRowWithDefaults(defaults))
+  }
+}
+
+function ensureEditableRows() {
+  syncRows(requestConfig.value.headers, headerParamDefaults())
+  syncRows(requestConfig.value.queryParams, queryParamDefaults())
+  syncRows(requestConfig.value.body.formItems, bodyFormParamDefaults())
+}
+
+function addRow(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  rows.push(createRowWithDefaults(defaults))
+}
+
+function removeRow(rows: ApiKeyValueInput[], index: number, defaults: Partial<ApiKeyValueInput> = {}) {
+  rows.splice(index, 1)
+  syncRows(rows, defaults)
+}
+
+function handleKeyValueRowInput(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  ensureTrailingRow(rows, defaults)
+}
+
+function tableSelectionState(rows: ApiKeyValueInput[]) {
+  const total = rows.length
+  const enabled = rows.filter(row => row.enabled !== false).length
+  return {
+    checked: total > 0 && enabled === total,
+    indeterminate: enabled > 0 && enabled < total,
+  }
+}
+
+function toggleTableSelection(rows: ApiKeyValueInput[], enabled: boolean) {
+  rows.forEach((row) => {
+    row.enabled = enabled
+  })
+}
+
+function openBatchAdd(mode: BatchAddMode) {
+  batchAddMode.value = mode
+  batchAddInput.value = ''
+  batchAddError.value = ''
+  batchAddVisible.value = true
+}
+
+function splitBatchColumns(line: string) {
+  if (line.includes('\t')) return line.split('\t').map(item => item.trim())
+  if (line.includes('：')) {
+    const index = line.indexOf('：')
+    return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
+  }
+  if (line.includes(':')) {
+    const index = line.indexOf(':')
+    return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
+  }
+  if (line.includes('=')) {
+    const index = line.indexOf('=')
+    return [line.slice(0, index).trim(), line.slice(index + 1).trim()]
+  }
+  return line.split(/\s{2,}/).map(item => item.trim())
+}
+
+function parseBatchRows(defaults: Partial<ApiKeyValueInput>) {
+  return batchAddInput.value
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [key = '', value = '', description = ''] = splitBatchColumns(line)
+      return {
+        ...createRowWithDefaults(defaults),
+        key,
+        value,
+        description,
+      }
+    })
+    .filter(row => row.key.trim())
+}
+
+function confirmBatchAdd() {
+  const defaults = batchAddMode.value === 'header'
+    ? headerParamDefaults()
+    : batchAddMode.value === 'query'
+      ? queryParamDefaults()
+      : bodyFormParamDefaults()
+  const rows = parseBatchRows(defaults)
+  if (!rows.length) {
+    batchAddError.value = '未解析出可添加的数据'
+    return
+  }
+  const target = batchAddMode.value === 'header'
+    ? requestConfig.value.headers
+    : batchAddMode.value === 'query'
+      ? requestConfig.value.queryParams
+      : requestConfig.value.body.formItems
+  target.push(...rows)
+  syncRows(target, defaults)
+  batchAddVisible.value = false
+  batchAddInput.value = ''
+  batchAddError.value = ''
 }
 
 function handleKeyValueDragStart(rows: ApiKeyValueInput[], index: number, event: DragEvent) {
@@ -267,8 +431,9 @@ function isKeyValueRowDragging(rows: ApiKeyValueInput[], index: number) {
 function setBodyType(type: ApiCaseBodyType) {
   requestConfig.value.body.type = type
   if ((type === 'FORM_DATA' || type === 'FORM_URLENCODED') && !requestConfig.value.body.formItems.length) {
-    requestConfig.value.body.formItems.push(createEmptyRow())
+    requestConfig.value.body.formItems.push(createRowWithDefaults(bodyFormParamDefaults()))
   }
+  syncRows(requestConfig.value.body.formItems, bodyFormParamDefaults())
 }
 
 function pickBinaryBodyFile() {
@@ -359,18 +524,6 @@ function setAuthType(value: string) {
 
 function closeDrawer() {
   emit('update:modelValue', false)
-}
-
-function handleDrawerModelValueChange(value: boolean) {
-  if (!value) {
-    closeDrawer()
-    return
-  }
-  emit('update:modelValue', value)
-}
-
-function handleBeforeClose() {
-  closeDrawer()
 }
 
 function submit() {
@@ -479,6 +632,43 @@ function buildConsolePreview(errorMessage: string, step: ApiRunStepResult | null
   return lines.length ? lines.join('\n') : '暂无控制台内容'
 }
 
+function responseAssertionName(row: Record<string, unknown>) {
+  return String(row.name || row.assertionName || row.type || '-')
+}
+
+function responseAssertionSubject(row: Record<string, unknown>) {
+  return String(row.subject || row.type || '-')
+}
+
+function responseAssertionCondition(row: Record<string, unknown>) {
+  return String(row.condition || '-')
+}
+
+function responseAssertionResultLabel(row: Record<string, unknown>) {
+  if (row.success === true) return '通过'
+  if (row.success === false) return '失败'
+  return '未执行'
+}
+
+function responseAssertionResultTone(row: Record<string, unknown>) {
+  if (row.success === true) return 'passed'
+  if (row.success === false) return 'failed'
+  return 'no-assertion'
+}
+
+function isAssertionResultEmpty(row: Record<string, unknown>) {
+  return ![
+    row.name,
+    row.assertionName,
+    row.type,
+    row.subject,
+    row.condition,
+    row.expectedValue,
+    row.actualValue,
+    row.message,
+  ].some(value => String(value ?? '').trim())
+}
+
 watch(
   () => props.modelValue,
   (visible) => {
@@ -499,85 +689,44 @@ watch(
 </script>
 
 <template>
-  <el-drawer
+  <ApiCaseDrawer
     :model-value="modelValue"
-    append-to-body
-    destroy-on-close
-    :with-header="false"
-    :show-close="false"
-    close-on-click-modal
-    close-on-press-escape
-    modal-class="api-case-drawer-modal"
-    size="894px"
-    class="api-case-edit-drawer"
-    :before-close="handleBeforeClose"
-    @update:model-value="handleDrawerModelValueChange"
+    :title="drawerTitle"
+    :subtitle="drawerSubtitle"
+    :method="form.method || 'GET'"
+    :path="form.path || ''"
+    :case-name="form.name"
+    :priority="form.priority"
+    :priority-options="CASE_PRIORITY_OPTIONS"
+    :status="form.status"
+    :status-options="CASE_STATUS_OPTIONS"
+    :tags="tagsModel"
+    :can-debug="canSend"
+    :can-write="canSubmit"
+    :saving="saving"
+    :debugging="debugRunning"
+    :is-edit="mode === 'edit'"
+    :read-only="loadingDetail"
+    :primary-action-label="primaryActionLabel"
+    @update:model-value="emit('update:modelValue', $event)"
+    @update:case-name="form.name = $event"
+    @update:priority="form.priority = $event"
+    @update:status="form.status = $event"
+    @update:tags="tagsModel = $event"
+    @request-close="closeDrawer"
+    @debug="debugCurrentCase"
+    @create="submit"
+    @save="submit"
   >
-    <div class="api-case-drawer-shell">
-      <div class="api-case-drawer-top">
-        <div class="api-case-drawer-header">
-          <div class="api-case-drawer-title">{{ drawerTitle }}</div>
-          <div class="api-case-drawer-subtitle">{{ drawerSubtitle }}</div>
-        </div>
-        <button type="button" class="api-case-drawer-close" @click="closeDrawer">
-          <X />
-        </button>
+    <template #notice>
+      <div v-if="loadingDetail" class="api-case-dialog__hint">正在加载用例详情...</div>
+      <div v-else-if="detailErrorMessage" class="api-case-dialog__error-panel">
+        <span>{{ detailErrorMessage }}</span>
+        <button type="button" class="api-case-inline-button" @click="emit('retryDetail')">重试</button>
       </div>
+    </template>
 
-      <div class="api-case-drawer-scroll">
-        <div class="api-case-drawer-summary-card">
-          <div class="api-case-drawer-summary-main">
-            <div class="api-case-drawer-summary-meta">
-              <span :class="['api-case-drawer-method-tag', `request-method-${String(form.method || 'GET').toLowerCase()}`]">
-                {{ form.method || 'GET' }}
-              </span>
-              <span class="api-case-drawer-summary-path">{{ form.path || '未设置路径' }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="loadingDetail" class="api-case-dialog__hint">正在加载用例详情...</div>
-        <div v-else-if="detailErrorMessage" class="api-case-dialog__error-panel">
-          <span>{{ detailErrorMessage }}</span>
-          <button type="button" class="api-case-inline-button" @click="emit('retryDetail')">重试</button>
-        </div>
-
-        <div class="api-case-drawer-name-row">
-          <el-input
-            v-model="form.name"
-            :disabled="loadingDetail"
-            maxlength="255"
-            show-word-limit
-            placeholder="请输入用例名称"
-            class="api-case-drawer-name-input"
-          />
-          <el-button class="api-case-drawer-debug-button" type="primary" :disabled="!canSend" :loading="debugRunning" @click="debugCurrentCase">
-            {{ primaryActionLabel }}
-          </el-button>
-        </div>
-
-        <div class="api-case-drawer-meta-row">
-          <el-select v-model="form.priority" class="api-case-drawer-meta-field">
-            <el-option v-for="item in CASE_PRIORITY_OPTIONS" :key="item" :label="item" :value="item" />
-          </el-select>
-          <el-select v-model="form.status" class="api-case-drawer-meta-field">
-            <el-option v-for="item in CASE_STATUS_OPTIONS" :key="item" :label="item" :value="item" />
-          </el-select>
-          <el-select
-            v-model="tagsModel"
-            class="api-case-drawer-tags-field"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            :reserve-keyword="false"
-            :teleported="false"
-            popper-class="api-case-drawer-tag-popper"
-            placeholder="输入内容后回车可直接添加标签"
-          />
-        </div>
-
-        <div class="api-case-drawer-tabs">
+    <template #tabs>
           <div class="ms-like-top-tabs case-drawer-top-tabs">
             <button
               v-for="tab in REQUEST_TABS"
@@ -590,20 +739,23 @@ watch(
               <span v-if="tab.value === 'tests' && assertionEnabledCount" class="ms-like-tab-badge">{{ assertionEnabledCount }}</span>
             </button>
           </div>
-        </div>
+    </template>
 
-        <div class="api-case-drawer-body">
+    <template #body>
           <div v-if="activeTab === 'headers'" class="api-case-editor-panel">
             <div class="request-section ms-like-table-surface ms-like-param-table ms-like-param-table--header">
               <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--header">
                 <div class="ms-like-drag-cell"></div>
                 <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
-                  <el-checkbox :model-value="true" disabled />
+                  <el-checkbox
+                    v-model="headerTableSelectionModel"
+                    :indeterminate="tableSelectionState(requestConfig.headers).indeterminate"
+                  />
                 </div>
                 <span class="ms-like-header-input-title">参数名称</span>
                 <span>参数值</span>
                 <span>描述</span>
-                <span class="ms-like-action-header">操作</span>
+                <button type="button" class="ms-like-link-button" @click="openBatchAdd('header')">批量添加</button>
               </div>
               <div
                 v-for="(row, index) in requestConfig.headers"
@@ -628,13 +780,13 @@ watch(
                   <el-checkbox v-model="row.enabled" />
                 </div>
                 <div class="ms-like-name-field">
-                  <el-input v-model="row.key" placeholder="参数名称" />
+                  <el-input v-model="row.key" placeholder="参数名称" @input="handleKeyValueRowInput(requestConfig.headers, headerParamDefaults())" />
                 </div>
-                <el-input v-model="row.value" placeholder="参数值" />
-                <el-input v-model="row.description" placeholder="描述" />
-                <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.headers, index)">删除</button>
+                <el-input v-model="row.value" placeholder="参数值" @input="handleKeyValueRowInput(requestConfig.headers, headerParamDefaults())" />
+                <el-input v-model="row.description" placeholder="描述" @input="handleKeyValueRowInput(requestConfig.headers, headerParamDefaults())" />
+                <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.headers, index, headerParamDefaults())">删除</button>
               </div>
-              <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.headers)">+ 添加一行</button>
+              <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.headers, headerParamDefaults())">+ 添加一行</button>
             </div>
           </div>
 
@@ -643,7 +795,10 @@ watch(
               <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--query">
                 <div class="ms-like-drag-cell"></div>
                 <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
-                  <el-checkbox :model-value="true" disabled />
+                  <el-checkbox
+                    v-model="queryTableSelectionModel"
+                    :indeterminate="tableSelectionState(requestConfig.queryParams).indeterminate"
+                  />
                 </div>
                 <span class="ms-like-header-input-title">参数名称</span>
                 <span class="ms-like-type-header">类型</span>
@@ -651,7 +806,7 @@ watch(
                 <span class="ms-like-length-header">长度范围</span>
                 <span>编码</span>
                 <span>描述</span>
-                <span class="ms-like-action-header">操作</span>
+                <button type="button" class="ms-like-link-button" @click="openBatchAdd('query')">批量添加</button>
               </div>
               <div
                 v-for="(row, index) in requestConfig.queryParams"
@@ -676,34 +831,34 @@ watch(
                   <el-checkbox v-model="row.enabled" />
                 </div>
                 <div class="ms-like-name-field">
-                  <el-input v-model="row.key" placeholder="参数名称" />
+                  <el-input v-model="row.key" placeholder="参数名称" @input="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())" />
                 </div>
                 <div class="ms-like-type-field">
                   <button
                     type="button"
                     :class="['ms-like-required-button', { active: row.required }]"
                     :title="row.required ? '必填' : '非必填'"
-                    @click="row.required = !row.required"
+                    @click="row.required = !row.required; handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())"
                   >
                     *
                   </button>
-                  <el-select v-model="row.paramType" placeholder="类型">
+                  <el-select v-model="row.paramType" placeholder="类型" @change="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())">
                     <el-option v-for="option in QUERY_PARAM_TYPE_OPTIONS" :key="option" :label="option" :value="option" />
                   </el-select>
                 </div>
-                <el-input v-model="row.value" placeholder="参数值 / {{variable}}" />
+                <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())" />
                 <div class="ms-like-length-range-cell">
-                  <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" />
+                  <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())" />
                   <span>至</span>
-                  <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" />
+                  <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())" />
                 </div>
                 <div class="ms-like-switch-cell ms-like-switch-cell--query">
                   <el-switch v-model="row.encode" size="small" />
                 </div>
-                <el-input v-model="row.description" placeholder="描述" />
-                <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.queryParams, index)">删除</button>
+                <el-input v-model="row.description" placeholder="描述" @input="handleKeyValueRowInput(requestConfig.queryParams, queryParamDefaults())" />
+                <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.queryParams, index, queryParamDefaults())">删除</button>
               </div>
-              <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.queryParams)">+ 添加一行</button>
+              <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.queryParams, queryParamDefaults())">+ 添加一行</button>
             </div>
           </div>
 
@@ -720,7 +875,7 @@ watch(
               </button>
             </div>
 
-            <div class="ms-like-body-mode-shell">
+            <div :class="['ms-like-body-mode-shell', { 'is-none': requestConfig.body.type === 'NONE' }]">
               <div v-if="requestConfig.body.type === 'NONE'" class="ms-like-empty-body">
                 请求没有 Body
               </div>
@@ -732,14 +887,17 @@ watch(
                 <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--body-form">
                   <div class="ms-like-drag-cell"></div>
                   <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
-                    <el-checkbox :model-value="true" disabled />
+                    <el-checkbox
+                      v-model="bodyFormTableSelectionModel"
+                      :indeterminate="tableSelectionState(requestConfig.body.formItems).indeterminate"
+                    />
                   </div>
                   <span class="ms-like-header-input-title">参数名称</span>
                   <span class="ms-like-type-header">类型</span>
                   <span>参数值</span>
                   <span class="ms-like-length-header">长度范围</span>
                   <span>描述</span>
-                  <span class="ms-like-action-header">操作</span>
+                  <button type="button" class="ms-like-link-button" @click="openBatchAdd('body-form')">批量添加</button>
                 </div>
                 <div
                   v-for="(row, index) in requestConfig.body.formItems"
@@ -764,19 +922,19 @@ watch(
                     <el-checkbox v-model="row.enabled" />
                   </div>
                   <div class="ms-like-name-field">
-                    <el-input v-model="row.key" placeholder="参数名称" />
+                    <el-input v-model="row.key" placeholder="参数名称" @input="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())" />
                   </div>
                   <div class="ms-like-type-field">
                     <button
                       type="button"
                       :class="['ms-like-required-button', { active: row.required }]"
                       :title="row.required ? '必填' : '非必填'"
-                      @click="row.required = !row.required"
+                      @click="row.required = !row.required; handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())"
                     >
                       *
                     </button>
-                    <el-select v-model="row.paramType" placeholder="类型">
-                      <el-option v-for="option in BODY_FORM_PARAM_TYPE_OPTIONS" :key="option" :label="option" :value="option" />
+                    <el-select v-model="row.paramType" placeholder="类型" @change="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())">
+                      <el-option v-for="option in bodyFormParamTypeOptions" :key="option" :label="option" :value="option" />
                     </el-select>
                   </div>
                   <div v-if="row.paramType === 'file'" class="api-case-body-form-file-cell">
@@ -788,16 +946,16 @@ watch(
                       {{ row.fileName }}<template v-if="formatBinaryFileSize(row.fileSize)"> · {{ formatBinaryFileSize(row.fileSize) }}</template>
                     </span>
                   </div>
-                  <el-input v-else v-model="row.value" placeholder="参数值" />
+                  <el-input v-else v-model="row.value" placeholder="参数值" @input="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())" />
                   <div class="ms-like-length-range-cell">
-                    <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" />
+                    <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())" />
                     <span>至</span>
-                    <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" />
+                    <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())" />
                   </div>
-                  <el-input v-model="row.description" placeholder="描述" />
-                  <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.body.formItems, index)">删除</button>
+                  <el-input v-model="row.description" placeholder="描述" @input="handleKeyValueRowInput(requestConfig.body.formItems, bodyFormParamDefaults())" />
+                  <button type="button" class="ms-like-row-remove" @click="removeRow(requestConfig.body.formItems, index, bodyFormParamDefaults())">删除</button>
                 </div>
-                <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.body.formItems)">+ 添加一行</button>
+                <button type="button" class="ms-like-add-row" @click="addRow(requestConfig.body.formItems, bodyFormParamDefaults())">+ 添加一行</button>
               </div>
 
               <ApiCodeEditor
@@ -968,50 +1126,54 @@ watch(
           </div>
 
           <p v-if="formError.message" class="api-case-dialog__error">{{ formError.message }}</p>
+    </template>
+
+    <template #response>
+      <div class="ms-like-response-shell case-drawer-response-shell">
+        <div class="ms-like-response-header">
+          <div class="ms-like-response-title">响应内容</div>
+          <div v-if="hasResponseContent" class="ms-like-response-metrics">
+            <span v-if="responseStatusCode !== null" class="ms-like-response-metric">状态 {{ responseStatusCode }}</span>
+            <span v-if="responseDuration !== null" class="ms-like-response-metric">耗时 {{ responseDuration }} ms</span>
+            <span>大小 {{ responseSize }}</span>
+          </div>
         </div>
 
-        <div class="api-case-response-shell">
-          <div class="api-case-response-header">
-            <strong>响应内容</strong>
-            <div v-if="hasResponseContent" class="api-case-response-metrics">
-              <span v-if="responseStatusCode !== null">状态 {{ responseStatusCode }}</span>
-              <span v-if="responseDuration !== null">耗时 {{ responseDuration }} ms</span>
-              <span>大小 {{ responseSize }}</span>
-            </div>
-          </div>
-          <div class="api-case-response-tabs">
-            <button :class="{ active: responseTab === 'body' }" type="button" @click="responseTab = 'body'">Body</button>
-            <button :class="{ active: responseTab === 'header' }" type="button" @click="responseTab = 'header'">Header</button>
-            <button :class="{ active: responseTab === 'console' }" type="button" @click="responseTab = 'console'">控制台</button>
-            <button :class="{ active: responseTab === 'actualRequest' }" type="button" @click="responseTab = 'actualRequest'">实际请求</button>
-            <button :class="{ active: responseTab === 'assertions' }" type="button" @click="responseTab = 'assertions'">断言</button>
-          </div>
-          <div class="api-case-response-body">
-            <div v-if="!hasResponseContent" class="api-case-response-empty">
-              <div class="api-case-response-empty-card">
-                <div class="api-case-response-empty-window">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-                <div class="api-case-response-empty-text">点击 <span>发送</span> 获取响应内容</div>
+        <div v-if="responseErrorBanner" class="response-error-banner">
+          {{ responseErrorBanner }}
+        </div>
+
+        <div v-if="showResponseEmptyState" class="ms-like-response-empty">
+          <div class="ms-like-response-empty-card">
+            <div class="ms-like-response-empty-visual">
+              <div class="ms-like-response-empty-window">
+                <span></span>
+                <span></span>
+                <span></span>
               </div>
             </div>
+            <div class="ms-like-response-empty-text">点击 <span>发送</span> 获取响应内容</div>
+          </div>
+        </div>
+        <template v-else>
+          <div class="ms-like-response-tabs">
+            <button :class="['ms-like-top-tab', { active: responseTab === 'body' }]" type="button" @click="responseTab = 'body'">Body</button>
+            <button :class="['ms-like-top-tab', { active: responseTab === 'header' }]" type="button" @click="responseTab = 'header'">Header</button>
+            <button :class="['ms-like-top-tab', { active: responseTab === 'console' }]" type="button" @click="responseTab = 'console'">控制台</button>
+            <button :class="['ms-like-top-tab', { active: responseTab === 'actualRequest' }]" type="button" @click="responseTab = 'actualRequest'">实际请求</button>
+            <button :class="['ms-like-top-tab', { active: responseTab === 'assertions' }]" type="button" @click="responseTab = 'assertions'">断言</button>
+          </div>
+          <div class="ms-like-response-body">
             <ApiCodeEditor
-              v-else-if="responseTab === 'body' && hasResponseBody"
-              :model-value="responseBody"
-              :language="responseBodyLanguage"
+              v-if="responseTab === 'body'"
+              :model-value="hasResponseBody ? responseBody : '暂无响应 Body，错误详情请查看控制台'"
+              :language="hasResponseBody ? responseBodyLanguage : 'text'"
               read-only
               :show-format-button="false"
               fit-content
-              :max-fit-content-height="420"
-              height="160px"
+              :max-fit-content-height="1000"
+              height="100%"
             />
-            <div v-else-if="responseTab === 'body'" class="api-case-response-empty">
-              <div class="api-case-response-empty-card">
-                <div class="api-case-response-empty-text">暂无响应 Body，错误详情请查看 <span>控制台</span></div>
-              </div>
-            </div>
             <ApiCodeEditor
               v-else-if="responseTab === 'header'"
               :model-value="responseHeaders"
@@ -1019,18 +1181,18 @@ watch(
               read-only
               :show-format-button="false"
               fit-content
-              :max-fit-content-height="420"
-              height="160px"
+              :max-fit-content-height="1000"
+              height="100%"
             />
             <ApiCodeEditor
               v-else-if="responseTab === 'console'"
               :model-value="responseConsole"
-              language="api-console"
+              language="text"
               read-only
               :show-format-button="false"
               fit-content
-              :max-fit-content-height="420"
-              height="160px"
+              :max-fit-content-height="1000"
+              height="100%"
             />
             <ApiCodeEditor
               v-else-if="responseTab === 'actualRequest'"
@@ -1039,229 +1201,67 @@ watch(
               read-only
               :show-format-button="false"
               fit-content
-              :max-fit-content-height="420"
-              height="160px"
+              :max-fit-content-height="1000"
+              height="100%"
             />
-            <div v-else-if="responseAssertionRows.length" class="api-case-response-assertions">
-              <div class="api-case-response-assertion-head">
-                <span>结果</span>
-                <span>断言对象</span>
-                <span>条件</span>
-                <span>期望值</span>
-                <span>实际值</span>
-                <span>失败原因</span>
-              </div>
-              <div v-for="(row, index) in responseAssertionRows" :key="row.id || index" class="api-case-response-assertion-row">
-                <span :class="['api-case-result-pill', row.success ? 'is-pass' : 'is-fail']">{{ row.success ? '通过' : '失败' }}</span>
-                <span>{{ row.name || row.subject || row.type }}</span>
-                <span>{{ row.condition || '-' }}</span>
-                <span>{{ row.expectedValue ?? '-' }}</span>
-                <span>{{ row.actualValue ?? '-' }}</span>
-                <span>{{ row.message || '-' }}</span>
-              </div>
+            <div v-else class="assertion-result-panel">
+              <div v-if="!responseAssertionRows.length" class="assertion-result-empty">当前请求未配置断言</div>
+              <el-table v-else :data="responseAssertionRows" size="small" class="assertion-result-table">
+                <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
+                  <template #default="{ row }">{{ responseAssertionName(row) }}</template>
+                </el-table-column>
+                <el-table-column label="断言对象" width="96">
+                  <template #default="{ row }">{{ responseAssertionSubject(row) }}</template>
+                </el-table-column>
+                <el-table-column label="条件" width="92">
+                  <template #default="{ row }">{{ responseAssertionCondition(row) }}</template>
+                </el-table-column>
+                <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.actualValue || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="结果" width="78">
+                  <template #default="{ row }">
+                    <span :class="['case-drawer-history-result', `is-${responseAssertionResultTone(row)}`]">{{ responseAssertionResultLabel(row) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                  <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                </el-table-column>
+              </el-table>
             </div>
-            <div v-else class="api-case-response-empty">暂无断言结果</div>
           </div>
-        </div>
+        </template>
       </div>
+    </template>
+  </ApiCaseDrawer>
 
-      <div class="api-case-drawer-footer">
-        <el-button class="api-case-drawer-cancel-button" :disabled="saving" @click="closeDrawer">取消</el-button>
-        <el-button
-          class="api-case-drawer-submit-button"
-          type="primary"
-          :disabled="!canSubmit"
-          :loading="saving"
-          @click="submit"
-        >
-          {{ submitLabel }}
-        </el-button>
-      </div>
+  <el-dialog
+    v-model="batchAddVisible"
+    :title="batchAddTitle"
+    width="520px"
+    append-to-body
+    class="api-case-batch-add-dialog"
+  >
+    <div class="api-case-batch-add">
+      <el-input
+        v-model="batchAddInput"
+        type="textarea"
+        :rows="10"
+        placeholder="每行一条，支持 key: value、key=value 或 Tab 分隔"
+      />
+      <p v-if="batchAddError" class="api-case-dialog__error">{{ batchAddError }}</p>
     </div>
-  </el-drawer>
+    <template #footer>
+      <el-button @click="batchAddVisible = false">取消</el-button>
+      <el-button type="primary" @click="confirmBatchAdd">确定</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
-:global(.api-case-drawer-modal) {
-  background: rgba(15, 23, 42, 0.28);
-}
-
-.api-case-edit-drawer :deep(.el-drawer) {
-  max-width: calc(100vw - 24px);
-  overflow: hidden;
-  background: #fff;
-  border-left: 1px solid #e5e7eb;
-  border-radius: 16px 0 0 16px;
-  box-shadow: -24px 0 56px rgba(15, 23, 42, 0.16);
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
-}
-
-.api-case-edit-drawer :deep(.el-drawer__body) {
-  padding: 0;
-  overflow: hidden;
-}
-
-.api-case-edit-drawer :deep(.el-button),
-.api-case-edit-drawer :deep(.el-input__inner) {
-  font-family: inherit;
-}
-
-.api-case-drawer-shell {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  overflow: hidden;
-  background: #fff;
-}
-
-.api-case-drawer-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 20px 24px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fff;
-}
-
-.api-case-drawer-header {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.api-case-drawer-title {
-  overflow: hidden;
-  color: #111827;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 24px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-drawer-subtitle {
-  overflow: hidden;
-  color: #6b7280;
-  font-size: 13px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-drawer-close {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: #9ca3af;
-  cursor: pointer;
-  transition: color 0.18s ease, background-color 0.18s ease;
-}
-
-.api-case-drawer-close:hover,
-.api-case-drawer-close:focus-visible {
-  background: #f3f4f6;
-  color: #374151;
-}
-
-.api-case-drawer-close svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2;
-}
-
-.api-case-drawer-scroll {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  flex-direction: column;
-  gap: 10px;
-  overflow: auto;
-  padding: 20px 24px 24px;
-  scrollbar-color: #cbd5e1 transparent;
-  scrollbar-width: thin;
-}
-
-.api-case-drawer-summary-card {
-  padding: 0;
-}
-
-.api-case-drawer-summary-main,
-.api-case-drawer-summary-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.api-case-drawer-method-tag {
-  display: inline-flex;
-  min-width: 44px;
-  height: 24px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  background: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.api-case-drawer-method-tag.request-method-get,
-.api-case-drawer-method-tag.request-method-head {
-  color: #15803d;
-}
-
-.api-case-drawer-method-tag.request-method-post {
-  color: #ea580c;
-}
-
-.api-case-drawer-method-tag.request-method-put {
-  color: #2563eb;
-}
-
-.api-case-drawer-method-tag.request-method-delete {
-  color: #dc2626;
-}
-
-.api-case-drawer-method-tag.request-method-patch,
-.api-case-drawer-method-tag.request-method-options {
-  color: #7c3aed;
-}
-
-.api-case-drawer-method-tag.request-method-trace {
-  color: #6b7280;
-}
-
-.api-case-drawer-summary-path {
-  min-width: 0;
-  color: #4b5563;
-  font-size: 13px;
-  line-height: 20px;
-  word-break: break-all;
-}
-
-.api-case-drawer-name-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.api-case-drawer-name-input :deep(.el-input__wrapper),
-.api-case-drawer-meta-field :deep(.el-select__wrapper),
-.api-case-drawer-tags-field :deep(.el-select__wrapper),
 .ms-like-form-control :deep(.el-input__wrapper),
 .ms-like-form-control :deep(.el-textarea__inner) {
   min-height: 36px;
@@ -1270,73 +1270,25 @@ watch(
   box-shadow: inset 0 0 0 1px #d1d5db;
 }
 
-.api-case-drawer-name-input :deep(.el-input__wrapper:hover),
-.api-case-drawer-meta-field :deep(.el-select__wrapper:hover),
-.api-case-drawer-tags-field :deep(.el-select__wrapper:hover),
 .ms-like-form-control :deep(.el-input__wrapper:hover),
 .ms-like-form-control :deep(.el-textarea__inner:hover) {
   box-shadow: inset 0 0 0 1px #9ca3af;
 }
 
-.api-case-drawer-name-input :deep(.el-input__wrapper.is-focus),
-.api-case-drawer-meta-field :deep(.el-select__wrapper.is-focused),
-.api-case-drawer-tags-field :deep(.el-select__wrapper.is-focused),
 .ms-like-form-control :deep(.el-input__wrapper.is-focus),
 .ms-like-form-control :deep(.el-textarea__inner:focus) {
   background: #fff;
   box-shadow: inset 0 0 0 1px #3b82f6, 0 0 0 2px rgba(59, 130, 246, 0.16);
 }
 
-.api-case-drawer-tags-field :deep(.el-select__wrapper) {
-  align-items: center;
-  padding: 0 10px;
-}
-
-.api-case-drawer-tags-field :deep(.el-select__selection) {
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.api-case-drawer-tags-field :deep(.el-select__caret),
-.api-case-drawer-tags-field :deep(.el-select__suffix) {
-  display: none;
-}
-
-.api-case-drawer-tags-field :deep(.el-tag) {
-  height: 24px;
-  margin: 0;
-  padding: 0 8px;
-  border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  background: #eff6ff;
-  color: #2563eb;
-  line-height: 22px;
-  box-shadow: none;
-}
-
-.api-case-drawer-tags-field :deep(.el-tag .el-tag__content) {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 22px;
-}
-
-.api-case-drawer-meta-row {
-  display: grid;
-  grid-template-columns: 140px 140px minmax(0, 1fr);
-  gap: 12px;
-}
-
 .api-case-drawer-tabs,
-.api-case-drawer-body {
+.api-case-drawer-body,
+.api-case-drawer-response {
   min-width: 0;
 }
 
 .api-case-drawer-tabs,
-.api-case-drawer-body,
-.api-case-response-shell {
+.api-case-drawer-body {
   flex: 0 0 auto;
 }
 
@@ -1392,10 +1344,10 @@ watch(
 
 .ms-like-tab-badge {
   display: inline-flex;
-  min-width: 18px;
-  height: 18px;
   align-items: center;
   justify-content: center;
+  min-width: 18px;
+  height: 18px;
   margin-left: 6px;
   padding: 0 5px;
   border-radius: 999px;
@@ -1406,273 +1358,14 @@ watch(
   line-height: 18px;
 }
 
-.ms-like-form-panel {
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-  padding: 0;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.ms-like-form-row {
-  display: grid;
-  grid-template-columns: 128px minmax(0, 1fr);
-  align-items: center;
-  gap: 18px;
-  padding: 12px 18px;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.ms-like-form-row.align-start {
-  align-items: flex-start;
-}
-
-.ms-like-form-label {
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.ms-like-form-control {
-  width: 100%;
-}
-
-.ms-like-form-control.full-width :deep(.el-input__wrapper) {
-  min-height: 32px;
-}
-
-.ms-like-settings-hint {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  padding: 12px 18px;
-  border-top: 1px solid #f3f4f6;
-  background: #f9fafb;
-  color: #6b7280;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.api-case-settings-panel .ms-like-form-row {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.api-case-editor-panel {
-  display: grid;
-  gap: 10px;
-  padding-top: 12px;
-}
-
-.api-case-table-toolbar {
-  display: flex;
-  min-height: 32px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.api-case-table-toolbar strong,
-.api-case-advanced-title {
-  color: #111827;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 20px;
-}
-
-.api-case-soft-button {
-  display: inline-flex;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 10px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: #fff;
-  color: #374151;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.api-case-soft-button:hover {
-  border-color: #93c5fd;
-  background: #eff6ff;
-  color: #1d4ed8;
-}
-
-.api-case-soft-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.api-case-soft-button:disabled:hover {
-  border-color: #d1d5db;
-  background: #fff;
-  color: #374151;
-}
-
-.api-case-body-form-file-cell {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  margin: 0 8px;
-}
-
-.api-case-body-form-file-name {
-  overflow: hidden;
-  color: #4b5563;
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-kv-table {
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.api-case-kv-table--query,
-.api-case-kv-table--form {
-  overflow-x: auto;
-}
-
-.api-case-kv-head,
-.api-case-kv-row {
-  display: grid;
-  grid-template-columns: 56px minmax(132px, 1fr) minmax(160px, 1.2fr) minmax(140px, 1fr) 64px;
-  align-items: center;
-}
-
-.api-case-kv-head--headers,
-.api-case-kv-row--headers {
-  grid-template-columns: 56px minmax(160px, 1fr) minmax(180px, 1.2fr) minmax(160px, 1fr) 64px;
-}
-
-.api-case-kv-head--query,
-.api-case-kv-row--query {
-  min-width: 980px;
-  grid-template-columns: 56px minmax(132px, 1fr) 132px minmax(150px, 1.1fr) 172px 64px minmax(140px, 1fr) 64px;
-}
-
-.api-case-kv-head--form,
-.api-case-kv-row--form {
-  min-width: 880px;
-  grid-template-columns: 56px minmax(132px, 1fr) 132px minmax(150px, 1.1fr) 172px minmax(140px, 1fr) 64px;
-}
-
-.api-case-kv-head {
-  min-height: 36px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
-}
-
-.api-case-kv-head span {
-  padding: 0 10px;
-  color: #6b7280;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 18px;
-}
-
-.api-case-kv-row {
-  min-height: 44px;
-  border-bottom: 1px solid #f3f4f6;
-}
-
-.api-case-kv-row:last-child {
-  border-bottom: 0;
-}
-
-.api-case-kv-row > * {
-  margin: 0 8px;
-}
-
-.api-case-kv-row :deep(.el-input__wrapper) {
-  min-height: 30px;
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 1px #e5e7eb;
-}
-
-.api-case-kv-row :deep(.el-select__wrapper) {
-  min-height: 30px;
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 1px #e5e7eb;
-}
-
-.api-case-type-field {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-.api-case-required-button {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
-  color: #9ca3af;
-  font-size: 14px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.api-case-required-button.active {
-  border-color: #fed7aa;
-  background: #fff7ed;
-  color: #ea580c;
-}
-
-.api-case-length-range-cell {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-.api-case-length-range-cell span {
-  color: #9ca3af;
-  font-size: 12px;
-  text-align: center;
-}
-
-.api-case-length-range-cell :deep(.el-input-number) {
-  width: 100%;
-}
-
-.api-case-length-range-cell :deep(.el-input-number .el-input__wrapper) {
-  padding: 0 8px;
-}
-
-.api-case-length-range-cell :deep(.el-input-number .el-input__inner) {
-  text-align: left;
-}
-
-.api-case-switch-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .request-section.ms-like-table-surface,
 .request-section.ms-like-form-panel,
 .request-section.body-form-grid {
   gap: 0;
 }
 
-.ms-like-table-surface {
+.ms-like-table-surface,
+.ms-like-form-panel {
   overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
@@ -1683,6 +1376,7 @@ watch(
   width: 100%;
   min-width: 0;
   max-width: 100%;
+  flex-shrink: 1;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
@@ -1709,11 +1403,23 @@ watch(
   align-items: center;
 }
 
+.ms-like-param-table-grid--query {
+  grid-template-columns: 24px 32px minmax(240px, 1fr) 150px minmax(240px, 1fr) 200px 80px minmax(220px, 1fr) 90px;
+}
+
+.ms-like-param-table-grid--header {
+  grid-template-columns: 24px 32px repeat(3, minmax(0, 1fr)) 80px;
+}
+
+.ms-like-param-table-grid--body-form {
+  grid-template-columns: 24px 32px 240px 150px 240px 200px minmax(220px, 1fr) 90px;
+}
+
 .ms-like-table-header {
   box-sizing: border-box;
   height: 40px;
   min-height: 40px;
-  padding-right: 0;
+  padding-right: 10px;
   border-bottom: 1px solid #e5e7eb;
   background: #f9fafb;
   color: #6b7280;
@@ -1722,10 +1428,37 @@ watch(
   line-height: 16px;
 }
 
+.ms-like-param-table .ms-like-header-input-title,
+.ms-like-param-table .ms-like-table-header > span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.ms-like-header-input-title {
+  display: inline-flex;
+  align-items: center;
+  padding-left: 0;
+}
+
+.ms-like-type-header {
+  padding-left: 30px;
+}
+
+.ms-like-length-header {
+  padding-left: 22px;
+}
+
+.ms-like-action-header {
+  text-align: center;
+}
+
 .ms-like-table-row {
-  min-height: 44px;
+  min-height: 40px;
+  padding: 5px 10px 5px 0;
   border-bottom: 1px solid #f3f4f6;
-  background: #fff;
+  transition: background-color 0.15s ease;
 }
 
 .ms-like-table-row:last-of-type {
@@ -1737,41 +1470,20 @@ watch(
 }
 
 .ms-like-table-row.is-dragging {
-  opacity: 0.56;
-}
-
-.ms-like-param-table-grid--header {
-  min-width: 940px;
-  grid-template-columns: 24px 32px repeat(3, minmax(0, 1fr)) 80px;
-}
-
-.ms-like-param-table-grid--query {
-  min-width: 1480px;
-  grid-template-columns: 24px 32px minmax(240px, 1fr) 150px minmax(240px, 1fr) 200px 80px minmax(220px, 1fr) 90px;
-}
-
-.ms-like-param-table-grid--body-form {
-  min-width: 1400px;
-  grid-template-columns: 24px 32px 240px 150px 240px 200px minmax(220px, 1fr) 90px;
-}
-
-.ms-like-table-header span,
-.ms-like-action-header {
-  min-width: 0;
-  padding: 0 10px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  opacity: 0.6;
 }
 
 .ms-like-drag-cell,
 .ms-like-checkbox-cell,
-.ms-like-name-field,
-.ms-like-type-field,
-.ms-like-switch-cell {
+.ms-like-name-field {
   display: flex;
-  min-width: 0;
   align-items: center;
+  min-width: 0;
+}
+
+.ms-like-checkbox-cell--header {
+  justify-content: center;
+  padding-left: 0;
 }
 
 .ms-like-drag-cell,
@@ -1782,12 +1494,14 @@ watch(
 
 .ms-like-drag-handle {
   display: grid;
-  width: 18px;
-  height: 30px;
   grid-template-columns: repeat(2, 3px);
+  grid-template-rows: repeat(3, 3px);
   align-content: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
+  width: 14px;
+  height: 19px;
+  padding: 0;
   border: 0;
   background: transparent;
   cursor: grab;
@@ -1801,152 +1515,149 @@ watch(
   width: 3px;
   height: 3px;
   border-radius: 999px;
-  background: #cbd5e1;
+  background: #c0c4cc;
 }
 
-.ms-like-table-row > .el-input,
-.ms-like-table-row > .el-select,
-.ms-like-table-row > .ms-like-name-field,
-.ms-like-table-row > .ms-like-type-field,
-.ms-like-table-row > .ms-like-length-range-cell,
-.ms-like-table-row > .ms-like-switch-cell {
-  margin: 0 8px;
+.ms-like-table-row:hover .ms-like-drag-dot,
+.ms-like-table-row.is-drag-over .ms-like-drag-dot {
+  background: #9ca3af;
+}
+
+.ms-like-name-field :deep(.el-input),
+.ms-like-type-field :deep(.el-select),
+.ms-like-table-row :deep(.el-input),
+.ms-like-table-row :deep(.el-select) {
+  width: 100%;
 }
 
 .ms-like-table-row :deep(.el-input__wrapper),
 .ms-like-table-row :deep(.el-select__wrapper) {
-  min-height: 30px;
+  min-height: 28px;
+  padding: 0 8px;
   border-radius: 6px;
-  box-shadow: inset 0 0 0 1px #e5e7eb;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.ms-like-table-row :deep(.el-input__inner),
+.ms-like-table-row :deep(.el-select__placeholder),
+.ms-like-table-row :deep(.el-select__selected-item) {
+  font-size: 12px;
+}
+
+.ms-like-table-row :deep(.el-input__wrapper:hover),
+.ms-like-table-row :deep(.el-select__wrapper:hover) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #d0d5dd;
+}
+
+.ms-like-table-row :deep(.el-input.is-focus .el-input__wrapper),
+.ms-like-table-row :deep(.el-select.is-focus .el-select__wrapper),
+.ms-like-table-row :deep(.el-select__wrapper.is-focused) {
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #3b82f6;
 }
 
 .ms-like-type-field {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .ms-like-required-button {
-  display: inline-flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #fff;
-  color: #9ca3af;
-  font-size: 14px;
-  font-weight: 800;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #98a2b3;
   cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
 }
 
 .ms-like-required-button.active {
-  border-color: #fed7aa;
-  background: #fff7ed;
-  color: #ea580c;
+  background: #fff1f3;
+  color: #f04438;
 }
 
 .ms-like-length-range-cell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-}
-
-.ms-like-length-range-cell span {
-  color: #9ca3af;
+  min-width: 0;
+  color: #6b7280;
   font-size: 12px;
-  text-align: center;
 }
 
 .ms-like-length-range-cell :deep(.el-input-number) {
   width: 100%;
 }
 
-.ms-like-length-range-cell :deep(.el-input-number .el-input__wrapper) {
-  padding: 0 8px;
+.ms-like-switch-cell {
+  display: flex;
+  justify-content: center;
+  color: #667085;
+  font-size: 12px;
 }
 
-.ms-like-length-range-cell :deep(.el-input-number .el-input__inner) {
-  text-align: left;
+.ms-like-param-table--query .ms-like-switch-cell--query {
+  justify-content: flex-start;
+}
+
+.ms-like-link-button,
+.ms-like-row-remove,
+.ms-like-add-row {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .ms-like-row-remove {
   justify-self: center;
-  border: 0;
-  background: transparent;
   color: #c75450;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.ms-like-row-remove:hover {
-  color: #b91c1c;
 }
 
 .ms-like-add-row {
-  width: 100%;
-  height: 38px;
-  border: 0;
-  border-top: 1px solid #f3f4f6;
-  background: #fff;
-  color: #2563eb;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
+  align-self: flex-start;
+  padding: 9px 10px 11px;
 }
 
-.ms-like-add-row:hover {
-  background: #eff6ff;
-}
-
-.api-case-text-danger {
-  border: 0;
-  background: transparent;
-  color: #dc2626;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.api-case-text-danger:hover {
-  color: #b91c1c;
-}
-
-.api-case-body-mode-row,
 .ms-like-body-type-row {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 6px;
+  padding: 8px 0;
 }
 
-.api-case-body-mode,
 .ms-like-body-chip {
   height: 24px;
   padding: 0 12px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
   background: #fff;
-  color: #6b7280;
-  font-size: 12px;
-  font-family: Arial, sans-serif;
-  font-weight: 500;
-  line-height: 16px;
+  color: #4b5563;
   cursor: pointer;
+  font-size: 13px;
 }
 
-.api-case-body-mode:hover,
 .ms-like-body-chip:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
+  border-color: #93c5fd;
   color: #2563eb;
 }
 
-.api-case-body-mode.active,
 .ms-like-body-chip.active {
-  border-color: #3b82f6;
+  border-color: #2563eb;
   background: #eff6ff;
   color: #2563eb;
 }
@@ -1955,280 +1666,405 @@ watch(
   display: flex;
   min-height: 300px;
   flex-direction: column;
-  overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
+  overflow: visible;
+  min-width: 0;
 }
 
-.ms-like-body-mode-shell > .ms-like-empty-body {
-  display: flex;
-  width: 100%;
+.ms-like-body-mode-shell.is-none {
   min-height: 300px;
-  align-items: center;
-  justify-content: center;
+  border: 0;
   background: #f9fafb;
-  color: #9ca3af;
-  font-size: 13px;
-  font-weight: 500;
 }
 
-.ms-like-body-mode-shell > .api-case-kv-table,
-.ms-like-body-mode-shell > .request-section,
-.ms-like-body-mode-shell > .ms-monaco-editor {
+.ms-like-body-mode-shell > .api-code-editor,
+.ms-like-body-mode-shell > .ms-like-table-surface,
+.ms-like-body-mode-shell > .ms-like-form-panel,
+.ms-like-body-mode-shell > .ms-like-empty-body {
   width: 100%;
+  flex: 0 0 auto;
   min-height: 300px;
+}
+
+.ms-like-body-mode-shell > .api-code-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 300px;
+  height: auto;
+  padding: 0;
   border: 0;
   border-radius: 0;
 }
 
-.api-case-binary-actions {
+.ms-like-body-mode-shell > .api-code-editor :deep(.api-code-editor__toolbar) {
+  align-items: center;
+  box-sizing: border-box;
+  height: 40px;
+  padding: 0 12px;
+  border-bottom: 0;
+}
+
+.ms-like-body-mode-shell > .api-code-editor :deep(.api-code-editor__body) {
+  flex: 1 1 auto;
+  min-height: 300px;
+}
+
+.ms-like-body-mode-shell > .ms-like-table-surface,
+.ms-like-body-mode-shell > .ms-like-form-panel {
+  min-height: 0;
+}
+
+.ms-like-body-mode-shell > .ms-like-table-surface {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+.ms-like-empty-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  border: 0;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.ms-like-form-panel {
+  display: grid;
+  gap: 0;
+}
+
+.ms-like-form-row {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.ms-like-form-row:last-of-type {
+  border-bottom: 0;
+}
+
+.ms-like-form-row.align-start {
+  align-items: start;
+}
+
+.ms-like-form-label {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ms-like-form-control {
+  width: 100%;
+}
+
+.ms-like-settings-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 18px;
+  border-top: 1px solid #f3f4f6;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-case-soft-button {
+  min-width: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 28px;
+}
+
+.api-case-soft-button:hover {
+  background: #f9fafb;
+}
+
+.api-case-soft-button:disabled {
+  color: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.api-case-editor-panel {
+  min-width: 0;
+}
+
+.case-drawer-top-tabs {
+  margin-bottom: 0;
+}
+
+.api-case-body-form-file-cell,
+.api-case-binary-actions,
+.api-case-binary-hint {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.api-case-body-form-file-name,
+.api-case-binary-name {
+  max-width: 320px;
+  overflow: hidden;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .api-case-binary-input {
   display: none;
 }
 
-.api-case-binary-hint,
-.api-case-advanced-empty {
+.api-case-auth-control {
+  width: min(100%, 450px);
+}
+
+:global(.api-case-drawer .ms-like-param-table),
+:global(.api-case-drawer .api-case-drawer-body),
+:global(.api-case-drawer .request-section),
+:global(.api-case-drawer .ms-like-body-mode-shell) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+:global(.api-case-drawer .ms-like-param-table .ms-like-table-header),
+:global(.api-case-drawer .ms-like-param-table .ms-like-table-row) {
+  min-width: 100%;
+  padding-right: 0;
+}
+
+:global(.api-case-drawer .ms-like-param-table--query .ms-like-table-header.ms-like-param-table-grid--query),
+:global(.api-case-drawer .ms-like-param-table--query .ms-like-table-row.ms-like-param-table-grid--query) {
+  min-width: 1480px;
+}
+
+:global(.api-case-drawer .ms-like-param-table--header .ms-like-table-header.ms-like-param-table-grid--header),
+:global(.api-case-drawer .ms-like-param-table--header .ms-like-table-row.ms-like-param-table-grid--header) {
+  min-width: 940px;
+}
+
+:global(.api-case-drawer .ms-like-param-table--body-form .ms-like-table-header.ms-like-param-table-grid--body-form),
+:global(.api-case-drawer .ms-like-param-table--body-form .ms-like-table-row.ms-like-param-table-grid--body-form) {
+  min-width: 1400px;
+}
+
+:global(.api-case-drawer .ms-like-param-table .ms-like-link-button),
+:global(.api-case-drawer .ms-like-param-table .ms-like-row-remove) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 28px;
+  background: #fff;
+  box-shadow: -1px 0 0 #e5e7eb;
+}
+
+:global(.api-case-drawer .ms-like-param-table .ms-like-table-header .ms-like-link-button) {
+  z-index: 3;
+  background: #f9fafb;
+}
+
+:global(.api-case-drawer .ms-like-param-table .ms-like-table-row:hover .ms-like-row-remove) {
+  background: #f9fafb;
+}
+
+.response-error-banner {
+  margin: 0 16px;
+  padding: 8px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.ms-like-response-shell {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: none;
+}
+
+.case-drawer-response-shell {
+  min-height: 0;
+  padding: 8px 0 0;
+  border-top: 1px solid #e5e7eb;
+}
+
+.ms-like-response-header,
+.ms-like-response-metrics {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ms-like-response-header {
+  min-height: 36px;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.ms-like-response-title {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.ms-like-response-metrics {
   color: #6b7280;
   font-size: 12px;
   line-height: 18px;
 }
 
-.api-case-binary-hint {
+.ms-like-response-metric.is-success {
+  color: #039855;
+}
+
+.ms-like-response-metric.is-failed {
+  color: #d92d20;
+}
+
+.ms-like-response-metric.is-slow {
+  color: #dc6803;
+}
+
+.ms-like-response-tabs {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.api-case-binary-name {
-  max-width: 320px;
-  overflow: hidden;
-  color: #374151;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-auth-control {
-  width: min(100%, 450px);
-}
-
-.api-case-advanced-shell {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
-  min-height: 360px;
-  gap: 12px;
-  padding-top: 12px;
-}
-
-.api-case-advanced-list,
-.api-case-advanced-detail {
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.api-case-advanced-list {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  padding: 12px;
-}
-
-.api-case-advanced-detail {
-  padding: 12px;
-}
-
-.api-case-response-shell {
-  overflow: hidden;
-  border-top: 1px solid #e5e7eb;
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
-  border-radius: 0;
-  background: #fff;
-}
-
-.api-case-response-header {
-  display: flex;
-  min-height: 40px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0;
-  border-bottom: 0;
-}
-
-.api-case-response-header strong {
-  color: #111827;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.api-case-response-metrics {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.api-case-response-metrics span {
-  display: inline-flex;
-  min-width: 48px;
-  height: 22px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: #f3f4f6;
-  color: #667085;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.api-case-response-tabs {
-  display: flex;
+  height: 40px;
   align-items: center;
   gap: 0;
-  height: 40px;
-  padding: 0;
+  margin: 0 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid #e5e7eb;
   background: #fff;
+  scrollbar-width: none;
 }
 
-.api-case-response-tabs button {
-  height: 40px;
-  padding: 0 12px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
+.ms-like-response-tabs::-webkit-scrollbar {
+  display: none;
 }
 
-.api-case-response-tabs button.active {
-  border-bottom-color: #2563eb;
-  color: #2563eb;
-  font-weight: 600;
-}
-
-.api-case-response-body {
-  min-height: 140px;
-  padding: 8px 0 10px;
-  background: #fff;
-}
-
-.api-case-response-empty {
-  padding: 8px 0 10px;
-}
-
-.api-case-response-empty-card {
-  display: grid;
-  min-height: 96px;
-  place-items: center;
-  gap: 8px;
-  border: 1px dashed #d1d5db;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.api-case-response-empty-window {
+.ms-like-response-body {
   display: flex;
-  width: 58px;
-  height: 36px;
+  min-width: 0;
+  min-height: 260px;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: visible;
+  padding: 0 16px 12px;
+}
+
+.ms-like-response-empty {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
   align-items: center;
-  gap: 4px;
-  padding: 8px;
+  justify-content: center;
+  padding: 6px 16px 12px;
+}
+
+.ms-like-response-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.ms-like-response-empty-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ms-like-response-empty-window {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #f9fafb;
 }
 
-.api-case-response-empty-window span {
+.ms-like-response-empty-window span {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #9ca3af;
+  background: #6b7280;
+  opacity: 0.6;
 }
 
-.api-case-response-empty-text {
+.ms-like-response-empty-text {
   color: #9ca3af;
   font-size: 13px;
+}
+
+.ms-like-response-empty-text span {
+  color: #165dff;
   font-weight: 500;
 }
 
-.api-case-response-empty-text span {
-  color: #2563eb;
+.assertion-result-panel {
+  min-width: 0;
+}
+
+.assertion-result-empty {
+  display: grid;
+  min-height: 96px;
+  place-items: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.assertion-result-table {
+  width: 100%;
+}
+
+.case-drawer-history-result {
   font-weight: 600;
 }
 
-.api-case-response-assertions {
-  overflow: auto;
-  background: #fff;
+.case-drawer-history-result.is-passed {
+  color: #16a34a;
 }
 
-.api-case-response-assertion-head,
-.api-case-response-assertion-row {
-  display: grid;
-  grid-template-columns: 76px minmax(120px, 1fr) 90px minmax(120px, 1fr) minmax(120px, 1fr) minmax(140px, 1fr);
-  align-items: center;
-  min-width: 820px;
-}
-
-.api-case-response-assertion-head {
-  min-height: 36px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
-}
-
-.api-case-response-assertion-head span,
-.api-case-response-assertion-row span {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.api-case-response-assertion-head span {
+.case-drawer-history-result.is-no-assertion {
   color: #6b7280;
-  font-size: 12px;
-  font-weight: 700;
 }
 
-.api-case-response-assertion-row {
-  min-height: 42px;
-  border-bottom: 1px solid #f3f4f6;
-  color: #374151;
-  font-size: 12px;
-}
-
-.api-case-result-pill {
-  display: inline-flex;
-  width: fit-content;
-  height: 22px;
-  align-items: center;
-  margin-left: 10px;
-  padding: 0 8px !important;
-  border-radius: 999px;
-  font-weight: 700;
-}
-
-.api-case-result-pill.is-pass {
-  background: #f0fdf4;
-  color: #15803d;
-}
-
-.api-case-result-pill.is-fail {
-  background: #fef2f2;
+.case-drawer-history-result.is-failed {
   color: #dc2626;
 }
 

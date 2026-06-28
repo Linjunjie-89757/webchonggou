@@ -195,40 +195,102 @@ function normalizeProcessor(row: LooseConfig) {
 }
 
 function normalizeAssertion(row: LooseConfig) {
-  const type = row.assertionType || row.type || 'RESPONSE_CODE'
+  const rawType = row.assertionType || row.type || 'RESPONSE_CODE'
+  const type = normalizeAssertionType(rawType)
+  const normalizedRawType = String(rawType || '').toUpperCase()
   row.assertionType = type
   row.type = type
   row.name = row.name || typeLabel(row)
-  row.condition = row.condition || row.operator || (type === 'RESPONSE_TIME' ? 'LT_OR_EQUALS' : 'EQUALS')
+  row.condition = normalizeCondition(row.condition || row.operator || rawType)
+  row.operator = row.operator || row.condition
   row.expectedValue = row.expectedValue ?? (type === 'RESPONSE_CODE' ? '200' : type === 'RESPONSE_TIME' ? '1000' : '')
   if (type === 'RESPONSE_HEADER') {
     row.assertions = Array.isArray(row.assertions) && row.assertions.length
-      ? row.assertions
-      : [createAssertionItem({ header: '', condition: 'EQUALS', expectedValue: '' })]
+      ? row.assertions.map(normalizeAssertionItem)
+      : [createAssertionItem({
+          header: row.subject || row.expression || '',
+          condition: normalizeCondition(
+            normalizedRawType === 'HEADER_CONTAINS' || row.operator === 'CONTAINS' ? 'CONTAINS' : row.condition || row.operator,
+          ),
+          expectedValue: row.expectedValue || '',
+        })]
   }
   if (type === 'RESPONSE_BODY') {
-    row.assertionBodyType = row.assertionBodyType || row.expressionType || 'JSON_PATH'
+    row.assertionBodyType = normalizeAssertionExpressionType(row.assertionBodyType || row.expressionType)
     row.expressionType = row.assertionBodyType
-    row.jsonPathAssertion = normalizeAssertionGroup(row.jsonPathAssertion, '$.data')
-    row.xpathAssertion = normalizeAssertionGroup(row.xpathAssertion, '//data')
-    row.regexAssertion = normalizeAssertionGroup(row.regexAssertion, '')
+    row.jsonPathAssertion = normalizeAssertionGroup(row.jsonPathAssertion, row, 'JSON_PATH', rawType)
+    row.xpathAssertion = normalizeAssertionGroup(row.xpathAssertion, row, 'X_PATH', rawType)
+    row.regexAssertion = normalizeAssertionGroup(row.regexAssertion, row, 'REGEX', rawType)
   }
   if (type === 'VARIABLE') {
     row.variableAssertionItems = Array.isArray(row.variableAssertionItems) && row.variableAssertionItems.length
-      ? row.variableAssertionItems
-      : [createAssertionItem({ variableName: '', condition: 'EQUALS', expectedValue: '' })]
+      ? row.variableAssertionItems.map(normalizeAssertionItem)
+      : [createAssertionItem({
+          variableName: row.subject || row.expression || '',
+          condition: row.condition,
+          expectedValue: row.expectedValue || '',
+        })]
   }
   if (type === 'SCRIPT') {
     row.scriptLanguage = row.scriptLanguage || 'JAVASCRIPT'
-    row.script = row.script ?? ''
+    row.script = row.script ?? row.subject ?? row.expectedValue ?? ''
   }
 }
 
-function normalizeAssertionGroup(group: LooseConfig | undefined, expression: string) {
-  if (group?.assertions?.length) return group
+function normalizeAssertionType(type?: string | null) {
+  const value = (type || 'RESPONSE_CODE').toUpperCase()
+  if (value === 'STATUS_CODE') return 'RESPONSE_CODE'
+  if (value === 'HEADER' || value === 'HEADER_EQUALS' || value === 'HEADER_CONTAINS') return 'RESPONSE_HEADER'
+  if (value === 'JSON_PATH' || value === 'JSONPATH' || value === 'BODY_JSONPATH_EQUALS' || value === 'BODY_JSONPATH_CONTAINS') return 'RESPONSE_BODY'
+  if (value === 'RESPONSE_TIME_LE') return 'RESPONSE_TIME'
+  return ASSERTION_LABELS[value] ? value : 'RESPONSE_CODE'
+}
+
+function normalizeCondition(value?: string | null) {
+  const condition = (value || 'EQUALS').toUpperCase()
+  if (condition === 'HEADER_CONTAINS' || condition === 'BODY_JSONPATH_CONTAINS') return 'CONTAINS'
+  if (condition === 'RESPONSE_TIME_LE') return 'LT_OR_EQUALS'
+  return CONDITION_OPTIONS.some(item => item.value === condition) ? condition : 'EQUALS'
+}
+
+function normalizeAssertionExpressionType(type?: string | null) {
+  const value = (type || 'JSON_PATH').toUpperCase()
+  if (value === 'XPATH') return 'X_PATH'
+  if (value === 'X_PATH' || value === 'REGEX') return value
+  return 'JSON_PATH'
+}
+
+function defaultAssertionExpression(type?: string | null) {
+  if (type === 'X_PATH') return '/root'
+  if (type === 'REGEX') return '.+'
+  return '$.data'
+}
+
+function normalizeAssertionItem(item: LooseConfig) {
+  return createAssertionItem({
+    ...item,
+    condition: normalizeCondition(item.condition),
+    expectedValue: item.expectedValue ?? '',
+  })
+}
+
+function normalizeAssertionGroup(group: LooseConfig | undefined, assertion: LooseConfig, type: 'JSON_PATH' | 'X_PATH' | 'REGEX', rawType?: string | null) {
+  const normalizedRawType = String(rawType || '').toUpperCase()
+  const isLegacyJson = type === 'JSON_PATH' && ['JSON_PATH', 'JSONPATH', 'BODY_JSONPATH_EQUALS', 'BODY_JSONPATH_CONTAINS'].includes(normalizedRawType)
+  if (group?.assertions?.length) {
+    return {
+      ...group,
+      responseFormat: group.responseFormat || (type === 'X_PATH' ? 'XML' : 'JSON'),
+      assertions: group.assertions.map(normalizeAssertionItem),
+    }
+  }
   return {
-    responseFormat: group?.responseFormat || 'JSON',
-    assertions: [createAssertionItem({ expression, condition: 'EQUALS', expectedValue: '' })],
+    responseFormat: group?.responseFormat || (type === 'X_PATH' ? 'XML' : 'JSON'),
+    assertions: [createAssertionItem({
+      expression: isLegacyJson ? assertion.subject || assertion.expression || '$' : defaultAssertionExpression(type),
+      condition: isLegacyJson ? normalizeCondition(normalizedRawType === 'BODY_JSONPATH_CONTAINS' || assertion.operator === 'CONTAINS' ? 'CONTAINS' : assertion.condition || assertion.operator) : 'EQUALS',
+      expectedValue: isLegacyJson ? assertion.expectedValue || '' : '',
+    })],
   }
 }
 
@@ -393,7 +455,7 @@ function createBatchAssertion(parts: string[]) {
   } else if (type === 'RESPONSE_BODY') {
     assertion.assertionBodyType = 'JSON_PATH'
     assertion.expressionType = 'JSON_PATH'
-    assertion.jsonPathAssertion = normalizeAssertionGroup(undefined, parts[1] || '$.data')
+    assertion.jsonPathAssertion = normalizeAssertionGroup(undefined, { expression: parts[1] || '$.data' }, 'JSON_PATH')
     assertion.jsonPathAssertion.assertions[0].condition = parts[0]?.toUpperCase() === 'BODY_JSONPATH_CONTAINS' ? 'CONTAINS' : 'EQUALS'
     assertion.jsonPathAssertion.assertions[0].expectedValue = parts[2] || ''
   } else if (type === 'RESPONSE_TIME') {

@@ -2825,6 +2825,7 @@ async function runScenario() {
     const response = await apiAutomationApi.runScenario(detail.workspaceCode, detail.id, {
       environmentId: detail.defaultEnvironmentId,
       variableSetId: detail.variableSetId,
+      runOn: detail.runOn || 'LOCAL',
       testDatasetEnabled: Boolean(scenarioRunDatasetId.value),
       testDatasetId: scenarioRunDatasetId.value,
       loopCount: scenarioRunLoopCount.value,
@@ -2835,9 +2836,13 @@ async function runScenario() {
     activeScenarioEditorTab.value.lastRunResult = response.result
     activeScenarioEditorTab.value.lastRunFailureSummary = response.failureSummary || null
     detail.lastRunResult = response.result
-    ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
-    await loadScenarioRunHistory(true)
-    activeScenarioDetailTab.value = 'reports'
+    if (response.result === 'PENDING') {
+      ElMessage.success('已创建本地执行任务，等待 Local Runner 拉取')
+    } else {
+      ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
+      await loadScenarioRunHistory(true)
+      activeScenarioDetailTab.value = 'reports'
+    }
     await loadScenarioWorkspace()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))

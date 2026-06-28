@@ -11,6 +11,7 @@ import ConfigDbPanel from '@/widgets/config-db-panel/ConfigDbPanel.vue'
 import ConfigEnvPanel from '@/widgets/config-env-panel/ConfigEnvPanel.vue'
 import ConfigMockPanel from '@/widgets/config-mock-panel/ConfigMockPanel.vue'
 import ConfigParamPanel from '@/widgets/config-param-panel/ConfigParamPanel.vue'
+import ConfigRunnerPanel from '@/widgets/config-runner-panel/ConfigRunnerPanel.vue'
 import ConfigSidebar from '@/widgets/config-sidebar/ConfigSidebar.vue'
 
 const activeTab = ref<ConfigCenterTab>('env')
@@ -103,12 +104,7 @@ onMounted(() => {
         <ConfigEnvPanel v-if="activeTab === 'env'" :workspace-code="workspaceCode" />
         <ConfigParamPanel v-else-if="activeTab === 'param'" :workspace-code="workspaceCode" />
         <ConfigMockPanel v-else-if="activeTab === 'mock'" :workspace-code="workspaceCode" />
-        <ConfigComingSoonPanel
-          v-else-if="activeTab === 'runner'"
-          title="执行器配置"
-          description="管理远程执行器、Runner 在线状态、能力标签和并发上限。"
-          :items="['执行器列表', '能力标签与心跳', '任务占用与强制终止']"
-        />
+        <ConfigRunnerPanel v-else-if="activeTab === 'runner'" />
         <ConfigComingSoonPanel
           v-else-if="activeTab === 'notification'"
           title="通知配置"

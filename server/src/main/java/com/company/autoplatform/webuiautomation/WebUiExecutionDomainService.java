@@ -183,8 +183,8 @@ public class WebUiExecutionDomainService {
                 MANUAL,
                 5,
                 null,
-                Map.of(),
-                Map.of(),
+                buildLocalRunnerEnvironmentSnapshot(profile),
+                buildLocalRunnerVariableSnapshot(profile),
                 Map.of(),
                 Map.of(),
                 List.of(),
@@ -608,6 +608,25 @@ public class WebUiExecutionDomainService {
                         })
                         .toList()
         );
+    }
+
+    private Map<String, Object> buildLocalRunnerEnvironmentSnapshot(RunProfile profile) {
+        LinkedHashMap<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("environmentId", profile.environmentId());
+        snapshot.put("environmentName", profile.environmentName());
+        snapshot.put("baseUrl", profile.baseUrl());
+        snapshot.put("browserType", profile.browserType());
+        snapshot.put("headless", profile.headless());
+        snapshot.put("defaultTimeoutMs", profile.defaultTimeoutMs());
+        return snapshot;
+    }
+
+    private Map<String, Object> buildLocalRunnerVariableSnapshot(RunProfile profile) {
+        LinkedHashMap<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("variableSetId", profile.variableSetId());
+        snapshot.put("variableSetName", profile.variableSetName());
+        snapshot.put("variables", executionContextSupport.maskVariables(profile.variables()));
+        return snapshot;
     }
 
     private WebUiRunBatchEntity createBatch(

@@ -1080,6 +1080,7 @@ public final class ApiAutomationModels {
             Long variableSetId,
             String branchName,
             String triggerSource,
+            String runOn,
             Boolean testDatasetEnabled,
             Long testDatasetId,
             Integer loopCount,
@@ -1090,7 +1091,7 @@ public final class ApiAutomationModels {
             Map<String, String> rowVariables
     ) {
         public ApiRunRequest(String workspaceCode, Long environmentId, Long variableSetId, String branchName, String triggerSource) {
-            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null, null);
+            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null, null, null);
         }
     }
 

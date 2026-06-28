@@ -4833,6 +4833,85 @@ function normalizeAiGeneratedCaseName(name: string | null | undefined, type: str
     : `${cleanType} – ${cleanName}`
 }
 
+function prettyJsonText(value: unknown) {
+  if (typeof value !== 'string') return value
+  const text = value.trim()
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return value
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function normalizeAiGeneratedRequestConfig(config: ApiRequestConfigInput) {
+  const nextConfig = clone(config || emptyRequestConfig())
+  const body = nextConfig.body
+  if (body?.type === 'RAW_JSON') {
+    const formatted = prettyJsonText(body.jsonText || body.rawText || '')
+    body.jsonText = String(formatted || '')
+    body.rawText = String(formatted || '')
+  }
+  return nextConfig
+}
+
+function hasMeaningfulAssertionItem(item: ApiAssertionItemConfig | null | undefined) {
+  if (!item || item.enabled === false) return false
+  return Boolean(
+    item.header
+    || item.variableName
+    || item.expression
+    || item.expectedValue
+    || item.description,
+  )
+}
+
+function hasMeaningfulAiAssertion(assertion: ApiAssertionConfig | null | undefined) {
+  if (!assertion || assertion.enabled === false) return false
+  const type = assertion.assertionType || assertion.type
+  if (type === 'RESPONSE_CODE') return Boolean(assertion.expectedValue)
+  if (type === 'RESPONSE_TIME') return Boolean(assertion.expectedValue)
+  if (type === 'SCRIPT') return Boolean(assertion.script || assertion.expectedValue || assertion.subject)
+  if (type === 'RESPONSE_HEADER') return (assertion.assertions || []).some(hasMeaningfulAssertionItem)
+  if (type === 'VARIABLE') return (assertion.variableAssertionItems || []).some(hasMeaningfulAssertionItem)
+  if (type === 'RESPONSE_BODY') {
+    return Boolean(assertion.expression || assertion.expectedValue)
+      || (assertion.jsonPathAssertion?.assertions || []).some(hasMeaningfulAssertionItem)
+      || (assertion.xpathAssertion?.assertions || []).some(hasMeaningfulAssertionItem)
+      || (assertion.regexAssertion?.assertions || []).some(hasMeaningfulAssertionItem)
+  }
+  return Boolean(
+    assertion.name
+    || assertion.expectedValue
+    || assertion.expression
+    || assertion.script
+    || (assertion.assertions || []).some(hasMeaningfulAssertionItem)
+  )
+}
+
+function hasMeaningfulAiProcessor(processor: any) {
+  if (!processor || processor.enabled === false) return false
+  return Boolean(
+    processor.name
+    || processor.script
+    || processor.sql
+    || processor.expression
+    || processor.variableName
+    || processor.delayMs
+    || processor.processorType
+    || processor.type,
+  )
+}
+
+function normalizeAiGeneratedDraft(draft: ApiAiGeneratedCaseDraft) {
+  const nextDraft = clone(draft)
+  nextDraft.requestConfig = normalizeAiGeneratedRequestConfig(nextDraft.requestConfig || emptyRequestConfig())
+  nextDraft.assertions = (clone(nextDraft.assertions || []) as ApiAssertionConfig[]).filter(hasMeaningfulAiAssertion)
+  nextDraft.preProcessors = (clone(nextDraft.preProcessors || []) as any[]).filter(hasMeaningfulAiProcessor)
+  nextDraft.postProcessors = (clone(nextDraft.postProcessors || []) as any[]).filter(hasMeaningfulAiProcessor)
+  return nextDraft
+}
+
 function applyAiGeneratedOutlineToResult(target: ApiAiGeneratedCaseResult, outline: NonNullable<ApiAiCaseGenerationEvent['outline']>, event: ApiAiCaseGenerationEvent) {
   const draft = target.draft
   draft.name = normalizeAiGeneratedCaseName(outline.name || draft.name, outline.type || draft.type || event.type, outline.expected || draft.expected)
@@ -4848,7 +4927,7 @@ function applyAiGeneratedOutlineToResult(target: ApiAiGeneratedCaseResult, outli
 }
 
 function applyAiGeneratedDraftToResult(target: ApiAiGeneratedCaseResult, draft: ApiAiGeneratedCaseDraft) {
-  const nextDraft = clone(draft)
+  const nextDraft = normalizeAiGeneratedDraft(draft)
   nextDraft.name = normalizeAiGeneratedCaseName(nextDraft.name || target.draft.name, nextDraft.type || target.draft.type, nextDraft.expected || target.draft.expected)
   nextDraft.description = nextDraft.description || target.draft.description
   nextDraft.tags = Array.isArray(nextDraft.tags) ? [...nextDraft.tags] : target.draft.tags
@@ -4857,10 +4936,7 @@ function applyAiGeneratedDraftToResult(target: ApiAiGeneratedCaseResult, draft: 
   nextDraft.type = nextDraft.type || target.draft.type
   nextDraft.typeKey = nextDraft.typeKey || target.draft.typeKey
   nextDraft.expected = nextDraft.expected || target.draft.expected
-  nextDraft.requestConfig = clone(nextDraft.requestConfig || target.draft.requestConfig || emptyRequestConfig())
-  nextDraft.assertions = clone(nextDraft.assertions || [])
-  nextDraft.preProcessors = clone(nextDraft.preProcessors || [])
-  nextDraft.postProcessors = clone(nextDraft.postProcessors || [])
+  nextDraft.requestConfig = normalizeAiGeneratedRequestConfig(nextDraft.requestConfig || target.draft.requestConfig || emptyRequestConfig())
   target.draft = nextDraft
   target.status = 'pending'
   target.message = null
@@ -5049,7 +5125,7 @@ async function saveAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
     result.status = 'accepted'
     aiCaseSelectedResultIds.value = aiCaseSelectedResultIds.value.filter(id => id !== result.id)
     await loadCasesForDefinition(definitionId, targetWorkspaceCode)
-    ElMessage.success('AI 生成用例已保存')
+    ElMessage.success('AI 生成用例已采纳并保存')
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -5139,14 +5215,12 @@ async function runAiGeneratedCase(result: ApiAiGeneratedCaseResult) {
 }
 
 async function runSelectedAiGeneratedCases() {
-  const selected = selectedPendingAiCaseResults.value
-  if (!selected.length) {
-    ElMessage.info('请先勾选待运行的生成结果')
+  const target = selectedPendingAiCaseResults.value[0]
+  if (!target) {
+    ElMessage.info('请先选择用例')
     return
   }
-  for (const item of selected) {
-    await runAiGeneratedCase(item)
-  }
+  await runAiGeneratedCase(target)
 }
 
 function openAiGeneratedCaseDetail(result: ApiAiGeneratedCaseResult) {

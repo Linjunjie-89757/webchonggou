@@ -10,7 +10,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -128,14 +130,15 @@ public class LocalRunnerService {
                 null
         ));
 
-        LocalRunnerTaskEntity task = taskMapper.selectOne(new LambdaQueryWrapper<LocalRunnerTaskEntity>()
+        List<LocalRunnerTaskEntity> candidates = taskMapper.selectList(new LambdaQueryWrapper<LocalRunnerTaskEntity>()
                 .eq(LocalRunnerTaskEntity::getStatus, PENDING)
                 .and(wrapper -> wrapper
                         .isNull(LocalRunnerTaskEntity::getRunnerId)
                         .or()
                         .eq(LocalRunnerTaskEntity::getRunnerId, request.runnerId()))
                 .orderByAsc(LocalRunnerTaskEntity::getCreatedAt)
-                .last("LIMIT 1"));
+                .last("LIMIT 50"));
+        LocalRunnerTaskEntity task = selectPullableTask(candidates, request);
         if (task == null) {
             return new PullRunnerTaskResponse(false, LocalDateTime.now(), DEFAULT_POLL_INTERVAL_MS, null);
         }
@@ -147,6 +150,91 @@ public class LocalRunnerService {
         task.setUpdatedAt(now);
         taskMapper.updateById(task);
         return new PullRunnerTaskResponse(true, now, DEFAULT_POLL_INTERVAL_MS, toEnvelope(task));
+    }
+
+    private LocalRunnerTaskEntity selectPullableTask(List<LocalRunnerTaskEntity> candidates, PullRunnerTaskRequest request) {
+        int availableSlots = resolveAvailableSlots(request.resource());
+        List<String> capabilities = request.capabilities() == null ? List.of() : request.capabilities();
+        List<String> workspaceCodes = request.workspaceCodes() == null ? List.of() : request.workspaceCodes();
+        return (candidates == null ? List.<LocalRunnerTaskEntity>of() : candidates).stream()
+                .filter(task -> task != null)
+                .filter(task -> PENDING.equals(normalizeStatus(task.getStatus(), PENDING)))
+                .filter(task -> isTaskAllowedForRunner(task, request.runnerId()))
+                .filter(task -> isTaskAllowedForWorkspace(task, workspaceCodes))
+                .filter(task -> isTaskAllowedForCapabilities(task, capabilities))
+                .filter(task -> defaultResourceCost(task.getResourceCost()) <= availableSlots)
+                .min(Comparator
+                        .comparingInt((LocalRunnerTaskEntity task) -> priorityRank(task.getPriority()))
+                        .thenComparing(LocalRunnerTaskEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(LocalRunnerTaskEntity::getRunId, Comparator.nullsLast(String::compareTo)))
+                .orElse(null);
+    }
+
+    private boolean isTaskAllowedForRunner(LocalRunnerTaskEntity task, String runnerId) {
+        String taskRunnerId = blankToNull(task.getRunnerId());
+        return taskRunnerId == null || taskRunnerId.equals(blankToNull(runnerId));
+    }
+
+    private boolean isTaskAllowedForWorkspace(LocalRunnerTaskEntity task, List<String> workspaceCodes) {
+        String workspaceCode = blankToNull(task.getWorkspaceCode());
+        if (workspaceCode == null || workspaceCodes == null || workspaceCodes.isEmpty()) {
+            return true;
+        }
+        return workspaceCodes.stream().anyMatch(code -> workspaceCode.equals(blankToNull(code)));
+    }
+
+    private boolean isTaskAllowedForCapabilities(LocalRunnerTaskEntity task, List<String> capabilities) {
+        String taskType = blankToNull(task.getTaskType());
+        if (taskType == null || capabilities == null || capabilities.isEmpty()) {
+            return true;
+        }
+        return capabilities.stream().anyMatch(capability -> taskType.equalsIgnoreCase(blankToNull(capability)));
+    }
+
+    private int resolveAvailableSlots(Map<String, Object> resource) {
+        int maxSlots = intFromMap(resource, "maxSlots", 1);
+        int usedSlots = intFromMap(resource, "usedSlots", 0);
+        int explicitAvailable = intFromMap(resource, "availableSlots", maxSlots - usedSlots);
+        return Math.max(0, explicitAvailable);
+    }
+
+    private int intFromMap(Map<String, Object> values, String key, int fallback) {
+        if (values == null || !values.containsKey(key)) {
+            return fallback;
+        }
+        Object value = values.get(key);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return fallback;
+            }
+        }
+        return fallback;
+    }
+
+    private int defaultResourceCost(Integer value) {
+        return value == null || value <= 0 ? 1 : value;
+    }
+
+    private int priorityRank(String priority) {
+        String normalized = blankToNull(priority);
+        if ("DEBUG".equalsIgnoreCase(normalized)) {
+            return 0;
+        }
+        if ("MANUAL".equalsIgnoreCase(normalized)) {
+            return 1;
+        }
+        if ("CI".equalsIgnoreCase(normalized)) {
+            return 2;
+        }
+        if ("SCHEDULED".equalsIgnoreCase(normalized)) {
+            return 3;
+        }
+        return 4;
     }
 
     @Transactional
@@ -255,6 +343,86 @@ public class LocalRunnerService {
                 result
         ));
         return new RunnerTaskAckResponse(runId, task.getStatus(), true, "Final result accepted");
+    }
+
+    @Transactional
+    public int markOfflineRunners(Duration offlineThreshold) {
+        Duration threshold = offlineThreshold == null || offlineThreshold.isNegative() || offlineThreshold.isZero()
+                ? Duration.ofMinutes(2)
+                : offlineThreshold;
+        LocalDateTime deadline = LocalDateTime.now().minus(threshold);
+        List<LocalRunnerNodeEntity> staleRunners = nodeMapper.selectList(new LambdaQueryWrapper<LocalRunnerNodeEntity>()
+                .eq(LocalRunnerNodeEntity::getStatus, ONLINE)
+                .lt(LocalRunnerNodeEntity::getLastHeartbeatAt, deadline));
+        int changedTasks = 0;
+        for (LocalRunnerNodeEntity runner : staleRunners == null ? List.<LocalRunnerNodeEntity>of() : staleRunners) {
+            runner.setStatus("OFFLINE");
+            runner.setUpdatedAt(LocalDateTime.now());
+            nodeMapper.updateById(runner);
+            changedTasks += markRunnerTasksOffline(runner.getRunnerId());
+        }
+        return changedTasks;
+    }
+
+    public List<RunnerNodeSummaryResponse> listRunnerNodes(Duration offlineThreshold) {
+        Duration threshold = offlineThreshold == null || offlineThreshold.isNegative() || offlineThreshold.isZero()
+                ? Duration.ofMinutes(2)
+                : offlineThreshold;
+        LocalDateTime now = LocalDateTime.now();
+        List<LocalRunnerNodeEntity> nodes = nodeMapper.selectList(new LambdaQueryWrapper<LocalRunnerNodeEntity>()
+                .orderByDesc(LocalRunnerNodeEntity::getLastHeartbeatAt));
+        return (nodes == null ? List.<LocalRunnerNodeEntity>of() : nodes).stream()
+                .map(node -> toRunnerNodeSummary(node, now, threshold))
+                .toList();
+    }
+
+    private int markRunnerTasksOffline(String runnerId) {
+        String normalizedRunnerId = blankToNull(runnerId);
+        if (normalizedRunnerId == null) {
+            return 0;
+        }
+        List<LocalRunnerTaskEntity> tasks = taskMapper.selectList(new LambdaQueryWrapper<LocalRunnerTaskEntity>()
+                .eq(LocalRunnerTaskEntity::getRunnerId, normalizedRunnerId)
+                .in(LocalRunnerTaskEntity::getStatus, List.of(ASSIGNED, RUNNING)));
+        int changed = 0;
+        LocalDateTime now = LocalDateTime.now();
+        for (LocalRunnerTaskEntity task : tasks == null ? List.<LocalRunnerTaskEntity>of() : tasks) {
+            task.setStatus("RUNNER_OFFLINE");
+            task.setErrorMessage("Runner offline: " + normalizedRunnerId);
+            task.setCompletedAt(now);
+            task.setLastReportedAt(now);
+            task.setUpdatedAt(now);
+            taskMapper.updateById(task);
+            changed += 1;
+        }
+        return changed;
+    }
+
+    private RunnerNodeSummaryResponse toRunnerNodeSummary(
+            LocalRunnerNodeEntity node,
+            LocalDateTime now,
+            Duration offlineThreshold
+    ) {
+        Long secondsSinceHeartbeat = node.getLastHeartbeatAt() == null
+                ? null
+                : Math.max(0, Duration.between(node.getLastHeartbeatAt(), now).toSeconds());
+        boolean offline = secondsSinceHeartbeat == null
+                || secondsSinceHeartbeat > offlineThreshold.toSeconds()
+                || "OFFLINE".equalsIgnoreCase(blankToNull(node.getStatus()));
+        return new RunnerNodeSummaryResponse(
+                node.getRunnerId(),
+                node.getRunnerName(),
+                node.getStatus(),
+                node.getRunnerVersion(),
+                node.getProtocolVersion(),
+                readStringList(node.getCapabilitiesJson()),
+                readMap(node.getResourceJson()),
+                readMap(node.getBrowserJson()),
+                readMap(node.getSessionJson()),
+                node.getLastHeartbeatAt(),
+                secondsSinceHeartbeat,
+                offline
+        );
     }
 
     @Transactional
@@ -463,6 +631,19 @@ public class LocalRunnerService {
             });
         } catch (JsonProcessingException exception) {
             return Map.of();
+        }
+    }
+
+    private List<String> readStringList(String json) {
+        String normalized = blankToNull(json);
+        if (normalized == null) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(normalized, new TypeReference<List<String>>() {
+            });
+        } catch (JsonProcessingException exception) {
+            return List.of();
         }
     }
 

@@ -43,8 +43,10 @@ const runnerTaskPoller = createRunnerTaskPoller({
   webElementValidateExecutor: async ({ locators }) => validateCurrentPageLocators({
     locators,
   }),
-  webCaseRunExecutor: async ({ task, caseSnapshot, steps, onStepResult }) => executeCurrentPageCase({
+  webCaseRunExecutor: async ({ task, environmentSnapshot, variableSnapshot, caseSnapshot, steps, onStepResult }) => executeCurrentPageCase({
     task,
+    environmentSnapshot,
+    variableSnapshot,
     caseSnapshot,
     steps,
     onStepResult,
@@ -429,8 +431,9 @@ async function validateCurrentPageLocators(payload) {
 
 async function executeCurrentPageCase(payload) {
   const task = payload.task || {};
-  const caseSnapshot = payload.caseSnapshot || {};
-  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  const renderContext = buildCaseRenderContext(payload);
+  const caseSnapshot = renderCaseSnapshot(payload.caseSnapshot || {}, renderContext);
+  const steps = Array.isArray(payload.steps) ? payload.steps.map(step => renderCaseStep(step, renderContext)) : [];
   const stepResults = [];
   let stoppedByFailure = false;
 
@@ -464,14 +467,15 @@ async function executeCurrentPageCase(payload) {
     } catch (error) {
       const message = humanizeRunnerError(error);
       const screenshotBase64 = await captureFailureScreenshot();
+      const screenshotEvidence = buildFailureScreenshotEvidence(step, screenshotBase64);
       result = buildCaseStepResult(step, {
         status: 'FAILED',
         durationMs: Date.now() - startedAt,
         errorMessage: message,
-        screenshotRef: screenshotBase64 ? `inline:base64:${String(resultStepId(step))}` : null,
+        screenshotRef: screenshotEvidence?.screenshot?.ref || null,
         extra: {
           pageUrl: getActivePageUrl(),
-          screenshotBase64,
+          ...(screenshotEvidence || {}),
         },
       });
       if (step.continueOnFailure !== true) {
@@ -502,6 +506,7 @@ async function executeCurrentPageCaseStep(input) {
       if (!url) {
         throw new Error('OPEN step requires inputValue or case baseUrl');
       }
+      assertRequiredAuthState(input.task, input.caseSnapshot);
       await openCollectPage({
         url,
         workspaceId: input.task.workspaceCode || 'default-workspace',
@@ -562,6 +567,12 @@ async function executeCurrentPageCaseStep(input) {
       await locator.selectOption(value, { timeout: timeoutMs });
       return;
     }
+    case 'FILE_UPLOAD': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const filePath = resolveUploadFilePath(input.task, step);
+      await locator.setInputFiles(filePath, { timeout: timeoutMs });
+      return;
+    }
     case 'WAIT_FOR': {
       if (optionalString(step.locatorValue)) {
         const locator = resolveCaseStepLocator(step, timeoutMs);
@@ -574,11 +585,54 @@ async function executeCurrentPageCaseStep(input) {
       await page.waitForTimeout(Math.min(timeoutMs, 60_000));
       return;
     }
+    case 'WAIT_URL': {
+      await ensureCasePage();
+      const expectedUrl = optionalString(step.inputValue || step.expectedUrl || step.url);
+      if (!expectedUrl) {
+        throw new Error('WAIT_URL step requires inputValue');
+      }
+      await page.waitForURL(url => String(url).includes(expectedUrl), { timeout: timeoutMs }).catch(error => {
+        throw new Error(`等待失败：URL 在 ${timeoutMs} ms 内未匹配“${expectedUrl}”，当前为“${page.url()}”，原始错误：${error instanceof Error ? error.message : String(error)}`);
+      });
+      return;
+    }
+    case 'WAIT_TEXT': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const expectedText = optionalString(step.inputValue || step.expectedText || step.text);
+      if (!expectedText) {
+        throw new Error('WAIT_TEXT step requires inputValue');
+      }
+      const startedAt = Date.now();
+      let actualText = '';
+      while (Date.now() - startedAt < timeoutMs) {
+        actualText = optionalString(await locator.innerText({ timeout: Math.min(1000, timeoutMs) }).catch(() => ''));
+        if (actualText.includes(expectedText)) {
+          return;
+        }
+        await page.waitForTimeout(100);
+      }
+      throw new Error(`等待失败：文本在 ${timeoutMs} ms 内未匹配。期望包含“${expectedText}”，实际为“${actualText || '空文本'}”`);
+    }
+    case 'WAIT_HIDDEN': {
+      const locator = resolveCaseStepLocator(step, timeoutMs);
+      await locator.waitFor({ state: 'hidden', timeout: timeoutMs }).catch(error => {
+        throw new Error(`等待失败：元素在 ${timeoutMs} ms 内未隐藏（${formatLocatorForMessage(step)}），原始错误：${error instanceof Error ? error.message : String(error)}`);
+      });
+      return;
+    }
     case 'ASSERT_VISIBLE': {
       const locator = await prepareLocatorAction(step, timeoutMs);
       const visible = await locator.isVisible({ timeout: timeoutMs }).catch(() => false);
       if (!visible) {
         throw new Error(`断言失败：元素未显示（${formatLocatorForMessage(step)}）`);
+      }
+      return;
+    }
+    case 'ASSERT_NOT_VISIBLE': {
+      const locator = resolveCaseStepLocator(step, timeoutMs);
+      const visible = await locator.isVisible({ timeout: timeoutMs }).catch(() => false);
+      if (visible) {
+        throw new Error(`断言失败：元素不应显示（${formatLocatorForMessage(step)}）`);
       }
       return;
     }
@@ -591,6 +645,18 @@ async function executeCurrentPageCaseStep(input) {
       const actualText = optionalString(await locator.innerText({ timeout: timeoutMs }).catch(() => ''));
       if (!actualText.includes(expectedText)) {
         throw new Error(`断言失败：文本不匹配。期望包含“${expectedText}”，实际为“${actualText || '空文本'}”`);
+      }
+      return;
+    }
+    case 'ASSERT_VALUE': {
+      const locator = await prepareLocatorAction(step, timeoutMs);
+      const expectedValue = optionalString(step.inputValue || step.expectedValue || step.value);
+      if (!expectedValue) {
+        throw new Error('ASSERT_VALUE step requires inputValue');
+      }
+      const actualValue = optionalString(await locator.inputValue({ timeout: timeoutMs }).catch(() => ''));
+      if (actualValue !== expectedValue) {
+        throw new Error(`断言失败：输入值不匹配。期望为“${expectedValue}”，实际为“${actualValue || '空值'}”`);
       }
       return;
     }
@@ -655,6 +721,103 @@ function isAbsoluteBrowserUrl(value) {
   return /^(https?:|file:|data:|about:)/i.test(optionalString(value));
 }
 
+function assertRequiredAuthState(task, caseSnapshot) {
+  if (caseSnapshot.requireAuthState !== true && caseSnapshot.authRequired !== true) {
+    return;
+  }
+  const workspaceId = optionalString(task.workspaceCode) || 'default-workspace';
+  const environmentId = optionalString(caseSnapshot.environmentId) || 'default-environment';
+  const storageStatePath = getStorageStatePath(workspaceId, environmentId);
+  if (!existsSync(storageStatePath)) {
+    throw new Error(`本地登录态不存在：当前用例要求登录态，请先在 Local Runner 中打开目标环境页面并保存登录态（工作空间：${workspaceId}，环境：${environmentId}）`);
+  }
+}
+
+function buildCaseRenderContext(payload) {
+  const environment = normalizePlainObject(payload.environmentSnapshot);
+  const variableSnapshot = normalizePlainObject(payload.variableSnapshot);
+  const snapshotVariables = normalizePlainObject(variableSnapshot.variables);
+  const caseSnapshot = normalizePlainObject(payload.caseSnapshot);
+  const context = {
+    ...flattenSnapshot(environment, 'environment'),
+    ...flattenSnapshot(variableSnapshot, 'variableSet'),
+    ...snapshotVariables,
+  };
+  for (const key of ['baseUrl', 'pageUrl', 'environmentId', 'environmentName', 'browserType', 'defaultTimeoutMs']) {
+    if (environment[key] !== undefined && environment[key] !== null) {
+      context[key] = environment[key];
+    }
+  }
+  for (const key of ['baseUrl', 'pageUrl', 'environmentId', 'environmentName', 'browserType', 'defaultTimeoutMs']) {
+    if (context[key] === undefined && caseSnapshot[key] !== undefined && caseSnapshot[key] !== null) {
+      context[key] = caseSnapshot[key];
+    }
+  }
+  return context;
+}
+
+function renderCaseSnapshot(caseSnapshot, context) {
+  const rendered = { ...caseSnapshot };
+  for (const key of ['baseUrl', 'pageUrl', 'environmentId', 'environmentName', 'browserType']) {
+    if (typeof rendered[key] === 'string') {
+      rendered[key] = renderTemplateString(rendered[key], context);
+    }
+  }
+  return rendered;
+}
+
+function renderCaseStep(step, context) {
+  const rendered = { ...step };
+  for (const key of ['locatorType', 'locatorValue', 'inputValue', 'url', 'key', 'value', 'expectedText', 'expectedUrl', 'expectedTitle', 'text', 'title']) {
+    if (typeof rendered[key] === 'string') {
+      rendered[key] = renderTemplateString(rendered[key], context);
+    }
+  }
+  return rendered;
+}
+
+function renderTemplateString(value, context) {
+  return String(value).replace(/\$\{([^}]+)}/g, (match, rawKey) => {
+    const key = String(rawKey || '').trim();
+    if (!key) {
+      return match;
+    }
+    const replacement = resolveContextValue(context, key);
+    return replacement === undefined || replacement === null ? match : String(replacement);
+  });
+}
+
+function resolveContextValue(context, key) {
+  if (Object.prototype.hasOwnProperty.call(context, key)) {
+    return context[key];
+  }
+  const parts = key.split('.').filter(Boolean);
+  let current = context;
+  for (const part of parts) {
+    if (!current || typeof current !== 'object' || !Object.prototype.hasOwnProperty.call(current, part)) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+}
+
+function flattenSnapshot(value, prefix) {
+  const source = normalizePlainObject(value);
+  const result = {};
+  for (const [key, item] of Object.entries(source)) {
+    if (item === undefined || item === null || typeof item === 'object') {
+      continue;
+    }
+    result[`${prefix}.${key}`] = item;
+  }
+  return result;
+}
+
+function normalizePlainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 function resolveCaseStepLocator(step, timeoutMs) {
   ensurePage();
   void timeoutMs;
@@ -682,6 +845,25 @@ function formatLocatorForMessage(step) {
   return `${locatorType}: ${locatorValue}`;
 }
 
+function resolveUploadFilePath(task, step) {
+  const inputValue = optionalString(step.inputValue || step.filePath || step.value);
+  if (!inputValue) {
+    throw new Error('FILE_UPLOAD step requires inputValue');
+  }
+  if (/^artifact:/i.test(inputValue)) {
+    const fileId = inputValue.replace(/^artifact:/i, '').trim();
+    const artifact = Array.isArray(task.artifactRefs)
+      ? task.artifactRefs.find(item => optionalString(item?.fileId || item?.artifactId || item?.id) === fileId)
+      : null;
+    const localPath = optionalString(artifact?.localPath || artifact?.path);
+    if (!localPath) {
+      throw new Error(`文件上传工件未下载：${fileId}。请先由平台下发 artifactRefs.localPath，或等待后续工件仓库下载能力接入。`);
+    }
+    return localPath;
+  }
+  return inputValue;
+}
+
 function buildCaseStepResult(step, result) {
   return {
     stepId: String(resultStepId(step)),
@@ -702,6 +884,22 @@ function buildCaseStepResult(step, result) {
 
 function resultStepId(step) {
   return step.stepId || step.id || step.sortOrder || randomUUID();
+}
+
+function buildFailureScreenshotEvidence(step, screenshotBase64) {
+  if (!screenshotBase64) {
+    return null;
+  }
+  const stepId = String(resultStepId(step));
+  return {
+    screenshotBase64,
+    screenshot: {
+      ref: `inline:base64:${stepId}`,
+      source: 'LOCAL_RUNNER',
+      encoding: 'base64',
+      contentType: 'image/png',
+    },
+  };
 }
 
 async function captureFailureScreenshot() {

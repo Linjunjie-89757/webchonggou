@@ -6,6 +6,9 @@ import com.company.autoplatform.auth.CurrentUserPrincipal;
 import com.company.autoplatform.common.BadRequestException;
 import com.company.autoplatform.common.NotFoundException;
 import com.company.autoplatform.common.PageResponse;
+import com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
+import com.company.autoplatform.runner.LocalRunnerModels.RunnerTaskDetailResponse;
+import com.company.autoplatform.runner.LocalRunnerService;
 import com.company.autoplatform.workspace.WorkspaceEntity;
 import com.company.autoplatform.workspace.WorkspaceService;
 import org.springframework.stereotype.Service;
@@ -13,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,6 +42,7 @@ public class ApiExecutionDomainService {
     private final ApiScenarioTestDatasetDomainService scenarioTestDatasetDomainService;
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
+    private final LocalRunnerService localRunnerService;
 
     public ApiExecutionDomainService(
             ApiExecutionEngineSupport executionEngine,
@@ -46,7 +51,8 @@ public class ApiExecutionDomainService {
             ApiDataFileDomainService dataFileDomainService,
             ApiScenarioTestDatasetDomainService scenarioTestDatasetDomainService,
             WorkspaceService workspaceService,
-            ApiWorkspaceScopeSupport workspaceScopeSupport
+            ApiWorkspaceScopeSupport workspaceScopeSupport,
+            LocalRunnerService localRunnerService
     ) {
         this.executionEngine = executionEngine;
         this.caseMapper = caseMapper;
@@ -55,6 +61,7 @@ public class ApiExecutionDomainService {
         this.scenarioTestDatasetDomainService = scenarioTestDatasetDomainService;
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
+        this.localRunnerService = localRunnerService;
     }
 
     public ApiRunResponse debugRunDefinition(Long id, String workspaceCode, ApiRunRequest request) {
@@ -252,7 +259,12 @@ public class ApiExecutionDomainService {
     public ApiRunResponse runScenario(Long id, String workspaceCode, ApiRunRequest request) {
         ApiScenarioEntity scenario = executionEngine.requireScenario(id);
         workspaceScopeSupport.validateReadable(scenario.getWorkspaceId(), workspaceCode, "Current workspace cannot run the scenario");
-        workspaceService.requireWritableWorkspace(workspaceService.requireWorkspaceById(scenario.getWorkspaceId()).getWorkspaceCode());
+        WorkspaceEntity workspace = workspaceService.requireWorkspaceById(scenario.getWorkspaceId());
+        workspaceService.requireWritableWorkspace(workspace.getWorkspaceCode());
+
+        if (isLocalRunnerRun(request.runOn())) {
+            return createLocalRunnerScenarioRun(scenario, workspace, request);
+        }
 
         List<ApiScenarioTestDatasetDomainService.ApiScenarioDatasetRuntimeRow> datasetRows = List.of();
         if (request.testDatasetId() != null) {
@@ -435,6 +447,7 @@ public class ApiExecutionDomainService {
                 request.variableSetId(),
                 request.branchName(),
                 request.triggerSource(),
+                request.runOn(),
                 request.testDatasetEnabled(),
                 request.testDatasetId(),
                 request.loopCount(),
@@ -446,6 +459,112 @@ public class ApiExecutionDomainService {
         );
         ScenarioRunAggregate aggregate = runScenarioOnce(scenario, rowRequest, rowValues, plan.sequence());
         return new ScenarioRunPlanResult(plan, aggregate);
+    }
+
+    private ApiRunResponse createLocalRunnerScenarioRun(
+            ApiScenarioEntity scenario,
+            WorkspaceEntity workspace,
+            ApiRunRequest request
+    ) {
+        Long environmentId = request.environmentId() != null ? request.environmentId() : scenario.getDefaultEnvId();
+        Long variableSetId = request.variableSetId() != null ? request.variableSetId() : scenario.getVariableSetId();
+        ApiExecutionRuntimeModels.ExecutionContext context = executionEngine.buildExecutionContext(
+                scenario.getWorkspaceId(),
+                environmentId,
+                variableSetId,
+                request.rowVariables(),
+                request.mockApplicationId(),
+                request.mockEnabled(),
+                request.mockBusinessScenarioId()
+        );
+
+        RunnerTaskDetailResponse task = localRunnerService.createDebugTask(new CreateRunnerTaskCommand(
+                scenario.getWorkspaceId(),
+                workspace.getWorkspaceCode(),
+                "api_scenario_" + scenario.getId() + "_" + System.currentTimeMillis(),
+                "API_SCENARIO_RUN",
+                "LOCAL_RUNNER",
+                null,
+                null,
+                "1.0",
+                "MANUAL",
+                1,
+                null,
+                buildApiLocalRunnerTimeoutPolicy(scenario),
+                buildApiLocalRunnerEnvironmentSnapshot(environmentId, context.environment()),
+                buildApiLocalRunnerVariableSnapshot(variableSetId, context.variables()),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of(),
+                buildApiLocalRunnerScenarioPayload(scenario, request)
+        ));
+
+        return new ApiRunResponse(
+                null,
+                null,
+                task == null ? null : task.runId(),
+                null,
+                "PENDING",
+                "Local Runner task created",
+                List.of(),
+                List.of()
+        );
+    }
+
+    private Map<String, Object> buildApiLocalRunnerTimeoutPolicy(ApiScenarioEntity scenario) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("taskTimeoutMs", scenario.getGlobalTimeoutMs() == null || scenario.getGlobalTimeoutMs() <= 0 ? 300000 : scenario.getGlobalTimeoutMs());
+        values.put("requestTimeoutMs", 30000);
+        values.put("scriptTimeoutMs", 1000);
+        values.put("stepFailureRetryCount", scenario.getStepFailureRetryCount() == null ? 0 : scenario.getStepFailureRetryCount());
+        values.put("defaultStepWaitMs", scenario.getDefaultStepWaitMs() == null ? 0 : scenario.getDefaultStepWaitMs());
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerEnvironmentSnapshot(
+            Long environmentId,
+            ApiExecutionRuntimeModels.ResolvedEnvironment environment
+    ) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("environmentId", environmentId);
+        values.put("baseUrl", environment == null ? null : environment.baseUrl());
+        values.put("timeoutMs", environment == null ? null : environment.timeoutMs());
+        values.put("defaultServiceKey", environment == null ? null : environment.defaultServiceKey());
+        values.put("services", environment == null ? List.of() : environment.services());
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerVariableSnapshot(Long variableSetId, Map<String, String> variables) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        values.put("variableSetId", variableSetId);
+        values.put("variables", variables == null ? Map.of() : new LinkedHashMap<>(variables));
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerScenarioPayload(ApiScenarioEntity scenario, ApiRunRequest request) {
+        Map<String, Object> scenarioSnapshot = new LinkedHashMap<>();
+        scenarioSnapshot.put("scenarioId", scenario.getId());
+        scenarioSnapshot.put("scenarioName", scenario.getScenarioName());
+        scenarioSnapshot.put("steps", readScenarioSteps(scenario.getStepsJson()));
+        scenarioSnapshot.put("assertions", readScenarioAssertions(scenario.getScenarioAssertionsJson()));
+
+        Map<String, Object> runOptions = new LinkedHashMap<>();
+        runOptions.put("stopOnFirstFailure", !Boolean.TRUE.equals(scenario.getContinueOnFailure()));
+        runOptions.put("formalReport", true);
+        runOptions.put("debugMode", false);
+        runOptions.put("loopCount", normalizeScenarioLoopCount(request.loopCount()));
+        runOptions.put("threadCount", normalizeScenarioThreadCount(request.threadCount()));
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("scenarioSnapshot", scenarioSnapshot);
+        payload.put("runOptions", runOptions);
+        return payload;
+    }
+
+    private boolean isLocalRunnerRun(String runOn) {
+        String normalized = blankToNull(runOn);
+        return "LOCAL".equalsIgnoreCase(normalized) || "LOCAL_RUNNER".equalsIgnoreCase(normalized);
     }
 
     private boolean shouldStopOnScenarioPlanFailure(ApiScenarioEntity scenario) {

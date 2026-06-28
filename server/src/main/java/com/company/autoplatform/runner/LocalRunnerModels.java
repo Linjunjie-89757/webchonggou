@@ -192,6 +192,27 @@ public final class LocalRunnerModels {
     ) {
     }
 
+    public record RunnerOfflineScanResponse(
+            Integer changedTasks
+    ) {
+    }
+
+    public record RunnerNodeSummaryResponse(
+            String runnerId,
+            String runnerName,
+            String status,
+            String runnerVersion,
+            String protocolVersion,
+            List<String> capabilities,
+            Map<String, Object> resource,
+            Map<String, Object> browser,
+            Map<String, Object> session,
+            LocalDateTime lastHeartbeatAt,
+            Long secondsSinceHeartbeat,
+            Boolean offline
+    ) {
+    }
+
     public record CreateRunnerTaskCommand(
             Long workspaceId,
             String workspaceCode,

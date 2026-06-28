@@ -1,0 +1,115 @@
+package com.company.autoplatform.runner;
+
+import com.company.autoplatform.auth.CurrentUserPrincipal;
+import com.company.autoplatform.auth.PlatformRole;
+import com.company.autoplatform.workspace.WorkspaceEntity;
+import com.company.autoplatform.workspace.WorkspaceService;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerDebugTaskRequest;
+import static com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class LocalRunnerTaskDebugControllerTests {
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
+
+    @Test
+    void createDebugTaskAcceptsApiScenarioRunAndProvidesScriptProtocolDefaults() {
+        WorkspaceService workspaceService = mock(WorkspaceService.class);
+        LocalRunnerService localRunnerService = mock(LocalRunnerService.class);
+        WorkspaceEntity workspace = new WorkspaceEntity();
+        workspace.setId(7L);
+        workspace.setWorkspaceCode("risk-ops");
+        AtomicReference<CreateRunnerTaskCommand> capturedCommand = new AtomicReference<>();
+
+        when(workspaceService.requireWritableWorkspace(eq("risk-ops"))).thenReturn(workspace);
+        when(localRunnerService.createDebugTask(org.mockito.ArgumentMatchers.any(CreateRunnerTaskCommand.class)))
+                .thenAnswer(invocation -> {
+                    capturedCommand.set(invocation.getArgument(0));
+                    return null;
+                });
+        CurrentUserPrincipal principal = new CurrentUserPrincipal(
+                11L,
+                "zhangli",
+                "Zhang Li",
+                "{noop}123456",
+                PlatformRole.PLATFORM_ADMIN,
+                1
+        );
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                principal,
+                principal.getPassword(),
+                principal.getAuthorities()
+        ));
+
+        LocalRunnerTaskDebugController controller = new LocalRunnerTaskDebugController(localRunnerService, workspaceService);
+        controller.createDebugTask("risk-ops", new CreateRunnerDebugTaskRequest(
+                null,
+                "API_SCENARIO_RUN",
+                "runner_local",
+                null,
+                null,
+                null,
+                null,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                null,
+                null,
+                null,
+                null
+        ));
+
+        CreateRunnerTaskCommand command = capturedCommand.get();
+        assertThat(command.taskType()).isEqualTo("API_SCENARIO_RUN");
+        assertThat(command.resourceCost()).isEqualTo(1);
+        assertThat(command.timeoutPolicy()).containsEntry("scriptTimeoutMs", 1000);
+        assertThat(command.payload()).containsKey("scenarioSnapshot");
+        assertThat(command.payload()).containsEntry("runOptions", Map.of(
+                "stopOnFirstFailure", true,
+                "debugMode", true
+        ));
+    }
+
+    @Test
+    void triggerOfflineScanRequiresUserAndUsesDefaultThreshold() {
+        WorkspaceService workspaceService = mock(WorkspaceService.class);
+        LocalRunnerService localRunnerService = mock(LocalRunnerService.class);
+        when(localRunnerService.markOfflineRunners(java.time.Duration.ofMinutes(2))).thenReturn(3);
+        CurrentUserPrincipal principal = new CurrentUserPrincipal(
+                11L,
+                "zhangli",
+                "Zhang Li",
+                "{noop}123456",
+                PlatformRole.PLATFORM_ADMIN,
+                1
+        );
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                principal,
+                principal.getPassword(),
+                principal.getAuthorities()
+        ));
+
+        LocalRunnerTaskDebugController controller = new LocalRunnerTaskDebugController(localRunnerService, workspaceService);
+        var response = controller.triggerOfflineScan(null);
+
+        assertThat(response.data().changedTasks()).isEqualTo(3);
+        verify(localRunnerService).markOfflineRunners(java.time.Duration.ofMinutes(2));
+    }
+
+}

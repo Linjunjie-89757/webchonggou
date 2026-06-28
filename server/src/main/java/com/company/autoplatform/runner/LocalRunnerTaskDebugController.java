@@ -16,11 +16,13 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
 import static com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerDebugTaskRequest;
 import static com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
+import static com.company.autoplatform.runner.LocalRunnerModels.RunnerOfflineScanResponse;
 import static com.company.autoplatform.runner.LocalRunnerModels.RunnerTaskDetailResponse;
 
 @RestController
@@ -29,7 +31,9 @@ public class LocalRunnerTaskDebugController {
 
     private static final List<String> SUPPORTED_DEBUG_TASK_TYPES = List.of(
             "WEB_ELEMENT_VALIDATE",
-            "WEB_CASE_RUN"
+            "WEB_CASE_RUN",
+            "API_CASE_RUN",
+            "API_SCENARIO_RUN"
     );
 
     private final LocalRunnerService localRunnerService;
@@ -65,7 +69,9 @@ public class LocalRunnerTaskDebugController {
                         ? defaultResourceCost(taskType)
                         : request.resourceCost(),
                 request == null ? null : request.deadlineAt(),
-                request == null ? Map.of() : emptyMapIfNull(request.timeoutPolicy()),
+                request == null || request.timeoutPolicy() == null || request.timeoutPolicy().isEmpty()
+                        ? defaultTimeoutPolicy(taskType)
+                        : request.timeoutPolicy(),
                 request == null ? Map.of() : emptyMapIfNull(request.environmentSnapshot()),
                 request == null ? Map.of() : emptyMapIfNull(request.variableSnapshot()),
                 request == null ? Map.of() : emptyMapIfNull(request.scriptSnapshot()),
@@ -89,16 +95,46 @@ public class LocalRunnerTaskDebugController {
         return ApiResponse.ok(detail);
     }
 
+    @PostMapping("/offline-scan")
+    public ApiResponse<RunnerOfflineScanResponse> triggerOfflineScan(
+            @RequestBody(required = false) Map<String, Object> request
+    ) {
+        CurrentUserContext.require();
+        int changedTasks = localRunnerService.markOfflineRunners(Duration.ofSeconds(resolveThresholdSeconds(request)));
+        return ApiResponse.ok(new RunnerOfflineScanResponse(changedTasks), "Runner offline scan completed");
+    }
+
+    private long resolveThresholdSeconds(Map<String, Object> request) {
+        Object value = request == null ? null : request.get("thresholdSeconds");
+        if (value instanceof Number number) {
+            return Math.max(30, Math.min(number.longValue(), 3600));
+        }
+        if (value instanceof String text) {
+            try {
+                return Math.max(30, Math.min(Long.parseLong(text.trim()), 3600));
+            } catch (NumberFormatException ignored) {
+                return 120;
+            }
+        }
+        return 120;
+    }
+
     private String normalizeTaskType(String value) {
         String normalized = value == null || value.isBlank() ? "WEB_ELEMENT_VALIDATE" : value.trim().toUpperCase();
         if (!SUPPORTED_DEBUG_TASK_TYPES.contains(normalized)) {
-            throw new BadRequestException("Debug runner task only supports WEB_ELEMENT_VALIDATE or WEB_CASE_RUN");
+            throw new BadRequestException("Debug runner task only supports WEB_ELEMENT_VALIDATE, WEB_CASE_RUN, API_CASE_RUN or API_SCENARIO_RUN");
         }
         return normalized;
     }
 
     private Integer defaultResourceCost(String taskType) {
-        return "WEB_CASE_RUN".equals(taskType) ? 5 : 3;
+        if ("WEB_CASE_RUN".equals(taskType)) {
+            return 5;
+        }
+        if ("API_CASE_RUN".equals(taskType) || "API_SCENARIO_RUN".equals(taskType)) {
+            return 1;
+        }
+        return 3;
     }
 
     private Map<String, Object> defaultScreenshotPolicy() {
@@ -108,6 +144,16 @@ public class LocalRunnerTaskDebugController {
                 "format", "WEBP",
                 "quality", 75
         );
+    }
+
+    private Map<String, Object> defaultTimeoutPolicy(String taskType) {
+        if ("API_CASE_RUN".equals(taskType) || "API_SCENARIO_RUN".equals(taskType)) {
+            return Map.of(
+                    "requestTimeoutMs", 30000,
+                    "scriptTimeoutMs", 1000
+            );
+        }
+        return Map.of();
     }
 
     private Map<String, Object> defaultPayload(String taskType) {
@@ -125,6 +171,22 @@ public class LocalRunnerTaskDebugController {
                     )
             );
         }
+        if ("API_CASE_RUN".equals(taskType)) {
+            return Map.of(
+                    "apiCaseSnapshot", defaultApiCaseSnapshot(),
+                    "runOptions", defaultApiRunOptions()
+            );
+        }
+        if ("API_SCENARIO_RUN".equals(taskType)) {
+            return Map.of(
+                    "scenarioSnapshot", Map.of(
+                            "scenarioId", 0,
+                            "scenarioName", "Local Runner placeholder API scenario",
+                            "steps", List.of()
+                    ),
+                    "runOptions", defaultApiRunOptions()
+            );
+        }
         return Map.of(
                 "pageUrl", "",
                 "locators", List.of(),
@@ -133,6 +195,31 @@ public class LocalRunnerTaskDebugController {
                         "captureScreenshot", true,
                         "screenshotLimit", 8
                 )
+        );
+    }
+
+    private Map<String, Object> defaultApiCaseSnapshot() {
+        return Map.of(
+                "caseId", 0,
+                "caseName", "Local Runner placeholder API case",
+                "preScript", "",
+                "postScript", "",
+                "request", Map.of(
+                        "method", "GET",
+                        "url", "{{baseUrl}}",
+                        "headers", List.of(),
+                        "queryParams", List.of(),
+                        "body", ""
+                ),
+                "assertions", List.of(),
+                "extractors", List.of()
+        );
+    }
+
+    private Map<String, Object> defaultApiRunOptions() {
+        return Map.of(
+                "stopOnFirstFailure", true,
+                "debugMode", true
         );
     }
 

@@ -287,6 +287,7 @@ REUSE_EXISTING_PAGE
   "taskTimeoutMs": 1800000,
   "stepTimeoutMs": 30000,
   "requestTimeoutMs": 30000,
+  "scriptTimeoutMs": 1000,
   "uploadTimeoutMs": 60000,
   "runnerHeartbeatTimeoutMs": 15000,
   "retryCount": 0,
@@ -299,6 +300,7 @@ REUSE_EXISTING_PAGE
 - `taskTimeoutMs`：整体任务超时。
 - `stepTimeoutMs`：Web UI 步骤默认超时。
 - `requestTimeoutMs`：API 请求默认超时。
+- `scriptTimeoutMs`：API 前置 / 后置脚本单次执行超时，一期默认 1000ms，可由后台配置覆盖。
 - `uploadTimeoutMs`：附件上传超时。
 - `runnerHeartbeatTimeoutMs`：平台判断 Runner 离线阈值。
 - `retryCount`：任务或步骤重试次数，具体由任务类型解释。
@@ -380,8 +382,8 @@ REUSE_EXISTING_PAGE
   "version": 5,
   "sandbox": {
     "enabled": true,
-    "engine": "UNDECIDED",
-    "timeoutMs": 3000,
+    "engine": "NODE_VM_MVP",
+    "timeoutMs": 1000,
     "allowFileSystem": false,
     "allowSystemCommand": false,
     "allowProcessEnv": false
@@ -410,6 +412,53 @@ REUSE_EXISTING_PAGE
 - Runner 执行任务快照中的脚本内容。
 - 不实时读取平台最新脚本。
 - 不读取用户本机脚本文件。
+- 一期 Local Runner 使用 Node `vm` 做 MVP 隔离；正式产品化可替换为 QuickJS / isolated-vm，但对外协议不变。
+- 脚本沙箱不注入 `process`、`require`、文件系统、系统命令和任意网络客户端。
+- 脚本只能通过统一上下文读写变量和读取请求 / 响应摘要。
+
+### 11.1 API 脚本上下文协议
+
+API 脚本字段统一放在 `apiCaseSnapshot` 内：
+
+```json
+{
+  "preScript": "variables.set('TOKEN', variables.get('USERNAME') + '-token');",
+  "postScript": "const data = response.json(); variables.set('ORDER_ID', data.orderId);"
+}
+```
+
+脚本可访问对象：
+
+| 对象 | 能力 |
+| --- | --- |
+| `variables.get(name)` | 按运行时变量、变量集、环境快照顺序读取变量 |
+| `variables.set(name, value)` | 写入运行时变量，后续请求模板可用 |
+| `variables.unset(name)` | 删除运行时变量 |
+| `variables.toObject()` | 读取当前可见变量快照 |
+| `request` | postScript 可读取本次最终请求摘要 |
+| `response.status` | 响应状态码 |
+| `response.headers` | 小写响应头 Map |
+| `response.body` / `response.text()` | 响应文本 |
+| `response.json()` | 将响应体按 JSON 解析 |
+| `utils.upper/lower/trim/jsonParse/jsonStringify/now` | 平台允许的纯工具函数 |
+
+执行顺序：
+
+1. 合成初始变量上下文。
+2. 执行 `preScript`，允许写运行时变量。
+3. 使用最新变量渲染 URL、Header、Query、Body。
+4. 发起 API 请求。
+5. 执行断言和提取器。
+6. 执行 `postScript`，允许读取响应并写运行时变量。
+7. 输出 `scriptResults` 和最终运行时变量。
+
+失败策略：
+
+- `preScript` 失败：不发送请求，当前步骤失败。
+- `postScript` 失败：请求和断言结果保留，当前步骤失败。
+- `API_CASE_RUN` 中脚本失败直接使任务失败。
+- `API_SCENARIO_RUN` 中脚本失败遵守步骤 `continueOnFailure` 和 `runOptions.stopOnFirstFailure`。
+- 脚本超时按脚本失败处理，错误信息写入步骤结果。
 
 ## 12. artifactRefs
 
@@ -577,6 +626,8 @@ Runner 必须在上传日志、请求响应、错误信息前执行脱敏。
     "caseId": 2001,
     "caseVersion": 4,
     "caseName": "查询订单详情",
+    "preScript": "variables.set('TOKEN', variables.get('USERNAME') + '-token');",
+    "postScript": "const data = response.json(); variables.set('ORDER_STATUS', data.status);",
     "request": {
       "method": "GET",
       "url": "{{BASE_URL}}/api/orders/{{ORDER_ID}}",
@@ -606,6 +657,9 @@ Runner 必须在上传日志、请求响应、错误信息前执行脱敏。
         "expression": "$.status"
       }
     ]
+  },
+  "runOptions": {
+    "debugMode": true
   }
 }
 ```
@@ -622,7 +676,10 @@ Runner 必须在上传日志、请求响应、错误信息前执行脱敏。
       {
         "stepId": "api_step_001",
         "type": "API_CASE",
-        "caseSnapshot": {},
+        "caseSnapshot": {
+          "preScript": "",
+          "postScript": ""
+        },
         "continueOnFailure": false
       }
     ]

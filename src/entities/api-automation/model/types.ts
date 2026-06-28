@@ -528,6 +528,7 @@ export interface ApiRunPayload {
   variableSetId?: number | null
   branchName?: string | null
   triggerSource?: string | null
+  runOn?: string | null
   testDatasetEnabled?: boolean | null
   testDatasetId?: number | null
   loopCount?: number | null
