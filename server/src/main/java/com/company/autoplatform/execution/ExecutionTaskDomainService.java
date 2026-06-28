@@ -18,7 +18,7 @@ import java.util.Set;
 public class ExecutionTaskDomainService {
 
     private static final Set<String> TASK_STATUSES = Set.of("READY", "RUNNING", "SUCCESS", "FAILED", "CANCELED");
-    private static final Set<String> REPORT_LOG_SOURCES = Set.of("MANUAL", "API", "WEB", "APP", "SYSTEM");
+    private static final Set<String> REPORT_LOG_SOURCES = Set.of("MANUAL", "API", "API_LOCAL_RUNNER", "WEB", "APP", "SYSTEM");
     private static final String DEFAULT_LOG_SOURCE = "MANUAL";
     private static final long DEFAULT_TASK_PAGE_SIZE = 20;
 

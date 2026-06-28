@@ -177,6 +177,8 @@ test('polls generic runner task and reports real WEB_ELEMENT_VALIDATE result', a
     assert.ok(status.poller.completedCount >= 1);
     assert.equal(status.poller.currentRunId, null);
     assert.equal(status.poller.lastTaskType, 'WEB_ELEMENT_VALIDATE');
+    assert.equal(status.poller.maxResourceSlots, 5);
+    assert.equal(status.poller.resource.availableSlots, 5);
   } finally {
     await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
     await closeServer(fakePlatform);

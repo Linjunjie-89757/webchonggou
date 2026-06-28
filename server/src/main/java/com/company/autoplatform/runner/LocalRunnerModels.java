@@ -193,7 +193,9 @@ public final class LocalRunnerModels {
     }
 
     public record RunnerOfflineScanResponse(
-            Integer changedTasks
+            Integer changedTasks,
+            Integer offlineTasks,
+            Integer timedOutTasks
     ) {
     }
 
@@ -209,7 +211,22 @@ public final class LocalRunnerModels {
             Map<String, Object> session,
             LocalDateTime lastHeartbeatAt,
             Long secondsSinceHeartbeat,
-            Boolean offline
+            Boolean offline,
+            List<RunnerActiveTaskSummary> activeTasks
+    ) {
+    }
+
+    public record RunnerActiveTaskSummary(
+            String runId,
+            String taskType,
+            String status,
+            String currentStage,
+            Integer progressPercent,
+            Integer resourceCost,
+            LocalDateTime assignedAt,
+            LocalDateTime startedAt,
+            LocalDateTime lastReportedAt,
+            Long runningSeconds
     ) {
     }
 

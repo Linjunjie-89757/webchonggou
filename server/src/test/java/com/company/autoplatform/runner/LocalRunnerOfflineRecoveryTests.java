@@ -65,6 +65,35 @@ class LocalRunnerOfflineRecoveryTests {
         verify(taskMapper, times(0)).selectList(any(LambdaQueryWrapper.class));
     }
 
+    @Test
+    void markTimedOutTasksOnlyCompletesActiveTasksPastDeadline() {
+        LocalRunnerNodeMapper nodeMapper = mock(LocalRunnerNodeMapper.class);
+        LocalRunnerTaskMapper taskMapper = mock(LocalRunnerTaskMapper.class);
+        LocalRunnerService service = new LocalRunnerService(
+                nodeMapper,
+                taskMapper,
+                mock(LocalRunnerTaskLogMapper.class),
+                new ObjectMapper(),
+                mock(ApplicationEventPublisher.class)
+        );
+        LocalRunnerTaskEntity assignedTask = task("run-assigned-timeout", "ASSIGNED");
+        assignedTask.setDeadlineAt(LocalDateTime.now().minusSeconds(30));
+        LocalRunnerTaskEntity runningTask = task("run-running-timeout", "RUNNING");
+        runningTask.setDeadlineAt(LocalDateTime.now().minusSeconds(10));
+
+        when(taskMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(assignedTask, runningTask));
+
+        int changed = service.markTimedOutTasks();
+
+        assertThat(changed).isEqualTo(2);
+        assertThat(assignedTask.getStatus()).isEqualTo("TIMEOUT");
+        assertThat(assignedTask.getErrorMessage()).contains("Runner task timed out");
+        assertThat(assignedTask.getCompletedAt()).isNotNull();
+        assertThat(runningTask.getStatus()).isEqualTo("TIMEOUT");
+        assertThat(runningTask.getErrorMessage()).contains("Runner task timed out");
+        verify(taskMapper, times(2)).updateById(any(LocalRunnerTaskEntity.class));
+    }
+
     private LocalRunnerNodeEntity runner(String runnerId, LocalDateTime lastHeartbeatAt) {
         LocalRunnerNodeEntity entity = new LocalRunnerNodeEntity();
         entity.setRunnerId(runnerId);

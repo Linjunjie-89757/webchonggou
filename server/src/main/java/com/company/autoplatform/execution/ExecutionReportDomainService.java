@@ -19,7 +19,7 @@ import java.util.stream.IntStream;
 public class ExecutionReportDomainService {
 
     private static final Set<String> REPORT_RESULTS = Set.of("SUCCESS", "FAILED");
-    private static final Set<String> REPORT_LOG_SOURCES = Set.of("MANUAL", "API", "WEB", "APP", "SYSTEM");
+    private static final Set<String> REPORT_LOG_SOURCES = Set.of("MANUAL", "API", "API_LOCAL_RUNNER", "WEB", "APP", "SYSTEM");
     private static final String DEFAULT_LOG_SOURCE = "MANUAL";
 
     private final ExecutionTaskDomainService taskDomainService;

@@ -104,12 +104,31 @@ public class LocalRunnerService {
         entity.setCapabilitiesJson(writeJson(payload.capabilities() == null ? List.of() : payload.capabilities()));
         entity.setResourceJson(writeJson(payload.resource() == null ? Map.of() : payload.resource()));
         entity.setBrowserJson(writeJson(payload.browser() == null ? Map.of() : payload.browser()));
-        entity.setSessionJson(writeJson(payload.session() == null ? Map.of() : payload.session()));
+        entity.setSessionJson(writeJson(buildHeartbeatSessionSnapshot(payload)));
         entity.setStatus(ONLINE);
         entity.setLastHeartbeatAt(now);
         entity.setUpdatedAt(now);
         nodeMapper.updateById(entity);
         return new RunnerTaskAckResponse(payload.currentRunId(), ONLINE, true, "Heartbeat accepted");
+    }
+
+    private Map<String, Object> buildHeartbeatSessionSnapshot(RunnerHealthPayload payload) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        if (payload.session() != null) {
+            snapshot.putAll(payload.session());
+        }
+        String currentTaskId = blankToNull(payload.currentTaskId());
+        if (currentTaskId != null) {
+            snapshot.put("currentTaskId", currentTaskId);
+        }
+        String currentRunId = blankToNull(payload.currentRunId());
+        if (currentRunId != null) {
+            snapshot.put("currentRunId", currentRunId);
+        }
+        if (payload.queueSize() != null) {
+            snapshot.put("queueSize", Math.max(0, payload.queueSize()));
+        }
+        return snapshot;
     }
 
     @Transactional
@@ -184,7 +203,11 @@ public class LocalRunnerService {
     }
 
     private boolean isTaskAllowedForCapabilities(LocalRunnerTaskEntity task, List<String> capabilities) {
-        String taskType = blankToNull(task.getTaskType());
+        return isTaskAllowedForCapabilities(task.getTaskType(), capabilities);
+    }
+
+    private boolean isTaskAllowedForCapabilities(String taskTypeValue, List<String> capabilities) {
+        String taskType = blankToNull(taskTypeValue);
         if (taskType == null || capabilities == null || capabilities.isEmpty()) {
             return true;
         }
@@ -337,6 +360,7 @@ public class LocalRunnerService {
                 task.getRunId(),
                 task.getTaskType(),
                 task.getStatus(),
+                task.getWorkspaceId(),
                 task.getWorkspaceCode(),
                 task.getRunnerId(),
                 readMap(task.getPayloadJson()),
@@ -364,6 +388,26 @@ public class LocalRunnerService {
         return changedTasks;
     }
 
+    @Transactional
+    public int markTimedOutTasks() {
+        LocalDateTime now = LocalDateTime.now();
+        List<LocalRunnerTaskEntity> tasks = taskMapper.selectList(new LambdaQueryWrapper<LocalRunnerTaskEntity>()
+                .in(LocalRunnerTaskEntity::getStatus, List.of(ASSIGNED, RUNNING))
+                .isNotNull(LocalRunnerTaskEntity::getDeadlineAt)
+                .le(LocalRunnerTaskEntity::getDeadlineAt, now));
+        int changed = 0;
+        for (LocalRunnerTaskEntity task : tasks == null ? List.<LocalRunnerTaskEntity>of() : tasks) {
+            task.setStatus("TIMEOUT");
+            task.setErrorMessage("Runner task timed out: deadline " + task.getDeadlineAt());
+            task.setCompletedAt(now);
+            task.setLastReportedAt(now);
+            task.setUpdatedAt(now);
+            taskMapper.updateById(task);
+            changed += 1;
+        }
+        return changed;
+    }
+
     public List<RunnerNodeSummaryResponse> listRunnerNodes(Duration offlineThreshold) {
         Duration threshold = offlineThreshold == null || offlineThreshold.isNegative() || offlineThreshold.isZero()
                 ? Duration.ofMinutes(2)
@@ -371,9 +415,26 @@ public class LocalRunnerService {
         LocalDateTime now = LocalDateTime.now();
         List<LocalRunnerNodeEntity> nodes = nodeMapper.selectList(new LambdaQueryWrapper<LocalRunnerNodeEntity>()
                 .orderByDesc(LocalRunnerNodeEntity::getLastHeartbeatAt));
+        Map<String, List<LocalRunnerTaskEntity>> activeTaskMap = activeTasksByRunner(nodes);
         return (nodes == null ? List.<LocalRunnerNodeEntity>of() : nodes).stream()
-                .map(node -> toRunnerNodeSummary(node, now, threshold))
+                .map(node -> toRunnerNodeSummary(node, now, threshold, activeTaskMap.getOrDefault(node.getRunnerId(), List.of())))
                 .toList();
+    }
+
+    private Map<String, List<LocalRunnerTaskEntity>> activeTasksByRunner(List<LocalRunnerNodeEntity> nodes) {
+        List<String> runnerIds = (nodes == null ? List.<LocalRunnerNodeEntity>of() : nodes).stream()
+                .map(LocalRunnerNodeEntity::getRunnerId)
+                .filter(runnerId -> blankToNull(runnerId) != null)
+                .toList();
+        if (runnerIds.isEmpty()) {
+            return Map.of();
+        }
+        List<LocalRunnerTaskEntity> tasks = taskMapper.selectList(new LambdaQueryWrapper<LocalRunnerTaskEntity>()
+                .in(LocalRunnerTaskEntity::getRunnerId, runnerIds)
+                .in(LocalRunnerTaskEntity::getStatus, List.of(ASSIGNED, RUNNING))
+                .orderByAsc(LocalRunnerTaskEntity::getAssignedAt));
+        return (tasks == null ? List.<LocalRunnerTaskEntity>of() : tasks).stream()
+                .collect(java.util.stream.Collectors.groupingBy(LocalRunnerTaskEntity::getRunnerId));
     }
 
     private int markRunnerTasksOffline(String runnerId) {
@@ -401,7 +462,8 @@ public class LocalRunnerService {
     private RunnerNodeSummaryResponse toRunnerNodeSummary(
             LocalRunnerNodeEntity node,
             LocalDateTime now,
-            Duration offlineThreshold
+            Duration offlineThreshold,
+            List<LocalRunnerTaskEntity> activeTasks
     ) {
         Long secondsSinceHeartbeat = node.getLastHeartbeatAt() == null
                 ? null
@@ -421,7 +483,32 @@ public class LocalRunnerService {
                 readMap(node.getSessionJson()),
                 node.getLastHeartbeatAt(),
                 secondsSinceHeartbeat,
-                offline
+                offline,
+                toActiveTaskSummaries(activeTasks, now)
+        );
+    }
+
+    private List<RunnerActiveTaskSummary> toActiveTaskSummaries(List<LocalRunnerTaskEntity> tasks, LocalDateTime now) {
+        return (tasks == null ? List.<LocalRunnerTaskEntity>of() : tasks).stream()
+                .filter(task -> ASSIGNED.equals(normalizeStatus(task.getStatus(), "")) || RUNNING.equals(normalizeStatus(task.getStatus(), "")))
+                .map(task -> toActiveTaskSummary(task, now))
+                .toList();
+    }
+
+    private RunnerActiveTaskSummary toActiveTaskSummary(LocalRunnerTaskEntity task, LocalDateTime now) {
+        LocalDateTime runningFrom = task.getStartedAt() == null ? task.getAssignedAt() : task.getStartedAt();
+        Long runningSeconds = runningFrom == null ? null : Math.max(0, Duration.between(runningFrom, now).toSeconds());
+        return new RunnerActiveTaskSummary(
+                task.getRunId(),
+                task.getTaskType(),
+                task.getStatus(),
+                task.getCurrentStage(),
+                task.getProgressPercent(),
+                task.getResourceCost(),
+                task.getAssignedAt(),
+                task.getStartedAt(),
+                task.getLastReportedAt(),
+                runningSeconds
         );
     }
 
@@ -438,6 +525,7 @@ public class LocalRunnerService {
             }
         }
         LocalRunnerTaskEntity entity = new LocalRunnerTaskEntity();
+        validateRequestedRunner(command);
         entity.setWorkspaceId(command.workspaceId());
         entity.setWorkspaceCode(blankToNull(command.workspaceCode()));
         entity.setRunId(blankToDefault(requestedRunId, "run_" + UUID.randomUUID().toString().replace("-", "")));
@@ -534,6 +622,25 @@ public class LocalRunnerService {
             throw new NotFoundException("Runner not registered");
         }
         return entity;
+    }
+
+    private void validateRequestedRunner(CreateRunnerTaskCommand command) {
+        String requestedRunnerId = blankToNull(command.runnerId());
+        if (requestedRunnerId == null) {
+            return;
+        }
+        LocalRunnerNodeEntity runner = requireRunner(requestedRunnerId);
+        LocalDateTime lastHeartbeatAt = runner.getLastHeartbeatAt();
+        boolean offline = lastHeartbeatAt == null
+                || Duration.between(lastHeartbeatAt, LocalDateTime.now()).toSeconds() > Duration.ofMinutes(2).toSeconds()
+                || "OFFLINE".equalsIgnoreCase(blankToNull(runner.getStatus()));
+        if (offline) {
+            throw new BadRequestException("Selected runner is offline");
+        }
+        List<String> capabilities = readStringList(runner.getCapabilitiesJson());
+        if (!isTaskAllowedForCapabilities(command.taskType(), capabilities)) {
+            throw new BadRequestException("Selected runner does not support task type: " + command.taskType());
+        }
     }
 
     private LocalRunnerTaskEntity requireTask(String runId) {

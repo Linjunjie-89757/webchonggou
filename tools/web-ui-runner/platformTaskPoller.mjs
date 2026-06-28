@@ -792,6 +792,8 @@ function sanitize(value) {
     protocolVersion: value.protocolVersion,
     capabilities: value.capabilities,
     workspaceCodes: value.workspaceCodes,
+    maxResourceSlots: value.maxResourceSlots,
+    resource: buildRunnerResourceSnapshot(value),
     running: Boolean(value.running),
     tickRunning: Boolean(value.tickRunning),
     startedAt: value.startedAt,
@@ -838,7 +840,7 @@ function normalizeResourceSlots(value) {
     : DEFAULT_MAX_RESOURCE_SLOTS;
 }
 
-function buildRunnerResourceSnapshot(current) {
+export function buildRunnerResourceSnapshot(current) {
   const maxSlots = normalizeResourceSlots(current?.maxResourceSlots);
   const runningCost = current?.currentRunId ? estimateTaskResourceCost(current.currentTaskType) : 0;
   const usedSlots = Math.min(maxSlots, runningCost);
@@ -971,11 +973,12 @@ function buildApiRenderContext(task, runtimeVariables = {}) {
   };
 }
 
-function runApiScript(script, options = {}) {
+export function runApiScript(script, options = {}) {
   const source = optionalString(script);
   if (!source) {
     return { status: 'SKIPPED' };
   }
+  assertSafeApiScriptSource(source);
   const runtimeVariables = normalizeObject(options.runtimeVariables);
   const result = {
     status: 'SUCCESS',
@@ -1003,54 +1006,110 @@ function buildApiScriptSandbox(options = {}) {
   const runtimeVariables = normalizeObject(options.runtimeVariables);
   const renderContext = buildApiRenderContext(options.task || {}, runtimeVariables);
   const response = options.response || null;
+  const logs = [];
+  const variables = {
+    get(name) {
+      const key = optionalString(name);
+      if (Object.prototype.hasOwnProperty.call(runtimeVariables, key)) {
+        return runtimeVariables[key];
+      }
+      return resolveContextValue(renderContext, key);
+    },
+    set(name, value) {
+      const key = optionalString(name);
+      if (key) {
+        runtimeVariables[key] = value === undefined || value === null ? '' : String(value);
+      }
+    },
+    unset(name) {
+      const key = optionalString(name);
+      if (key) {
+        delete runtimeVariables[key];
+      }
+    },
+    toObject() {
+      return { ...renderContext, ...runtimeVariables };
+    },
+  };
+  const utils = {
+    upper(value) {
+      return String(value ?? '').toUpperCase();
+    },
+    lower(value) {
+      return String(value ?? '').toLowerCase();
+    },
+    trim(value) {
+      return String(value ?? '').trim();
+    },
+    jsonParse(value) {
+      return JSON.parse(String(value ?? 'null'));
+    },
+    jsonStringify(value) {
+      return JSON.stringify(value);
+    },
+    now() {
+      return new Date().toISOString();
+    },
+  };
   return {
-    variables: {
-      get(name) {
-        const key = optionalString(name);
-        if (Object.prototype.hasOwnProperty.call(runtimeVariables, key)) {
-          return runtimeVariables[key];
+    variables,
+    setVar(name, value) {
+      variables.set(name, value);
+    },
+    getVar(name) {
+      return variables.get(name);
+    },
+    removeVar(name) {
+      variables.unset(name);
+    },
+    log(...args) {
+      logs.push(args.map(item => {
+        if (typeof item === 'string') {
+          return item;
         }
-        return resolveContextValue(renderContext, key);
-      },
-      set(name, value) {
-        const key = optionalString(name);
-        if (key) {
-          runtimeVariables[key] = value === undefined || value === null ? '' : String(value);
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
         }
-      },
-      unset(name) {
-        const key = optionalString(name);
-        if (key) {
-          delete runtimeVariables[key];
-        }
-      },
-      toObject() {
-        return { ...renderContext, ...runtimeVariables };
-      },
+      }).join(' '));
+    },
+    fail(message) {
+      throw new Error(message === undefined || message === null ? 'Script failed' : String(message));
     },
     request: freezePlainObject(options.request || {}),
     response: response ? buildApiScriptResponse(response) : null,
-    utils: {
-      upper(value) {
-        return String(value ?? '').toUpperCase();
-      },
-      lower(value) {
-        return String(value ?? '').toLowerCase();
-      },
-      trim(value) {
-        return String(value ?? '').trim();
-      },
-      jsonParse(value) {
-        return JSON.parse(String(value ?? 'null'));
-      },
-      jsonStringify(value) {
-        return JSON.stringify(value);
-      },
-      now() {
-        return new Date().toISOString();
-      },
-    },
+    utils,
+    Function: undefined,
+    eval: undefined,
+    require: undefined,
+    process: undefined,
+    global: undefined,
+    module: undefined,
+    exports: undefined,
   };
+}
+
+function assertSafeApiScriptSource(source) {
+  const unsafePatterns = [
+    ['Function', /\bFunction\s*\(/],
+    ['eval', /\beval\s*\(/],
+    ['require', /\brequire\s*\(/],
+    ['process', /\bprocess\s*[\[.]/],
+    ['global', /\bglobal\s*[\[.]/],
+    ['module', /\bmodule\s*[\[.]/],
+    ['exports', /\bexports\s*[\[.]/],
+    ['fs', /\bfs\s*[\[.]/],
+    ['child_process', /\bchild_process\b/],
+    ['constructor', /\bconstructor\s*[\[.]/],
+    ['__dirname', /\b__dirname\b/],
+    ['__filename', /\b__filename\b/],
+  ];
+  for (const [name, pattern] of unsafePatterns) {
+    if (pattern.test(source)) {
+      throw new Error(`${name} is not defined (blocked unsafe API script global)`);
+    }
+  }
 }
 
 function buildApiScriptResponse(response) {

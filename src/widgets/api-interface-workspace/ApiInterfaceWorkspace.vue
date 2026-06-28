@@ -287,6 +287,7 @@ interface DirectoryNode {
   fullPath?: string | null
   method?: string
   definition?: ApiDefinitionItem
+  loading?: boolean
   children: DirectoryNode[]
 }
 
@@ -359,6 +360,14 @@ const definitionBodyViewMode = ref<DefinitionSchemaViewMode>('schema')
 const definitionResponseViewMode = ref<DefinitionSchemaViewMode>('schema')
 const activeDefinitionResponseCode = ref('200')
 const editorTabNavRef = ref<HTMLElement | null>(null)
+const directoryTreeRef = ref<{
+  getNode: (key: string) => { expanded?: boolean; expand?: () => void } | null
+  setCurrentKey?: (key: string) => void
+  store?: {
+    value?: { _getAllNodes?: () => Array<{ key?: string | number; expanded?: boolean; data?: DirectoryNode }> }
+    _getAllNodes?: () => Array<{ key?: string | number; expanded?: boolean; data?: DirectoryNode }>
+  }
+} | null>(null)
 const editorTabOverflow = ref({
   overflow: false,
   arrivedLeft: true,
@@ -1185,10 +1194,6 @@ function definitionModuleLoadKey(workspaceCode: string, moduleId: number | null,
   return moduleId != null ? `${workspaceCode}:module:${moduleId}` : `${workspaceCode}:path:${fullPath || ''}`
 }
 
-function isDefinitionModuleLoading(workspaceCode: string, moduleId: number | null, fullPath: string | null) {
-  return loadingDefinitionModuleKeys.value.has(definitionModuleLoadKey(workspaceCode, moduleId, fullPath))
-}
-
 function markDefinitionModuleLoading(key: string, loadingState: boolean) {
   const next = new Set(loadingDefinitionModuleKeys.value)
   if (loadingState) {
@@ -1294,7 +1299,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     let node = parentMap.get(fullPath)
     if (!node) {
       node = {
-        key: `module:${workspaceCode}:${fullPath}`,
+        key: moduleId != null ? `module:${workspaceCode}:${moduleId}` : `module:${workspaceCode}:path:${fullPath}`,
         type: 'module',
         label,
         count: 0,
@@ -1311,6 +1316,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     }
     if (moduleId != null) {
       node.moduleId = moduleId
+      node.key = `module:${workspaceCode}:${moduleId}`
     }
     if (count != null) {
       node.count = count
@@ -1420,22 +1426,27 @@ const directoryTree = computed<DirectoryNode[]>(() => {
     return nodes.map((node) => {
       const children = stripChildMap(node.children as MutableNode[])
       const hasRequestChild = children.some(child => child.type === 'request')
+      const moduleLoadKey = node.type === 'module'
+        ? definitionModuleLoadKey(node.workspaceCode, node.moduleId, node.fullPath ?? null)
+        : ''
+      const isLoadingModule = node.type === 'module' && loadingDefinitionModuleKeys.value.has(moduleLoadKey)
+      const isLoadedModule = node.type === 'module' && loadedDefinitionModuleKeys.value.has(moduleLoadKey)
       const shouldAddLazyPlaceholder = node.type === 'module'
         && (node.directCount ?? node.count) > 0
         && !hasRequestChild
-        && !isDefinitionModuleLoading(node.workspaceCode, node.moduleId, node.fullPath ?? null)
-        && !loadedDefinitionModuleKeys.value.has(definitionModuleLoadKey(node.workspaceCode, node.moduleId, node.fullPath ?? null))
-      if (shouldAddLazyPlaceholder) {
+        && !isLoadedModule
+      if (shouldAddLazyPlaceholder || isLoadingModule) {
         children.push({
-          key: `${node.key}:lazy-placeholder`,
+          key: `${node.key}:${isLoadingModule ? 'loading' : 'lazy'}-placeholder`,
           type: 'placeholder',
-          label: '展开加载接口',
+          label: isLoadingModule ? '加载接口中...' : '展开加载接口',
           count: 0,
           directCount: 0,
           moduleId: null,
           workspaceCode: node.workspaceCode,
           definitionId: null,
           fullPath: node.fullPath,
+          loading: isLoadingModule,
           children: [],
         })
       }
@@ -4124,14 +4135,48 @@ function setDirectoryNodeExpanded(node: DirectoryNode, expanded: boolean) {
     return
   }
   expandedKeys.value = expandedKeys.value.filter(key => key !== node.key)
+  void syncDirectoryTreeExpandedState()
+}
+
+async function syncDirectoryTreeExpandedState() {
+  await nextTick()
+  const store = directoryTreeRef.value?.store
+  const allNodes = store?.value?._getAllNodes?.() || store?._getAllNodes?.() || []
+  const expanded = new Set(expandedKeys.value)
+  allNodes.forEach((treeNode) => {
+    if (treeNode.data?.type === 'module' || treeNode.data?.type === 'workspace' || treeNode.data?.type === 'root') {
+      treeNode.expanded = expanded.has(String(treeNode.key))
+    }
+  })
+}
+
+async function keepDirectoryNodeExpanded(node: DirectoryNode, options: { force?: boolean } = {}) {
+  const shouldStayExpanded = options.force || expandedKeys.value.includes(node.key)
+  if (!shouldStayExpanded) return
+  if (options.force) {
+    expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
+  }
+  await syncDirectoryTreeExpandedState()
+  const treeNode = directoryTreeRef.value?.getNode(node.key)
+  if (!treeNode) return
+  treeNode.expanded = true
+  treeNode.expand?.()
 }
 
 async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
   if (node.type !== 'module') return
   const moduleFullPath = node.fullPath ?? null
   const key = definitionModuleLoadKey(node.workspaceCode, node.moduleId, moduleFullPath)
-  if (loadedDefinitionModuleKeys.value.has(key) || loadingDefinitionModuleKeys.value.has(key)) return
+  if (loadedDefinitionModuleKeys.value.has(key)) {
+    await keepDirectoryNodeExpanded(node)
+    return
+  }
+  if (loadingDefinitionModuleKeys.value.has(key)) {
+    await keepDirectoryNodeExpanded(node)
+    return
+  }
   markDefinitionModuleLoading(key, true)
+  await keepDirectoryNodeExpanded(node)
   try {
     const page = await apiAutomationApi.getDefinitions(node.workspaceCode, {
       moduleId: node.moduleId,
@@ -4141,19 +4186,31 @@ async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
     const directDefinitions = page.items.filter(item => isDirectDefinitionInPath(item, moduleFullPath))
     mergeDefinitions(directDefinitions)
     markDefinitionModuleLoaded(key)
-    if (page.total > DIRECTORY_MODULE_REQUEST_PAGE_SIZE) {
-      ElMessage.info(`当前模块接口较多，已加载前 ${DIRECTORY_MODULE_REQUEST_PAGE_SIZE} 条`)
-    }
+    await keepDirectoryNodeExpanded(node)
   } catch (error) {
     ElMessage.warning(getRequestErrorMessage(error))
   } finally {
     markDefinitionModuleLoading(key, false)
+    void syncDirectoryTreeExpandedState()
   }
 }
 
 function handleDirectorySelect(node: DirectoryNode) {
   if (node.type === 'placeholder') return
   selectedDirectoryKey.value = node.key
+  directoryTreeRef.value?.setCurrentKey?.(node.key)
+  if (node.type === 'module') {
+    expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
+    void loadDefinitionsForDirectoryNode(node)
+    void keepDirectoryNodeExpanded(node, { force: true })
+  }
+  if (node.type === 'workspace' || node.type === 'root' || node.type === 'unassigned') {
+    const shouldOpen = !expandedKeys.value.includes(node.key)
+    if (shouldOpen) {
+      expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
+      void keepDirectoryNodeExpanded(node, { force: true })
+    }
+  }
   if (node.type === 'request' && node.definition) {
     void openDefinition(node.definition)
   }
@@ -5721,6 +5778,7 @@ onBeforeUnmount(() => {
             {{ moduleErrorMessage || definitionErrorMessage }}
           </div>
           <el-tree
+            ref="directoryTreeRef"
             v-else
             v-loading="directorySearchLoading"
             :key="directoryTreeRenderKey"
@@ -5747,7 +5805,7 @@ onBeforeUnmount(() => {
                     <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
                   </template>
                   <template v-else-if="data.type === 'placeholder'">
-                    <span class="api-directory-node__placeholder-dot"></span>
+                    <span :class="['api-directory-node__placeholder-dot', { 'is-loading': data.loading }]"></span>
                     <span class="api-directory-node__placeholder-text" :title="data.label">{{ data.label }}</span>
                   </template>
                   <template v-else>
@@ -5756,12 +5814,6 @@ onBeforeUnmount(() => {
                       <LucideFolder v-else class="api-directory-node__icon" />
                     </span>
                     <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
-                    <span
-                      v-if="data.type === 'module' && isDefinitionModuleLoading(data.workspaceCode, data.moduleId, data.fullPath)"
-                      class="api-directory-node__loading"
-                    >
-                      加载中
-                    </span>
                     <span v-if="data.type === 'workspace' || data.type === 'module'" class="api-directory-node__count">{{ data.count || 0 }}</span>
                   </template>
                 </div>
@@ -9990,18 +10042,27 @@ onBeforeUnmount(() => {
   line-height: 16px;
 }
 
-.api-directory-node__loading {
-  color: var(--app-primary);
-  font-size: 12px;
-  line-height: 16px;
-}
-
 .api-directory-node__placeholder-dot {
   width: 5px;
   height: 5px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: #cbd5e1;
+}
+
+.api-directory-node__placeholder-dot.is-loading {
+  width: 10px;
+  height: 10px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-top-color: var(--app-primary);
+  background: transparent;
+  animation: api-directory-loading-spin 0.8s linear infinite;
+}
+
+@keyframes api-directory-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .api-directory-node__placeholder-text {

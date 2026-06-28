@@ -45,6 +45,16 @@ import {
   type ApiExecutionSuiteRunHistoryDetail,
   type ApiExecutionSuiteRunHistoryItem,
 } from '@/entities/api-execution-suite'
+import {
+  isRunnerSelectable,
+  localRunnerApi,
+  runnerActiveTaskText,
+  runnerHeartbeatText,
+  runnerOptionLabel,
+  runnerStatusText,
+  selectDefaultRunnerId,
+  type RunnerNodeSummary,
+} from '@/entities/local-runner'
 import type { WorkspaceItem } from '@/entities/workspace'
 
 type ExecutionSuiteCaseType = 'api' | 'scene'
@@ -135,12 +145,16 @@ const executionTriggerSource = ref('')
 const executionBranchNote = ref('')
 const suiteSaving = ref(false)
 const suiteRunning = ref(false)
+const suiteRunnerNodesLoading = ref(false)
+const suiteRunnerNodes = ref<RunnerNodeSummary[]>([])
+const selectedSuiteRunnerId = ref<string | null>(null)
 const dirtySuiteDraftIds = ref<Set<number>>(new Set())
 const suiteHeaderNameEditing = ref(false)
 const suiteHeaderNameDraft = ref('')
 let draftSuiteSeed = 0
 
 const visibleEnvironmentOptions = computed(() => props.environments || [])
+const API_SUITE_RUNNER_TASK_TYPE = 'API_SCENARIO_RUN'
 
 const executionSuiteTree = computed<ExecutionSuiteNode[]>(() => {
   const workspaceNodes = resolveVisibleWorkspaces()
@@ -316,6 +330,7 @@ const hasVisibleSuites = computed(() => filteredSuiteTree.value.length > 0)
 
 onMounted(() => {
   void loadExecutionSuiteDirectory()
+  void loadSuiteRunnerNodes()
   window.addEventListener('resize', updateSuiteTabOverflow)
   void nextTick(updateSuiteTabOverflow)
 })
@@ -1172,12 +1187,27 @@ async function handleRunSuite() {
   }
   suiteRunning.value = true
   try {
+    const runOn = executionVisualRunOn.value.toUpperCase()
+    if (runOn === 'LOCAL') {
+      await loadSuiteRunnerNodes()
+      if (!selectedSuiteRunnerId.value) {
+        ElMessage.warning('未检测到支持接口套件运行的在线 Local Runner，请先启动本地执行器')
+        return
+      }
+      const selectedRunner = suiteRunnerNodes.value.find(item => item.runnerId === selectedSuiteRunnerId.value)
+      if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SUITE_RUNNER_TASK_TYPE)) {
+        ElMessage.warning('当前 Local Runner 离线或不支持接口套件运行，请重新选择')
+        return
+      }
+    }
     await apiExecutionSuiteApi.runSuite(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id, {
       workspaceCode: activeSuiteDetail.value.workspaceCode,
       environmentId: typeof executionVisualEnvironment.value === 'number' ? executionVisualEnvironment.value : null,
       variableSetId: activeSuiteDetail.value.variableSetId,
       branchName: executionBranchName.value.trim() || activeSuiteDetail.value.branchName,
       triggerSource: executionTriggerSource.value.trim() || 'MANUAL',
+      runOn,
+      runnerId: runOn === 'LOCAL' ? selectedSuiteRunnerId.value : null,
     })
     ElMessage.success('套件运行已触发')
     await loadSuiteDetail(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id)
@@ -1198,12 +1228,27 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
   }
   suiteRunning.value = true
   try {
+    const runOn = suite.runOn || 'LOCAL'
+    if (runOn === 'LOCAL') {
+      await loadSuiteRunnerNodes()
+      if (!selectedSuiteRunnerId.value) {
+        ElMessage.warning('未检测到支持接口套件运行的在线 Local Runner，请先启动本地执行器')
+        return
+      }
+      const selectedRunner = suiteRunnerNodes.value.find(item => item.runnerId === selectedSuiteRunnerId.value)
+      if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SUITE_RUNNER_TASK_TYPE)) {
+        ElMessage.warning('当前 Local Runner 离线或不支持接口套件运行，请重新选择')
+        return
+      }
+    }
     await apiExecutionSuiteApi.runSuite(suite.workspaceCode, suite.id, {
       workspaceCode: suite.workspaceCode,
       environmentId: suite.environmentId,
       variableSetId: suite.variableSetId,
       branchName: suite.branchName,
       triggerSource: suite.triggerSource || 'MANUAL',
+      runOn,
+      runnerId: runOn === 'LOCAL' ? selectedSuiteRunnerId.value : null,
     })
     ElMessage.success('套件运行已触发')
     await loadExecutionSuiteDirectory()
@@ -1214,6 +1259,20 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     suiteRunning.value = false
+  }
+}
+
+async function loadSuiteRunnerNodes() {
+  suiteRunnerNodesLoading.value = true
+  try {
+    suiteRunnerNodes.value = await localRunnerApi.getRunnerNodes()
+    selectedSuiteRunnerId.value = selectDefaultRunnerId(suiteRunnerNodes.value, selectedSuiteRunnerId.value, API_SUITE_RUNNER_TASK_TYPE)
+  } catch (error) {
+    suiteRunnerNodes.value = []
+    selectedSuiteRunnerId.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    suiteRunnerNodesLoading.value = false
   }
 }
 
@@ -1834,6 +1893,39 @@ function showPending(message: string) {
                 <el-select v-model="executionVisualRunOn">
                   <el-option label="本地执行器" value="local" />
                   <el-option label="远程执行器" value="remote" />
+                </el-select>
+              </label>
+              <label v-if="executionVisualRunOn === 'local'">
+                <span>Local Runner</span>
+                <el-select
+                  v-model="selectedSuiteRunnerId"
+                  clearable
+                  filterable
+                  :loading="suiteRunnerNodesLoading"
+                  placeholder="选择可用本地执行器"
+                >
+                  <el-option
+                    v-for="runner in suiteRunnerNodes"
+                    :key="runner.runnerId"
+                    :disabled="!isRunnerSelectable(runner, API_SUITE_RUNNER_TASK_TYPE)"
+                    :label="runnerOptionLabel(runner, API_SUITE_RUNNER_TASK_TYPE)"
+                    :value="runner.runnerId"
+                  >
+                    <div class="local-runner-option">
+                      <div class="local-runner-option__main">
+                        <span>{{ runner.runnerName || runner.runnerId }}</span>
+                        <el-tag size="small" :type="isRunnerSelectable(runner, API_SUITE_RUNNER_TASK_TYPE) ? 'success' : 'info'" effect="light">
+                          {{ runnerStatusText(runner) }}
+                        </el-tag>
+                      </div>
+                      <div class="local-runner-option__meta">
+                        <span>{{ runner.runnerId }}</span>
+                        <span>心跳 {{ runnerHeartbeatText(runner) }}</span>
+                        <span>{{ runnerActiveTaskText(runner) }}</span>
+                        <span>{{ runner.capabilities?.join(' / ') || '未上报能力' }}</span>
+                      </div>
+                    </div>
+                  </el-option>
                 </el-select>
               </label>
               <div class="execution-config-switch">
@@ -3740,6 +3832,38 @@ function showPending(message: string) {
   color: #9ca3af;
   font-size: 13px;
   pointer-events: none;
+}
+
+.local-runner-option {
+  display: grid;
+  gap: 2px;
+  line-height: 18px;
+}
+
+.local-runner-option__main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #111827;
+  font-size: 13px;
+}
+
+.local-runner-option__main span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-runner-option__meta {
+  display: flex;
+  overflow: hidden;
+  gap: 8px;
+  color: #667085;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 </style>

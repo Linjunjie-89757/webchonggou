@@ -1,6 +1,7 @@
 package com.company.autoplatform.runner;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.company.autoplatform.common.BadRequestException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
@@ -9,8 +10,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+import static com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
 import static com.company.autoplatform.runner.LocalRunnerModels.PullRunnerTaskRequest;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -96,6 +99,34 @@ class LocalRunnerResourceSchedulingTests {
         verify(taskMapper, never()).updateById(otherRunnerTask);
     }
 
+    @Test
+    void createTaskRejectsOfflineRequestedRunner() {
+        LocalRunnerTaskMapper taskMapper = mock(LocalRunnerTaskMapper.class);
+        LocalRunnerNodeEntity offlineRunner = runner("runner-a");
+        offlineRunner.setStatus("OFFLINE");
+        offlineRunner.setLastHeartbeatAt(LocalDateTime.now());
+        LocalRunnerService service = service(taskMapper, offlineRunner);
+
+        assertThatThrownBy(() -> service.createTask(command("WEB_CASE_RUN", "runner-a")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Selected runner is offline");
+        verify(taskMapper, never()).insert(any(LocalRunnerTaskEntity.class));
+    }
+
+    @Test
+    void createTaskRejectsRequestedRunnerWithoutCapability() {
+        LocalRunnerTaskMapper taskMapper = mock(LocalRunnerTaskMapper.class);
+        LocalRunnerNodeEntity runner = runner("runner-a");
+        runner.setCapabilitiesJson("[\"API_SCENARIO_RUN\"]");
+        runner.setLastHeartbeatAt(LocalDateTime.now());
+        LocalRunnerService service = service(taskMapper, runner);
+
+        assertThatThrownBy(() -> service.createTask(command("WEB_CASE_RUN", "runner-a")))
+                .isInstanceOf(BadRequestException.class)
+                .hasMessageContaining("Selected runner does not support task type");
+        verify(taskMapper, never()).insert(any(LocalRunnerTaskEntity.class));
+    }
+
     private LocalRunnerService service(LocalRunnerTaskMapper taskMapper, LocalRunnerNodeEntity runner) {
         LocalRunnerNodeMapper nodeMapper = mock(LocalRunnerNodeMapper.class);
         LocalRunnerTaskLogMapper taskLogMapper = mock(LocalRunnerTaskLogMapper.class);
@@ -140,5 +171,29 @@ class LocalRunnerResourceSchedulingTests {
         entity.setScreenshotPolicyJson("{}");
         entity.setPayloadJson("{}");
         return entity;
+    }
+
+    private CreateRunnerTaskCommand command(String taskType, String runnerId) {
+        return new CreateRunnerTaskCommand(
+                1L,
+                "risk-ops",
+                "run-create",
+                taskType,
+                "LOCAL_RUNNER",
+                runnerId,
+                "1",
+                "1.0",
+                "MANUAL",
+                1,
+                null,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of(),
+                Map.of()
+        );
     }
 }

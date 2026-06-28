@@ -49,6 +49,7 @@ class ApiLocalRunnerReportServiceTests {
                 "run_api_case_001",
                 "API_CASE_RUN",
                 "SUCCESS",
+                7L,
                 "risk-ops",
                 "runner_local",
                 Map.of("apiCaseSnapshot", Map.of(
@@ -81,15 +82,18 @@ class ApiLocalRunnerReportServiceTests {
         ));
 
         ArgumentCaptor<ReportEntity> reportCaptor = ArgumentCaptor.forClass(ReportEntity.class);
+        ArgumentCaptor<TaskEntity> taskCaptor = ArgumentCaptor.forClass(TaskEntity.class);
         ArgumentCaptor<ApiRunStepResultEntity> stepCaptor = ArgumentCaptor.forClass(ApiRunStepResultEntity.class);
         ArgumentCaptor<ApiDefinitionCaseRunHistoryEntity> historyCaptor = ArgumentCaptor.forClass(ApiDefinitionCaseRunHistoryEntity.class);
 
-        verify(taskMapper).insert(org.mockito.ArgumentMatchers.any(TaskEntity.class));
+        verify(taskMapper).insert(taskCaptor.capture());
         verify(reportMapper).insert(reportCaptor.capture());
         verify(stepMapper).insert(stepCaptor.capture());
         verify(caseHistoryMapper).insert(historyCaptor.capture());
         verify(caseMapper).updateById(apiCase);
 
+        assertThat(taskCaptor.getValue().getWorkspaceId()).isEqualTo(7L);
+        assertThat(reportCaptor.getValue().getWorkspaceId()).isEqualTo(7L);
         assertThat(reportCaptor.getValue().getLogSource()).isEqualTo("API_LOCAL_RUNNER");
         assertThat(reportCaptor.getValue().getLogText()).contains("LOCAL_RUNNER", "run_api_case_001");
         assertThat(stepCaptor.getValue().getStepName()).isEqualTo("Local API case");
@@ -129,6 +133,7 @@ class ApiLocalRunnerReportServiceTests {
                 "run_api_scenario_001",
                 "API_SCENARIO_RUN",
                 "FAILED",
+                7L,
                 "risk-ops",
                 "runner_local",
                 Map.of("scenarioSnapshot", Map.of(
@@ -179,5 +184,63 @@ class ApiLocalRunnerReportServiceTests {
         assertThat(historyCaptor.getValue().getFailedCount()).isEqualTo(1);
         assertThat(historyCaptor.getValue().getContextSnapshotJson()).contains("LOCAL_RUNNER", "run_api_scenario_001");
         assertThat(scenario.getLastRunResult()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void usesRunnerTaskWorkspaceWhenApiCaseSnapshotIsDebugOnly() {
+        TaskMapper taskMapper = mock(TaskMapper.class);
+        ReportMapper reportMapper = mock(ReportMapper.class);
+        ApiRunStepResultMapper stepMapper = mock(ApiRunStepResultMapper.class);
+        ApiDefinitionCaseMapper caseMapper = mock(ApiDefinitionCaseMapper.class);
+        ApiDefinitionCaseRunHistoryMapper caseHistoryMapper = mock(ApiDefinitionCaseRunHistoryMapper.class);
+        ApiScenarioMapper scenarioMapper = mock(ApiScenarioMapper.class);
+        ApiScenarioRunHistoryMapper scenarioHistoryMapper = mock(ApiScenarioRunHistoryMapper.class);
+        when(caseMapper.selectById(0L)).thenReturn(null);
+
+        ApiLocalRunnerReportService service = new ApiLocalRunnerReportService(
+                taskMapper,
+                reportMapper,
+                stepMapper,
+                caseMapper,
+                caseHistoryMapper,
+                scenarioMapper,
+                scenarioHistoryMapper
+        );
+
+        service.handleLocalRunnerTaskFinalResult(new LocalRunnerTaskFinalResultEvent(
+                "debug-api-case-001",
+                "API_CASE_RUN",
+                "SUCCESS",
+                7L,
+                "risk-ops",
+                "runner_local",
+                Map.of("apiCaseSnapshot", Map.of(
+                        "caseId", 0,
+                        "caseName", "Local Runner smoke API case"
+                )),
+                Map.of(
+                        "durationMs", 12,
+                        "reportData", Map.of(
+                                "request", Map.of("method", "GET", "url", "http://127.0.0.1/api/auth/me"),
+                                "response", Map.of("status", 200, "body", "{}"),
+                                "assertions", List.of()
+                        )
+                )
+        ));
+
+        ArgumentCaptor<TaskEntity> taskCaptor = ArgumentCaptor.forClass(TaskEntity.class);
+        ArgumentCaptor<ReportEntity> reportCaptor = ArgumentCaptor.forClass(ReportEntity.class);
+        ArgumentCaptor<ApiRunStepResultEntity> stepCaptor = ArgumentCaptor.forClass(ApiRunStepResultEntity.class);
+
+        verify(taskMapper).insert(taskCaptor.capture());
+        verify(reportMapper).insert(reportCaptor.capture());
+        verify(stepMapper).insert(stepCaptor.capture());
+        verify(caseHistoryMapper, never()).insert(org.mockito.ArgumentMatchers.any(ApiDefinitionCaseRunHistoryEntity.class));
+        verify(caseMapper, never()).updateById(org.mockito.ArgumentMatchers.any(ApiDefinitionCaseEntity.class));
+
+        assertThat(taskCaptor.getValue().getWorkspaceId()).isEqualTo(7L);
+        assertThat(reportCaptor.getValue().getWorkspaceId()).isEqualTo(7L);
+        assertThat(stepCaptor.getValue().getWorkspaceId()).isEqualTo(7L);
+        assertThat(reportCaptor.getValue().getLogText()).contains("debug-api-case-001", "LOCAL_RUNNER");
     }
 }

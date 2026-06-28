@@ -537,6 +537,7 @@ export interface ApiRunPayload {
   mockApplicationId?: number | null
   mockBusinessScenarioId?: number | null
   rowVariables?: Record<string, string> | null
+  runnerId?: string | null
 }
 
 export interface ApiRequestSnapshot {

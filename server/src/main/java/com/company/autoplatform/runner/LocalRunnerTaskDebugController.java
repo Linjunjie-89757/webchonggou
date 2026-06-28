@@ -100,8 +100,9 @@ public class LocalRunnerTaskDebugController {
             @RequestBody(required = false) Map<String, Object> request
     ) {
         CurrentUserContext.require();
-        int changedTasks = localRunnerService.markOfflineRunners(Duration.ofSeconds(resolveThresholdSeconds(request)));
-        return ApiResponse.ok(new RunnerOfflineScanResponse(changedTasks), "Runner offline scan completed");
+        int offlineTasks = localRunnerService.markOfflineRunners(Duration.ofSeconds(resolveThresholdSeconds(request)));
+        int timedOutTasks = localRunnerService.markTimedOutTasks();
+        return ApiResponse.ok(new RunnerOfflineScanResponse(offlineTasks + timedOutTasks, offlineTasks, timedOutTasks), "Runner offline scan completed");
     }
 
     private long resolveThresholdSeconds(Map<String, Object> request) {

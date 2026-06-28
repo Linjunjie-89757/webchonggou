@@ -177,7 +177,7 @@ public class WebUiExecutionDomainService {
                 null,
                 "WEB_CASE_RUN",
                 "LOCAL_RUNNER",
-                null,
+                request == null ? null : request.runnerId(),
                 String.valueOf(CurrentUserContext.require().userId()),
                 "1.0",
                 MANUAL,

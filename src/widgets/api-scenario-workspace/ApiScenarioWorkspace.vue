@@ -53,6 +53,16 @@ import {
   type SaveApiScenarioPayload,
 } from '@/entities/api-automation'
 import { configApi, type DbConnectionItem } from '@/entities/config'
+import {
+  isRunnerSelectable,
+  localRunnerApi,
+  runnerActiveTaskText,
+  runnerHeartbeatText,
+  runnerOptionLabel,
+  runnerStatusText,
+  selectDefaultRunnerId,
+  type RunnerNodeSummary,
+} from '@/entities/local-runner'
 import type { WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppTableColumnSettingsDrawer, { type AppTableColumnSettingsItem } from '@/shared/ui/app-table-column-settings-drawer/AppTableColumnSettingsDrawer.vue'
@@ -230,6 +240,9 @@ const hoveredScenarioRowId = ref<number | null>(null)
 const activeScenarioDetailTab = ref<ScenarioDetailTab>('steps')
 const scenarioSaving = ref(false)
 const scenarioRunning = ref(false)
+const scenarioRunnerNodesLoading = ref(false)
+const scenarioRunnerNodes = ref<RunnerNodeSummary[]>([])
+const selectedScenarioRunnerId = ref<string | null>(null)
 const scenarioRunLoopCount = ref(1)
 const scenarioRunThreadCount = ref(1)
 const scenarioRunDatasetId = ref<number | null>(null)
@@ -362,6 +375,7 @@ const activeScenarioModuleLabel = computed(() => {
 const scenarioRunEnvironmentOptions = computed(() => props.environments || [])
 const enabledScenarioRunDatasets = computed(() => scenarioRunDatasets.value.filter(item => item.enabled !== false))
 const selectedScenarioRunDataset = computed(() => enabledScenarioRunDatasets.value.find(item => item.id === scenarioRunDatasetId.value) || null)
+const API_SCENARIO_RUNNER_TASK_TYPE = 'API_SCENARIO_RUN'
 
 const scenarioTableColumnDefinitions = computed<ScenarioTableColumnDefinition[]>(() => [
   { key: 'id', label: 'ID', width: 120, required: true, defaultVisible: true },
@@ -2822,14 +2836,28 @@ async function runScenario() {
   }
   scenarioRunning.value = true
   try {
+    const runOn = detail.runOn || 'LOCAL'
+    if (runOn === 'LOCAL') {
+      await loadScenarioRunnerNodes()
+      if (!selectedScenarioRunnerId.value) {
+        ElMessage.warning('未检测到支持接口场景运行的在线 Local Runner，请先启动本地执行器')
+        return
+      }
+      const selectedRunner = scenarioRunnerNodes.value.find(item => item.runnerId === selectedScenarioRunnerId.value)
+      if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SCENARIO_RUNNER_TASK_TYPE)) {
+        ElMessage.warning('当前 Local Runner 离线或不支持接口场景运行，请重新选择')
+        return
+      }
+    }
     const response = await apiAutomationApi.runScenario(detail.workspaceCode, detail.id, {
       environmentId: detail.defaultEnvironmentId,
       variableSetId: detail.variableSetId,
-      runOn: detail.runOn || 'LOCAL',
+      runOn,
       testDatasetEnabled: Boolean(scenarioRunDatasetId.value),
       testDatasetId: scenarioRunDatasetId.value,
       loopCount: scenarioRunLoopCount.value,
       threadCount: scenarioRunThreadCount.value,
+      runnerId: runOn === 'LOCAL' ? selectedScenarioRunnerId.value : null,
     })
     activeScenarioEditorTab.value.lastRunStepResults = response.stepResults || []
     activeScenarioEditorTab.value.lastRunDataIterations = response.dataIterations || []
@@ -2848,6 +2876,20 @@ async function runScenario() {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     scenarioRunning.value = false
+  }
+}
+
+async function loadScenarioRunnerNodes() {
+  scenarioRunnerNodesLoading.value = true
+  try {
+    scenarioRunnerNodes.value = await localRunnerApi.getRunnerNodes()
+    selectedScenarioRunnerId.value = selectDefaultRunnerId(scenarioRunnerNodes.value, selectedScenarioRunnerId.value, API_SCENARIO_RUNNER_TASK_TYPE)
+  } catch (error) {
+    scenarioRunnerNodes.value = []
+    selectedScenarioRunnerId.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    scenarioRunnerNodesLoading.value = false
   }
 }
 
@@ -2878,6 +2920,7 @@ async function loadScenarioWorkspace() {
 onMounted(() => {
   loadScenarioTableSettings()
   void loadScenarioWorkspace()
+  void loadScenarioRunnerNodes()
   document.addEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
   window.addEventListener('resize', updateScenarioTabOverflow)
   void nextTick(updateScenarioTabOverflow)
@@ -3767,6 +3810,39 @@ watch(activeScenarioDetailTab, (tab) => {
                       <el-select v-model="activeScenarioDetail.runOn" placeholder="请选择运行位置" @change="markScenarioDirty">
                         <el-option label="本地执行机" value="LOCAL" />
                         <el-option label="远程执行机" value="REMOTE" />
+                      </el-select>
+                    </label>
+                    <label v-if="activeScenarioDetail.runOn === 'LOCAL'" class="scenario-property-field">
+                      <span>Local Runner</span>
+                      <el-select
+                        v-model="selectedScenarioRunnerId"
+                        clearable
+                        filterable
+                        :loading="scenarioRunnerNodesLoading"
+                        placeholder="选择可用本地执行器"
+                      >
+                        <el-option
+                          v-for="runner in scenarioRunnerNodes"
+                          :key="runner.runnerId"
+                          :disabled="!isRunnerSelectable(runner, API_SCENARIO_RUNNER_TASK_TYPE)"
+                          :label="runnerOptionLabel(runner, API_SCENARIO_RUNNER_TASK_TYPE)"
+                          :value="runner.runnerId"
+                        >
+                          <div class="local-runner-option">
+                            <div class="local-runner-option__main">
+                              <span>{{ runner.runnerName || runner.runnerId }}</span>
+                              <el-tag size="small" :type="isRunnerSelectable(runner, API_SCENARIO_RUNNER_TASK_TYPE) ? 'success' : 'info'" effect="light">
+                                {{ runnerStatusText(runner) }}
+                              </el-tag>
+                            </div>
+                            <div class="local-runner-option__meta">
+                              <span>{{ runner.runnerId }}</span>
+                              <span>心跳 {{ runnerHeartbeatText(runner) }}</span>
+                              <span>{{ runnerActiveTaskText(runner) }}</span>
+                              <span>{{ runner.capabilities?.join(' / ') || '未上报能力' }}</span>
+                            </div>
+                          </div>
+                        </el-option>
                       </el-select>
                     </label>
                     <label class="scenario-property-field">
@@ -7424,6 +7500,38 @@ watch(activeScenarioDetailTab, (tab) => {
 .scenario-cicd-command code {
   overflow: hidden;
   color: #344054;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-runner-option {
+  display: grid;
+  gap: 2px;
+  line-height: 18px;
+}
+
+.local-runner-option__main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #111827;
+  font-size: 13px;
+}
+
+.local-runner-option__main span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-runner-option__meta {
+  display: flex;
+  overflow: hidden;
+  gap: 8px;
+  color: #667085;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;

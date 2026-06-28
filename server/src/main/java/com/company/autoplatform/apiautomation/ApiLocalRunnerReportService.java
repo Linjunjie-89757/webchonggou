@@ -70,7 +70,7 @@ public class ApiLocalRunnerReportService {
         Map<String, Object> reportData = safeMap(result.get("reportData"));
         Long caseId = longValue(apiCaseSnapshot.get("caseId"));
         ApiDefinitionCaseEntity apiCase = caseId == null ? null : caseMapper.selectById(caseId);
-        Long workspaceId = apiCase == null ? null : apiCase.getWorkspaceId();
+        Long workspaceId = apiCase == null ? event.workspaceId() : apiCase.getWorkspaceId();
         String caseName = firstText(apiCase == null ? null : apiCase.getCaseName(), stringValue(apiCaseSnapshot.get("caseName")), "Local Runner API case");
 
         RunArtifacts artifacts = createRunArtifacts(workspaceId, "接口用例本地执行", caseName, event);
@@ -123,7 +123,7 @@ public class ApiLocalRunnerReportService {
         List<Map<String, Object>> stepResults = safeList(reportData.get("stepResults"));
         Long scenarioId = longValue(scenarioSnapshot.get("scenarioId"));
         ApiScenarioEntity scenario = scenarioId == null ? null : scenarioMapper.selectById(scenarioId);
-        Long workspaceId = scenario == null ? null : scenario.getWorkspaceId();
+        Long workspaceId = scenario == null ? event.workspaceId() : scenario.getWorkspaceId();
         String scenarioName = firstText(scenario == null ? null : scenario.getScenarioName(), stringValue(scenarioSnapshot.get("scenarioName")), "Local Runner API scenario");
 
         RunArtifacts artifacts = createRunArtifacts(workspaceId, "接口场景本地执行", scenarioName, event);

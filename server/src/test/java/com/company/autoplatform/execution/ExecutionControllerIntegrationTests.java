@@ -209,6 +209,32 @@ class ExecutionControllerIntegrationTests extends IntegrationTestSupport {
     }
 
     @Test
+    void reportCenterAcceptsApiLocalRunnerLogSource() throws Exception {
+        String unique = uniquePrefix("api-local-runner");
+        TaskSummaryResponse task = createTask(RISK_OPS, unique + "-task", "API", "SUCCESS");
+        Integer reportId = createReport("""
+                {
+                  "workspaceCode": "%s",
+                  "taskId": %d,
+                  "reportName": "%s-report",
+                  "result": "SUCCESS",
+                  "logSource": "API_LOCAL_RUNNER",
+                  "failureSummary": null
+                }
+                """.formatted(RISK_OPS, task.id(), unique), RISK_OPS);
+
+        mockMvc.perform(get("/api/reports")
+                        .header(WorkspaceScope.HEADER, RISK_OPS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[?(@.id == %d)].logSource".formatted(reportId)).value(hasItem("API_LOCAL_RUNNER")));
+
+        mockMvc.perform(get("/api/tasks/{id}", task.id())
+                        .header(WorkspaceScope.HEADER, RISK_OPS))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.reports[?(@.id == %d)].logSource".formatted(reportId)).value(hasItem("API_LOCAL_RUNNER")));
+    }
+
+    @Test
     void reportAttachmentUploadDownloadAndDeleteKeepsMainFlow() throws Exception {
         String unique = uniquePrefix("attachment");
         TaskSummaryResponse task = createTask(RISK_OPS, unique + "-task", "API", "SUCCESS");

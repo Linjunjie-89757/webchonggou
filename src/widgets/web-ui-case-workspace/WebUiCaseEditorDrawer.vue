@@ -5,6 +5,16 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 import { configApi, type ParamSetItem } from '@/entities/config'
 import {
+  isRunnerSelectable,
+  localRunnerApi,
+  runnerActiveTaskText,
+  runnerHeartbeatText,
+  runnerOptionLabel,
+  runnerStatusText,
+  selectDefaultRunnerId,
+  type RunnerNodeSummary,
+} from '@/entities/local-runner'
+import {
   formatLocatorType,
   formatRunStatus,
   formatRunStepStatus,
@@ -108,6 +118,7 @@ const loading = ref(false)
 const saving = ref(false)
 const debugging = ref(false)
 const localRunnerRunning = ref(false)
+const loadingRunnerNodes = ref(false)
 const loadingVariableSets = ref(false)
 const loadingElements = ref(false)
 const debuggingStepIndex = ref<number | null>(null)
@@ -122,6 +133,8 @@ const validatingLocatorIndex = ref<number | null>(null)
 const locatorValidationVisible = ref(false)
 const locatorValidationResult = ref<ValidateWebUiLocatorResponse | null>(null)
 const variableSets = ref<ParamSetItem[]>([])
+const runnerNodes = ref<RunnerNodeSummary[]>([])
+const selectedRunnerId = ref<string | null>(null)
 const elements = ref<WebUiElementItem[]>([])
 const elementModules = ref<WebUiElementModuleItem[]>([])
 const elementPages = ref<WebUiElementPageItem[]>([])
@@ -140,6 +153,7 @@ const drawerTitle = computed(() => {
 })
 
 const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
+const WEB_CASE_RUNNER_TASK_TYPE = 'WEB_CASE_RUN'
 
 const localRunnerStepResults = computed(() => {
   const result = localRunnerTask.value?.result as {
@@ -1108,9 +1122,20 @@ async function runCaseWithLocalRunner() {
       workspaceCodes: [props.workspaceCode],
       intervalMs: 1000,
     })
+    await loadRunnerNodes()
+    if (!selectedRunnerId.value) {
+      ElMessage.warning('未检测到支持 Web UI 用例运行的在线 Local Runner，请先启动本地执行器')
+      return
+    }
+    const selectedRunner = runnerNodes.value.find(item => item.runnerId === selectedRunnerId.value)
+    if (!selectedRunner || !isRunnerSelectable(selectedRunner, WEB_CASE_RUNNER_TASK_TYPE)) {
+      ElMessage.warning('当前 Local Runner 离线或不支持 Web UI 用例运行，请重新选择')
+      return
+    }
     const response = await webUiAutomationApi.createLocalRunnerRun(props.workspaceCode, props.caseId, {
       headless: form.value.headless,
       variableSetId: debugVariableSetId.value,
+      runnerId: selectedRunnerId.value,
     })
     localRunnerFormalRunId.value = response.run.runId
     localRunnerTask.value = response.runnerTask
@@ -1120,6 +1145,20 @@ async function runCaseWithLocalRunner() {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     localRunnerRunning.value = false
+  }
+}
+
+async function loadRunnerNodes() {
+  loadingRunnerNodes.value = true
+  try {
+    runnerNodes.value = await localRunnerApi.getRunnerNodes()
+    selectedRunnerId.value = selectDefaultRunnerId(runnerNodes.value, selectedRunnerId.value, WEB_CASE_RUNNER_TASK_TYPE)
+  } catch (error) {
+    runnerNodes.value = []
+    selectedRunnerId.value = null
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    loadingRunnerNodes.value = false
   }
 }
 
@@ -1180,6 +1219,7 @@ watch(
     void loadDetail()
     void loadVariableSets()
     void loadElements()
+    void loadRunnerNodes()
   },
   { immediate: true },
 )
@@ -1294,6 +1334,38 @@ onBeforeUnmount(() => {
           </el-form-item>
           <el-form-item label="默认超时">
             <el-input-number v-model="form.defaultTimeoutMs" :min="1000" :max="60000" :step="1000" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="Local Runner">
+            <el-select
+              v-model="selectedRunnerId"
+              clearable
+              filterable
+              :loading="loadingRunnerNodes"
+              placeholder="选择可用本地执行器"
+            >
+              <el-option
+                v-for="runner in runnerNodes"
+                :key="runner.runnerId"
+                :disabled="!isRunnerSelectable(runner, WEB_CASE_RUNNER_TASK_TYPE)"
+                :label="runnerOptionLabel(runner, WEB_CASE_RUNNER_TASK_TYPE)"
+                :value="runner.runnerId"
+              >
+                <div class="local-runner-option">
+                  <div class="local-runner-option__main">
+                    <span>{{ runner.runnerName || runner.runnerId }}</span>
+                    <el-tag size="small" :type="isRunnerSelectable(runner, WEB_CASE_RUNNER_TASK_TYPE) ? 'success' : 'info'" effect="light">
+                      {{ runnerStatusText(runner) }}
+                    </el-tag>
+                  </div>
+                  <div class="local-runner-option__meta">
+                    <span>{{ runner.runnerId }}</span>
+                    <span>心跳 {{ runnerHeartbeatText(runner) }}</span>
+                    <span>{{ runnerActiveTaskText(runner) }}</span>
+                    <span>{{ runner.capabilities?.join(' / ') || '未上报能力' }}</span>
+                  </div>
+                </div>
+              </el-option>
+            </el-select>
           </el-form-item>
           <el-form-item label="调试变量集">
             <el-select
@@ -1803,6 +1875,38 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--app-space-2);
   margin-top: var(--app-space-2);
+}
+
+.local-runner-option {
+  display: grid;
+  gap: 2px;
+  line-height: 18px;
+}
+
+.local-runner-option__main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-2);
+  color: var(--app-text);
+  font-size: var(--app-font-size-sm);
+}
+
+.local-runner-option__main span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-runner-option__meta {
+  display: flex;
+  overflow: hidden;
+  gap: var(--app-space-2);
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .web-ui-step-result__link {

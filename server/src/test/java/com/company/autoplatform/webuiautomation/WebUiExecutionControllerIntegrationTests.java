@@ -156,15 +156,17 @@ class WebUiExecutionControllerIntegrationTests extends IntegrationTestSupport {
                 openStep("Open page", "https://example.com", 1),
                 clickStep("Submit", "CSS", "#submit", false, 2)
         ));
+        registerRunner("runner-web-1", "[\"WEB_CASE_RUN\"]");
 
         String createResponse = mockMvc.perform(post("/api/automation/web/cases/{id}/local-runner-run", caseId)
                         .header(WorkspaceScope.HEADER, WORKSPACE_CODE)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
+                        .content(objectMapper.writeValueAsString(Map.of("runnerId", "runner-web-1"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.run.status").value("RUNNING"))
                 .andExpect(jsonPath("$.data.runnerTask.taskType").value("WEB_CASE_RUN"))
+                .andExpect(jsonPath("$.data.runnerTask.runnerId").value("runner-web-1"))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
@@ -175,7 +177,7 @@ class WebUiExecutionControllerIntegrationTests extends IntegrationTestSupport {
         String executionToken = createData.at("/runnerTask/envelope/executionToken").asText();
 
         Map<String, Object> finalResult = new LinkedHashMap<>();
-        finalResult.put("runnerId", "local-runner");
+        finalResult.put("runnerId", "runner-web-1");
         finalResult.put("executionToken", executionToken);
         finalResult.put("status", "SUCCESS");
         finalResult.put("durationMs", 88);
@@ -984,5 +986,26 @@ class WebUiExecutionControllerIntegrationTests extends IntegrationTestSupport {
 
     private String uniquePrefix(String label) {
         return "web-ui-run-" + label + "-" + System.nanoTime();
+    }
+
+    private void registerRunner(String runnerId, String capabilitiesJson) {
+        jdbcTemplate.update("""
+                        INSERT INTO tb_local_runner_node (
+                            runner_id,
+                            runner_name,
+                            runner_version,
+                            protocol_version,
+                            capabilities_json,
+                            status,
+                            last_heartbeat_at,
+                            created_at,
+                            updated_at
+                        )
+                        VALUES (?, ?, '0.1.0', '1.0', ?, 'ONLINE', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        """,
+                runnerId,
+                runnerId,
+                capabilitiesJson
+        );
     }
 }

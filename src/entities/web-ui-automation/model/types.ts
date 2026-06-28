@@ -706,6 +706,7 @@ export interface WebUiRunRequest {
   mockEnabled?: boolean | null
   mockApplicationId?: number | null
   runtimeVariables?: Record<string, string> | null
+  runnerId?: string | null
 }
 
 export interface WebUiRunStepResult {

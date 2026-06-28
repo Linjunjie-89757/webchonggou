@@ -455,7 +455,8 @@ public class ApiExecutionDomainService {
                 request.mockEnabled(),
                 request.mockApplicationId(),
                 request.mockBusinessScenarioId(),
-                rowValues
+                rowValues,
+                request.runnerId()
         );
         ScenarioRunAggregate aggregate = runScenarioOnce(scenario, rowRequest, rowValues, plan.sequence());
         return new ScenarioRunPlanResult(plan, aggregate);
@@ -484,7 +485,7 @@ public class ApiExecutionDomainService {
                 "api_scenario_" + scenario.getId() + "_" + System.currentTimeMillis(),
                 "API_SCENARIO_RUN",
                 "LOCAL_RUNNER",
-                null,
+                request.runnerId(),
                 null,
                 "1.0",
                 "MANUAL",

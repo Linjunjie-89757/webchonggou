@@ -1088,10 +1088,11 @@ public final class ApiAutomationModels {
             Boolean mockEnabled,
             Long mockApplicationId,
             Long mockBusinessScenarioId,
-            Map<String, String> rowVariables
+            Map<String, String> rowVariables,
+            String runnerId
     ) {
         public ApiRunRequest(String workspaceCode, Long environmentId, Long variableSetId, String branchName, String triggerSource) {
-            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null, null, null);
+            this(workspaceCode, environmentId, variableSetId, branchName, triggerSource, null, null, null, null, null, null, null, null, null, null);
         }
     }
 

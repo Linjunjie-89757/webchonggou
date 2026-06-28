@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { RefreshRight, Warning } from '@element-plus/icons-vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Connection, DocumentCopy, RefreshRight, Warning } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 import { ConfigStatCard, ConfigTypeBadge, type ConfigStat } from '@/entities/config'
@@ -14,19 +14,36 @@ const runners = ref<RunnerNodeSummary[]>([])
 const loading = ref(false)
 const scanning = ref(false)
 const errorMessage = ref('')
+const guideVisible = ref(false)
+const autoRefresh = ref(true)
+const lastRefreshedAt = ref<Date | null>(null)
+let refreshTimer: ReturnType<typeof window.setInterval> | null = null
+
+const runnerStartCommand = 'npm.cmd run runner'
 
 const stats = computed<ConfigStat[]>(() => {
   const onlineCount = runners.value.filter(item => !item.offline).length
   const offlineCount = runners.value.filter(item => item.offline).length
   const availableSlots = runners.value.reduce((total, item) => total + numberFromRecord(item.resource, 'availableSlots'), 0)
   const usedSlots = runners.value.reduce((total, item) => total + numberFromRecord(item.resource, 'usedSlots'), 0)
+  const activeTaskCount = runners.value.reduce((total, item) => total + activeTasksOf(item).length, 0)
 
   return [
     { label: '执行器总数', value: runners.value.length, tone: 'primary' },
     { label: '在线节点', value: onlineCount, tone: 'success' },
-    { label: '离线节点', value: offlineCount, tone: offlineCount > 0 ? 'danger' : 'default' },
+    { label: '运行任务', value: activeTaskCount, tone: activeTaskCount > 0 ? 'purple' : 'default' },
     { label: '占用槽位', value: `${usedSlots}/${usedSlots + availableSlots}`, tone: 'warning' },
+    { label: '离线节点', value: offlineCount, tone: offlineCount > 0 ? 'danger' : 'default' },
   ]
+})
+
+const offlineRunners = computed(() => runners.value.filter(item => item.offline))
+const hasOfflineRunner = computed(() => offlineRunners.value.length > 0)
+const refreshStatusText = computed(() => {
+  if (!lastRefreshedAt.value) {
+    return '尚未刷新'
+  }
+  return `最后刷新 ${lastRefreshedAt.value.toLocaleTimeString()}`
 })
 
 async function loadRunners() {
@@ -34,10 +51,44 @@ async function loadRunners() {
   errorMessage.value = ''
   try {
     runners.value = await localRunnerApi.getRunnerNodes()
+    lastRefreshedAt.value = new Date()
   } catch (error) {
     errorMessage.value = getRequestErrorMessage(error)
   } finally {
     loading.value = false
+  }
+}
+
+function restartAutoRefresh() {
+  stopAutoRefresh()
+  if (!autoRefresh.value) {
+    return
+  }
+  refreshTimer = window.setInterval(() => {
+    if (!loading.value && !scanning.value) {
+      void loadRunners()
+    }
+  }, 10000)
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer != null) {
+    window.clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function toggleAutoRefresh(value: boolean | string | number) {
+  autoRefresh.value = Boolean(value)
+  restartAutoRefresh()
+}
+
+async function copyRunnerCommand() {
+  try {
+    await navigator.clipboard.writeText(runnerStartCommand)
+    ElMessage.success('启动命令已复制')
+  } catch {
+    ElMessage.warning('复制失败，请手动复制命令')
   }
 }
 
@@ -90,6 +141,19 @@ function formatHeartbeat(seconds: number | null) {
   return `${Math.floor(seconds / 3600)} 小时前`
 }
 
+function formatDuration(seconds: number | null) {
+  if (seconds == null) {
+    return '-'
+  }
+  if (seconds < 60) {
+    return `${seconds} 秒`
+  }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)} 分钟`
+  }
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分钟`
+}
+
 function formatRunnerName(item: RunnerNodeSummary) {
   return item.runnerName || item.runnerId
 }
@@ -126,8 +190,43 @@ function getSessionText(item: RunnerNodeSummary) {
   return textFromRecord(item.session, 'activePageUrl') || textFromRecord(item.session, 'status') || '暂无会话'
 }
 
+function activeTasksOf(item: RunnerNodeSummary) {
+  return Array.isArray(item.activeTasks) ? item.activeTasks : []
+}
+
+function getTaskTypeLabel(taskType: string | null) {
+  if (taskType === 'WEB_ELEMENT_VALIDATE') {
+    return '元素验证'
+  }
+  if (taskType === 'WEB_CASE_RUN') {
+    return 'Web UI 用例'
+  }
+  if (taskType === 'API_CASE_RUN') {
+    return '接口用例'
+  }
+  if (taskType === 'API_SCENARIO_RUN') {
+    return '接口场景'
+  }
+  return taskType || '未知任务'
+}
+
+function getTaskStatusLabel(status: string | null) {
+  if (status === 'RUNNING') {
+    return '运行中'
+  }
+  if (status === 'ASSIGNED') {
+    return '已分配'
+  }
+  return status || '未知'
+}
+
 onMounted(() => {
   void loadRunners()
+  restartAutoRefresh()
+})
+
+onBeforeUnmount(() => {
+  stopAutoRefresh()
 })
 </script>
 
@@ -139,10 +238,34 @@ onMounted(() => {
         <p>查看 Local Runner 在线状态、能力标签、资源槽位和最近心跳。</p>
       </div>
       <div class="config-runner-panel__actions">
+        <AppButton :icon="Connection" @click="guideVisible = true">启动指引</AppButton>
         <AppButton :icon="Warning" :loading="scanning" @click="triggerOfflineScan">离线扫描</AppButton>
         <AppButton :icon="RefreshRight" :loading="loading" @click="loadRunners">刷新</AppButton>
       </div>
     </header>
+
+    <div class="config-runner-refresh-bar">
+      <div class="config-runner-refresh-bar__status">
+        <span class="config-runner-refresh-dot" :class="{ 'is-active': autoRefresh }" />
+        <span>{{ autoRefresh ? '自动刷新中，每 10 秒更新一次' : '自动刷新已关闭' }}</span>
+        <small>{{ refreshStatusText }}</small>
+      </div>
+      <el-switch
+        :model-value="autoRefresh"
+        active-text="自动刷新"
+        inactive-text="手动刷新"
+        @change="toggleAutoRefresh"
+      />
+    </div>
+
+    <div v-if="hasOfflineRunner" class="config-runner-warning">
+      <el-icon><Warning /></el-icon>
+      <div>
+        <strong>发现 {{ offlineRunners.length }} 个离线执行器</strong>
+        <p>离线节点不会继续领取本地任务，已分配或运行中的任务可通过离线扫描标记为 Runner 离线。</p>
+      </div>
+      <AppButton size="small" :loading="scanning" @click="triggerOfflineScan">立即扫描</AppButton>
+    </div>
 
     <div class="config-runner-panel__stats">
       <ConfigStatCard v-for="stat in stats" :key="stat.label" :stat="stat" />
@@ -171,6 +294,7 @@ onMounted(() => {
           <col class="config-runner-table-card__name-col" />
           <col class="config-runner-table-card__status-col" />
           <col class="config-runner-table-card__resource-col" />
+          <col class="config-runner-table-card__task-col" />
           <col class="config-runner-table-card__capability-col" />
           <col class="config-runner-table-card__runtime-col" />
           <col class="config-runner-table-card__heartbeat-col" />
@@ -180,6 +304,7 @@ onMounted(() => {
             <th>执行器</th>
             <th>状态</th>
             <th>资源槽位</th>
+            <th>当前任务</th>
             <th>能力标签</th>
             <th>运行环境</th>
             <th>最近心跳</th>
@@ -203,6 +328,24 @@ onMounted(() => {
                 <strong>{{ numberFromRecord(item.resource, 'usedSlots') }} / {{ numberFromRecord(item.resource, 'maxSlots') }}</strong>
                 <span>可用 {{ numberFromRecord(item.resource, 'availableSlots') }}</span>
               </div>
+            </td>
+            <td>
+              <div v-if="activeTasksOf(item).length" class="config-runner-task-list">
+                <div v-for="task in activeTasksOf(item)" :key="task.runId" class="config-runner-task">
+                  <div class="config-runner-task__head">
+                    <strong>{{ getTaskTypeLabel(task.taskType) }}</strong>
+                    <span>{{ getTaskStatusLabel(task.status) }}</span>
+                  </div>
+                  <div class="config-runner-task__meta">
+                    <span>{{ task.currentStage || '等待阶段上报' }}</span>
+                    <span>{{ task.progressPercent ?? 0 }}%</span>
+                    <span>{{ task.resourceCost ?? 1 }} 槽</span>
+                    <span>{{ formatDuration(task.runningSeconds) }}</span>
+                  </div>
+                  <code :title="task.runId">{{ task.runId }}</code>
+                </div>
+              </div>
+              <span v-else class="config-runner-muted">空闲</span>
             </td>
             <td>
               <span class="config-runner-muted" :title="getCapabilityText(item)">
@@ -230,9 +373,40 @@ onMounted(() => {
       description="启动 Web UI Runner 后，它会自动注册并上报心跳。"
     >
       <template #actions>
+        <AppButton :icon="Connection" @click="guideVisible = true">查看启动指引</AppButton>
         <AppButton :icon="RefreshRight" @click="loadRunners">刷新状态</AppButton>
       </template>
     </AppEmptyState>
+
+    <el-drawer v-model="guideVisible" title="本地执行器启动指引" size="520px">
+      <div class="config-runner-guide">
+        <section>
+          <h3>启动 Runner</h3>
+          <p>在项目根目录执行下面的命令，Runner 会启动本地服务并向平台上报心跳。</p>
+          <div class="config-runner-guide__command">
+            <code>{{ runnerStartCommand }}</code>
+            <button type="button" @click="copyRunnerCommand">
+              <el-icon><DocumentCopy /></el-icon>
+              复制
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <h3>常见启动问题</h3>
+          <ul>
+            <li>PowerShell 禁止脚本时，优先使用 <code>npm.cmd run runner</code>。</li>
+            <li>执行目录必须是项目根目录，否则会找不到 <code>package.json</code>。</li>
+            <li>执行 Web UI 任务前，本机需要可用的 Playwright 浏览器内核。</li>
+          </ul>
+        </section>
+
+        <section>
+          <h3>状态判断</h3>
+          <p>Runner 正常启动后，本页会在下一次自动刷新时显示在线节点、可用槽位和最近心跳。</p>
+        </section>
+      </div>
+    </el-drawer>
   </section>
 </template>
 
@@ -272,7 +446,79 @@ onMounted(() => {
 .config-runner-panel__stats {
   display: grid;
   gap: var(--app-space-4);
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.config-runner-refresh-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3) var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.config-runner-refresh-bar__status {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+}
+
+.config-runner-refresh-bar__status small {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-runner-refresh-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--app-text-subtle);
+}
+
+.config-runner-refresh-dot.is-active {
+  background: var(--app-success);
+}
+
+.config-runner-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3) var(--app-space-4);
+  border: 1px solid #fed7aa;
+  border-radius: var(--app-radius-md);
+  background: var(--app-warning-soft);
+  color: var(--app-warning);
+}
+
+.config-runner-warning .el-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.config-runner-warning div {
+  min-width: 0;
+  flex: 1;
+}
+
+.config-runner-warning strong {
+  display: block;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-sm);
+}
+
+.config-runner-warning p {
+  margin: 2px 0 0;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: var(--app-line-height-md);
 }
 
 .config-runner-panel__inline-error {
@@ -314,12 +560,16 @@ onMounted(() => {
   width: 120px;
 }
 
+.config-runner-table-card__task-col {
+  width: 24%;
+}
+
 .config-runner-table-card__capability-col {
-  width: 20%;
+  width: 16%;
 }
 
 .config-runner-table-card__runtime-col {
-  width: 24%;
+  width: 20%;
 }
 
 .config-runner-table-card__heartbeat-col {
@@ -394,6 +644,55 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.config-runner-task-list {
+  display: grid;
+  gap: var(--app-space-2);
+}
+
+.config-runner-task {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: var(--app-space-2);
+  border: 1px solid var(--app-border-soft);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-subtle);
+}
+
+.config-runner-task__head,
+.config-runner-task__meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--app-space-2);
+}
+
+.config-runner-task__head strong {
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-runner-task__head span {
+  color: var(--app-primary);
+  font-size: var(--app-font-size-xs);
+  font-weight: 600;
+}
+
+.config-runner-task__meta span {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-size-xs);
+}
+
+.config-runner-task code {
+  overflow: hidden;
+  color: var(--app-text-subtle);
+  font-family: Consolas, Monaco, monospace;
+  font-size: var(--app-font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .config-runner-runtime code {
   display: inline-block;
   max-width: 100%;
@@ -406,6 +705,87 @@ onMounted(() => {
   font-size: var(--app-font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.config-runner-guide {
+  display: grid;
+  gap: var(--app-space-5);
+}
+
+.config-runner-guide section {
+  display: grid;
+  gap: var(--app-space-3);
+}
+
+.config-runner-guide h3 {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-lg);
+  line-height: var(--app-line-height-lg);
+}
+
+.config-runner-guide p,
+.config-runner-guide li {
+  margin: 0;
+  color: var(--app-text-secondary);
+  font-size: var(--app-font-size-sm);
+  line-height: 1.7;
+}
+
+.config-runner-guide ul {
+  display: grid;
+  gap: var(--app-space-2);
+  margin: 0;
+  padding-left: 18px;
+}
+
+.config-runner-guide code {
+  padding: 2px 6px;
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-page);
+  color: var(--app-text-primary);
+  font-family: Consolas, Monaco, monospace;
+  font-size: var(--app-font-size-xs);
+}
+
+.config-runner-guide__command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-3);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-page);
+}
+
+.config-runner-guide__command code {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-runner-guide__command button {
+  display: inline-flex;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 var(--app-space-2);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-bg-panel);
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-size: var(--app-font-size-xs);
+}
+
+.config-runner-guide__command button:hover {
+  color: var(--app-primary);
+  border-color: #bfdbfe;
 }
 
 @media (max-width: 1100px) {
@@ -421,6 +801,12 @@ onMounted(() => {
 
   .config-runner-panel__actions {
     justify-content: flex-start;
+  }
+
+  .config-runner-refresh-bar,
+  .config-runner-warning {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .config-runner-table-card {

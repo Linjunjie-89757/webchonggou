@@ -28,15 +28,70 @@ public class ApiAutomationScriptRunner {
             const request = input.request && typeof input.request === 'object' ? input.request : {};
             const response = input.response && typeof input.response === 'object' ? input.response : {};
             let failedMessage = null;
-            const helpers = {
-              setVar(key, value) {
-                vars[String(key)] = value == null ? '' : String(value);
-              },
-              getVar(key) {
+            function assertSafeScriptSource(source) {
+              const unsafePatterns = [
+                ['Function', /\\bFunction\\s*\\(/],
+                ['eval', /\\beval\\s*\\(/],
+                ['require', /\\brequire\\s*\\(/],
+                ['process', /\\bprocess\\s*[\\[.]/],
+                ['global', /\\bglobal\\s*[\\[.]/],
+                ['module', /\\bmodule\\s*[\\[.]/],
+                ['exports', /\\bexports\\s*[\\[.]/],
+                ['fs', /\\bfs\\s*[\\[.]/],
+                ['child_process', /\\bchild_process\\b/],
+                ['constructor', /\\bconstructor\\s*[\\[.]/],
+                ['__dirname', /\\b__dirname\\b/],
+                ['__filename', /\\b__filename\\b/],
+              ];
+              for (const [name, pattern] of unsafePatterns) {
+                if (pattern.test(source)) {
+                  throw new Error(`${name} is not defined (blocked unsafe API script global)`);
+                }
+              }
+            }
+            const variableApi = {
+              get(key) {
                 return vars[String(key)];
               },
-              removeVar(key) {
+              set(key, value) {
+                vars[String(key)] = value == null ? '' : String(value);
+              },
+              unset(key) {
                 delete vars[String(key)];
+              },
+              toObject() {
+                return { ...vars };
+              },
+            };
+            const utils = {
+              upper(value) {
+                return String(value ?? '').toUpperCase();
+              },
+              lower(value) {
+                return String(value ?? '').toLowerCase();
+              },
+              trim(value) {
+                return String(value ?? '').trim();
+              },
+              jsonParse(value) {
+                return JSON.parse(String(value ?? 'null'));
+              },
+              jsonStringify(value) {
+                return JSON.stringify(value);
+              },
+              now() {
+                return new Date().toISOString();
+              },
+            };
+            const helpers = {
+              setVar(key, value) {
+                variableApi.set(key, value);
+              },
+              getVar(key) {
+                return variableApi.get(key);
+              },
+              removeVar(key) {
+                variableApi.unset(key);
               },
               log(...args) {
                 logs.push(args.map((item) => {
@@ -61,7 +116,10 @@ public class ApiAutomationScriptRunner {
             (async () => {
               try {
                 const script = String(input.script || '');
+                assertSafeScriptSource(script);
                 const body = [
+                  'var variables = helpers.variables;',
+                  'var utils = helpers.utils;',
                   'var setVar = helpers.setVar;',
                   'var getVar = helpers.getVar;',
                   'var removeVar = helpers.removeVar;',
@@ -72,6 +130,8 @@ public class ApiAutomationScriptRunner {
                   'var global = undefined;',
                   'var module = undefined;',
                   'var exports = undefined;',
+                  'var Function = undefined;',
+                  'var eval = undefined;',
                   script,
                 ].join('\\n');
                 const runner = new AsyncFunction(
@@ -81,7 +141,7 @@ public class ApiAutomationScriptRunner {
                   'response',
                   body
                 );
-                await runner(helpers, vars, request, response);
+                await runner({ ...helpers, variables: variableApi, utils }, vars, request, response);
                 process.stdout.write(JSON.stringify({
                   success: true,
                   message: logs.length ? logs[logs.length - 1] : 'Script executed',

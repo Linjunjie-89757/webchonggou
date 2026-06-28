@@ -118,7 +118,8 @@ class ApiExecutionDomainServiceLocalRunnerTests {
                 null,
                 null,
                 null,
-                null
+                null,
+                "runner-api-1"
         ));
 
         ArgumentCaptor<CreateRunnerTaskCommand> commandCaptor = ArgumentCaptor.forClass(CreateRunnerTaskCommand.class);
@@ -131,6 +132,7 @@ class ApiExecutionDomainServiceLocalRunnerTests {
         assertThat(command.workspaceCode()).isEqualTo("risk-ops");
         assertThat(command.taskType()).isEqualTo("API_SCENARIO_RUN");
         assertThat(command.executionLocation()).isEqualTo("LOCAL_RUNNER");
+        assertThat(command.runnerId()).isEqualTo("runner-api-1");
         assertThat(command.timeoutPolicy()).containsEntry("requestTimeoutMs", 30000);
         assertThat(command.timeoutPolicy()).containsEntry("scriptTimeoutMs", 1000);
         assertThat(command.environmentSnapshot()).containsEntry("environmentId", 21L);

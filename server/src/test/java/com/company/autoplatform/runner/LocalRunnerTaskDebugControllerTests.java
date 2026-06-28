@@ -91,6 +91,7 @@ class LocalRunnerTaskDebugControllerTests {
         WorkspaceService workspaceService = mock(WorkspaceService.class);
         LocalRunnerService localRunnerService = mock(LocalRunnerService.class);
         when(localRunnerService.markOfflineRunners(java.time.Duration.ofMinutes(2))).thenReturn(3);
+        when(localRunnerService.markTimedOutTasks()).thenReturn(2);
         CurrentUserPrincipal principal = new CurrentUserPrincipal(
                 11L,
                 "zhangli",
@@ -108,8 +109,11 @@ class LocalRunnerTaskDebugControllerTests {
         LocalRunnerTaskDebugController controller = new LocalRunnerTaskDebugController(localRunnerService, workspaceService);
         var response = controller.triggerOfflineScan(null);
 
-        assertThat(response.data().changedTasks()).isEqualTo(3);
+        assertThat(response.data().changedTasks()).isEqualTo(5);
+        assertThat(response.data().offlineTasks()).isEqualTo(3);
+        assertThat(response.data().timedOutTasks()).isEqualTo(2);
         verify(localRunnerService).markOfflineRunners(java.time.Duration.ofMinutes(2));
+        verify(localRunnerService).markTimedOutTasks();
     }
 
 }
