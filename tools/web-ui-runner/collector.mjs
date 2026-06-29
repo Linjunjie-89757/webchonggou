@@ -32,11 +32,19 @@ export function buildCandidatesFromElements(elements) {
     .filter(isUsefulElement)
     .map((element, index) => {
       const locator = buildLocator(element);
+      const framePath = normalizePathMetadata(element.framePath);
+      const shadowPath = normalizePathMetadata(element.shadowPath);
       return {
         tempId: `candidate-${index + 1}`,
         name: inferElementName(element, index),
         elementType: inferElementType(element),
-        locator,
+        locator: {
+          ...locator,
+          framePath,
+          shadowPath,
+        },
+        framePath,
+        shadowPath,
         text: trimText(element.text),
         placeholder: trimText(element.placeholder),
         tagName: String(element.tagName || '').toLowerCase(),
@@ -80,10 +88,14 @@ export function normalizeLocatorValidationResult(result) {
     : validationStatus === 'MULTIPLE'
       ? `定位器匹配到 ${matchCount} 个元素，建议人工确认唯一性`
       : '真机验证未找到元素';
+  const framePath = normalizePathMetadata(result.framePath);
+  const shadowPath = normalizePathMetadata(result.shadowPath);
 
   return {
     locatorType: result.locatorType,
     locatorValue: result.locatorValue,
+    ...(framePath.length > 0 ? { framePath } : {}),
+    ...(shadowPath.length > 0 ? { shadowPath } : {}),
     validationStatus,
     matchCount,
     visible: Boolean(result.visible),
@@ -94,6 +106,10 @@ export function normalizeLocatorValidationResult(result) {
     validationMessage,
     screenshotBase64: result.screenshotBase64 || null,
   };
+}
+
+function normalizePathMetadata(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function isUsefulElement(element) {

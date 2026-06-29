@@ -13,6 +13,7 @@ import {
   type WebUiElementCollectFilterDetail,
   type WebUiElementCollectTaskResponse,
   type LocalRunnerTaskDetailResponse,
+  type WebUiLocatorContextPathItem,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
@@ -55,6 +56,8 @@ export interface AiElementCandidate {
   elementName: string
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   confidence: number
   reason: string
   tagName: string | null

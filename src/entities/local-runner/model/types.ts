@@ -12,6 +12,8 @@ export interface RunnerNodeSummary {
   secondsSinceHeartbeat: number | null
   offline: boolean
   activeTasks: RunnerActiveTaskSummary[]
+  selectable?: boolean | null
+  unselectableReason?: string | null
 }
 
 export interface RunnerActiveTaskSummary {

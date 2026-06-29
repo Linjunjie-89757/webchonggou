@@ -73,6 +73,17 @@ class WebUiAutomationControllerIntegrationTests extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.data.steps[0].timeoutMs").value(5000))
                 .andExpect(jsonPath("$.data.steps[0].screenshotPolicy").value("ON_FAILURE"));
 
+        Map<String, Object> contextStep = new LinkedHashMap<>(clickStep("Click iframe button", "CSS", "#inner-submit", 1));
+        contextStep.put("framePath", List.of(Map.of("selector", "iframe#orders")));
+        contextStep.put("shadowPath", List.of(Map.of("selector", "order-shell")));
+        Long contextCaseId = createCase(unique + "-context-case", "checkout", List.of(contextStep));
+        mockMvc.perform(get("/api/automation/web/cases/{id}", contextCaseId)
+                        .header(WorkspaceScope.HEADER, WORKSPACE_CODE))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.steps[0].framePath[0].selector").value("iframe#orders"))
+                .andExpect(jsonPath("$.data.steps[0].shadowPath[0].selector").value("order-shell"));
+
         mockMvc.perform(put("/api/automation/web/cases/{id}", caseId)
                         .header(WorkspaceScope.HEADER, WORKSPACE_CODE)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -363,6 +374,8 @@ class WebUiAutomationControllerIntegrationTests extends IntegrationTestSupport {
         candidate.put("elementName", "搜索按钮");
         candidate.put("locatorType", "CSS");
         candidate.put("locatorValue", "#search");
+        candidate.put("framePath", List.of(Map.of("selector", "iframe#orders")));
+        candidate.put("shadowPath", List.of("order-shell"));
         candidate.put("confidence", 88);
         candidate.put("reason", "本地 Runner 静态规则采集");
         candidate.put("tagName", "button");
@@ -387,6 +400,8 @@ class WebUiAutomationControllerIntegrationTests extends IntegrationTestSupport {
                 .andExpect(jsonPath("$.data.rawCount").value(1))
                 .andExpect(jsonPath("$.data.finalCount").value(1))
                 .andExpect(jsonPath("$.data.candidates[0].candidateSource").value("STATIC_RULE"))
+                .andExpect(jsonPath("$.data.candidates[0].framePath[0].selector").value("iframe#orders"))
+                .andExpect(jsonPath("$.data.candidates[0].shadowPath[0]").value("order-shell"))
                 .andExpect(jsonPath("$.data.candidates[0].validationStatus").value("UNVERIFIED"));
     }
 

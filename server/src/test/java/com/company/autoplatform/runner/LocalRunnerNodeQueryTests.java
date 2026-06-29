@@ -62,6 +62,57 @@ class LocalRunnerNodeQueryTests {
         assertThat(nodes.get(1).activeTasks()).isEmpty();
     }
 
+    @Test
+    void listRunnerNodesMarksSelectableStateForRequestedTaskTypeAndResourceCost() {
+        LocalRunnerNodeMapper nodeMapper = mock(LocalRunnerNodeMapper.class);
+        LocalRunnerTaskMapper taskMapper = mock(LocalRunnerTaskMapper.class);
+        LocalRunnerService service = new LocalRunnerService(
+                nodeMapper,
+                taskMapper,
+                mock(LocalRunnerTaskLogMapper.class),
+                new ObjectMapper(),
+                mock(ApplicationEventPublisher.class)
+        );
+        LocalDateTime now = LocalDateTime.now();
+        LocalRunnerNodeEntity readyRunner = runner("runner-ready", "READY", now.minusSeconds(15));
+        readyRunner.setCapabilitiesJson("[\"WEB_CASE_RUN\"]");
+        readyRunner.setResourceJson("{\"maxSlots\":5,\"usedSlots\":0,\"availableSlots\":5}");
+        LocalRunnerNodeEntity noCapabilityRunner = runner("runner-api", "API", now.minusSeconds(15));
+        noCapabilityRunner.setCapabilitiesJson("[\"API_SCENARIO_RUN\"]");
+        noCapabilityRunner.setResourceJson("{\"maxSlots\":5,\"usedSlots\":0,\"availableSlots\":5}");
+        LocalRunnerNodeEntity busyRunner = runner("runner-busy", "BUSY", now.minusSeconds(15));
+        busyRunner.setCapabilitiesJson("[\"WEB_CASE_RUN\"]");
+        busyRunner.setResourceJson("{\"maxSlots\":5,\"usedSlots\":4,\"availableSlots\":1}");
+        LocalRunnerNodeEntity offlineRunner = runner("runner-offline", "OFFLINE", now.minusMinutes(5));
+        offlineRunner.setCapabilitiesJson("[\"WEB_CASE_RUN\"]");
+        offlineRunner.setResourceJson("{\"maxSlots\":5,\"usedSlots\":0,\"availableSlots\":5}");
+
+        when(nodeMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(
+                readyRunner,
+                noCapabilityRunner,
+                busyRunner,
+                offlineRunner
+        ));
+        when(taskMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of());
+
+        List<LocalRunnerModels.RunnerNodeSummaryResponse> nodes = service.listRunnerNodes(
+                Duration.ofMinutes(2),
+                "WEB_CASE_RUN",
+                5
+        );
+
+        assertThat(nodes).extracting(LocalRunnerModels.RunnerNodeSummaryResponse::runnerId)
+                .containsExactly("runner-ready", "runner-api", "runner-busy", "runner-offline");
+        assertThat(nodes.get(0).selectable()).isTrue();
+        assertThat(nodes.get(0).unselectableReason()).isNull();
+        assertThat(nodes.get(1).selectable()).isFalse();
+        assertThat(nodes.get(1).unselectableReason()).contains("does not support");
+        assertThat(nodes.get(2).selectable()).isFalse();
+        assertThat(nodes.get(2).unselectableReason()).contains("Insufficient resource slots");
+        assertThat(nodes.get(3).selectable()).isFalse();
+        assertThat(nodes.get(3).unselectableReason()).contains("offline");
+    }
+
     private LocalRunnerNodeEntity runner(String runnerId, String runnerName, LocalDateTime lastHeartbeatAt) {
         LocalRunnerNodeEntity entity = new LocalRunnerNodeEntity();
         entity.setRunnerId(runnerId);

@@ -1,5 +1,6 @@
 export * from './api/apiAutomationApi'
 export * from './lib/format'
+export * from './lib/reportEvidence'
 export * from './model/options'
 export * from './model/types'
 export { default as ApiMethodBadge } from './ui/ApiMethodBadge.vue'

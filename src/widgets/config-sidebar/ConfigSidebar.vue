@@ -19,7 +19,6 @@ const icons = {
   notification: Key,
   proxy: Connection,
   dbConnection: Coin,
-  aiProvider: Cpu,
 }
 </script>
 

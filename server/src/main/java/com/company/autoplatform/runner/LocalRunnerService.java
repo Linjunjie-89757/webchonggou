@@ -409,6 +409,10 @@ public class LocalRunnerService {
     }
 
     public List<RunnerNodeSummaryResponse> listRunnerNodes(Duration offlineThreshold) {
+        return listRunnerNodes(offlineThreshold, null, null);
+    }
+
+    public List<RunnerNodeSummaryResponse> listRunnerNodes(Duration offlineThreshold, String taskType, Integer resourceCost) {
         Duration threshold = offlineThreshold == null || offlineThreshold.isNegative() || offlineThreshold.isZero()
                 ? Duration.ofMinutes(2)
                 : offlineThreshold;
@@ -417,7 +421,14 @@ public class LocalRunnerService {
                 .orderByDesc(LocalRunnerNodeEntity::getLastHeartbeatAt));
         Map<String, List<LocalRunnerTaskEntity>> activeTaskMap = activeTasksByRunner(nodes);
         return (nodes == null ? List.<LocalRunnerNodeEntity>of() : nodes).stream()
-                .map(node -> toRunnerNodeSummary(node, now, threshold, activeTaskMap.getOrDefault(node.getRunnerId(), List.of())))
+                .map(node -> toRunnerNodeSummary(
+                        node,
+                        now,
+                        threshold,
+                        activeTaskMap.getOrDefault(node.getRunnerId(), List.of()),
+                        taskType,
+                        resourceCost
+                ))
                 .toList();
     }
 
@@ -463,7 +474,9 @@ public class LocalRunnerService {
             LocalRunnerNodeEntity node,
             LocalDateTime now,
             Duration offlineThreshold,
-            List<LocalRunnerTaskEntity> activeTasks
+            List<LocalRunnerTaskEntity> activeTasks,
+            String requestedTaskType,
+            Integer requestedResourceCost
     ) {
         Long secondsSinceHeartbeat = node.getLastHeartbeatAt() == null
                 ? null
@@ -471,21 +484,52 @@ public class LocalRunnerService {
         boolean offline = secondsSinceHeartbeat == null
                 || secondsSinceHeartbeat > offlineThreshold.toSeconds()
                 || "OFFLINE".equalsIgnoreCase(blankToNull(node.getStatus()));
+        List<String> capabilities = readStringList(node.getCapabilitiesJson());
+        String unselectableReason = resolveUnselectableReason(
+                offline,
+                capabilities,
+                readMap(node.getResourceJson()),
+                requestedTaskType,
+                requestedResourceCost
+        );
         return new RunnerNodeSummaryResponse(
                 node.getRunnerId(),
                 node.getRunnerName(),
                 node.getStatus(),
                 node.getRunnerVersion(),
                 node.getProtocolVersion(),
-                readStringList(node.getCapabilitiesJson()),
+                capabilities,
                 readMap(node.getResourceJson()),
                 readMap(node.getBrowserJson()),
                 readMap(node.getSessionJson()),
                 node.getLastHeartbeatAt(),
                 secondsSinceHeartbeat,
                 offline,
-                toActiveTaskSummaries(activeTasks, now)
+                toActiveTaskSummaries(activeTasks, now),
+                unselectableReason == null,
+                unselectableReason
         );
+    }
+
+    private String resolveUnselectableReason(
+            boolean offline,
+            List<String> capabilities,
+            Map<String, Object> resource,
+            String requestedTaskType,
+            Integer requestedResourceCost
+    ) {
+        if (offline) {
+            return "Runner is offline";
+        }
+        String taskType = blankToNull(requestedTaskType);
+        if (taskType != null && !isTaskAllowedForCapabilities(taskType, capabilities)) {
+            return "Runner does not support task type: " + taskType;
+        }
+        int resourceCost = defaultResourceCost(requestedResourceCost);
+        if (resourceCost > 0 && resourceCost > resolveAvailableSlots(resource)) {
+            return "Insufficient resource slots";
+        }
+        return null;
     }
 
     private List<RunnerActiveTaskSummary> toActiveTaskSummaries(List<LocalRunnerTaskEntity> tasks, LocalDateTime now) {

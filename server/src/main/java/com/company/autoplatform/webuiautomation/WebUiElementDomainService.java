@@ -32,6 +32,7 @@ public class WebUiElementDomainService {
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
     private final WebUiLocatorValidationRunner locatorValidationRunner;
+    private final WebUiLocatorContextSupport locatorContextSupport;
 
     public WebUiElementDomainService(
             WebUiElementMapper elementMapper,
@@ -44,7 +45,8 @@ public class WebUiElementDomainService {
             WebUiCaseTemplateMapper templateMapper,
             WorkspaceService workspaceService,
             ApiWorkspaceScopeSupport workspaceScopeSupport,
-            WebUiLocatorValidationRunner locatorValidationRunner
+            WebUiLocatorValidationRunner locatorValidationRunner,
+            WebUiLocatorContextSupport locatorContextSupport
     ) {
         this.elementMapper = elementMapper;
         this.moduleMapper = moduleMapper;
@@ -57,6 +59,7 @@ public class WebUiElementDomainService {
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
         this.locatorValidationRunner = locatorValidationRunner;
+        this.locatorContextSupport = locatorContextSupport;
     }
 
     public PageResponse<WebUiElementItem> listElements(
@@ -507,6 +510,7 @@ public class WebUiElementDomainService {
             }
             step.setLocatorType(element.getLocatorType());
             step.setLocatorValue(element.getLocatorValue());
+            step.setLocatorContextJson(element.getLocatorContextJson());
             step.setUpdatedAt(now);
             caseStepMapper.updateById(step);
             caseStepCount += 1;
@@ -521,6 +525,7 @@ public class WebUiElementDomainService {
             }
             step.setLocatorType(element.getLocatorType());
             step.setLocatorValue(element.getLocatorValue());
+            step.setLocatorContextJson(element.getLocatorContextJson());
             step.setUpdatedAt(now);
             templateStepMapper.updateById(step);
             templateStepCount += 1;
@@ -659,6 +664,7 @@ public class WebUiElementDomainService {
         entity.setElementName(request.elementName().trim());
         entity.setLocatorType(normalizeLocatorType(request.locatorType()));
         entity.setLocatorValue(request.locatorValue().trim());
+        entity.setLocatorContextJson(locatorContextSupport.write(request.framePath(), request.shadowPath()));
         entity.setDescription(blankToNull(request.description()));
         entity.setStatus(normalizeStatus(request.status()));
         if (request.collectTaskId() != null) {
@@ -832,6 +838,8 @@ public class WebUiElementDomainService {
                 entity.getElementName(),
                 entity.getLocatorType(),
                 entity.getLocatorValue(),
+                locatorContextSupport.framePath(entity.getLocatorContextJson()),
+                locatorContextSupport.shadowPath(entity.getLocatorContextJson()),
                 entity.getDescription(),
                 entity.getStatus(),
                 entity.getLastValidateResult(),

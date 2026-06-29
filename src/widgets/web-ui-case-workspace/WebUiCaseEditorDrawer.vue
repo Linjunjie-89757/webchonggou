@@ -11,6 +11,7 @@ import {
   runnerHeartbeatText,
   runnerOptionLabel,
   runnerStatusText,
+  runnerUnselectableReason,
   selectDefaultRunnerId,
   type RunnerNodeSummary,
 } from '@/entities/local-runner'
@@ -39,6 +40,7 @@ import {
   type WebUiElementModuleItem,
   type WebUiElementPageItem,
   type LocalRunnerTaskDetailResponse,
+  type WebUiLocatorContextPathItem,
   type WebUiLocatorType,
   type WebUiRunResponse,
   type WebUiRunStepResult,
@@ -61,6 +63,8 @@ interface EditableStep {
   elementGroupId: number | null
   locatorType: WebUiLocatorType | null
   locatorValue: string
+  framePath: WebUiLocatorContextPathItem[]
+  shadowPath: WebUiLocatorContextPathItem[]
   inputValue: string
   timeoutMs: number | null
   continueOnFailure: boolean
@@ -190,6 +194,8 @@ function createStep(sortOrder = form.value.steps.length + 1): EditableStep {
     elementGroupId: null,
     locatorType: null,
     locatorValue: '',
+    framePath: [],
+    shadowPath: [],
     inputValue: '',
     timeoutMs: null,
     continueOnFailure: false,
@@ -319,6 +325,8 @@ function toEditableStep(item: WebUiCaseStepItem, index: number): EditableStep {
     elementGroupId: null,
     locatorType: item.locatorType || null,
     locatorValue: item.locatorValue || '',
+    framePath: Array.isArray(item.framePath) ? item.framePath : [],
+    shadowPath: Array.isArray(item.shadowPath) ? item.shadowPath : [],
     inputValue: item.inputValue || '',
     timeoutMs: item.timeoutMs ?? null,
     continueOnFailure: Boolean(item.continueOnFailure),
@@ -458,6 +466,8 @@ function handleStepTypeChange(step: EditableStep) {
     step.elementGroupId = null
     step.locatorType = null
     step.locatorValue = ''
+    step.framePath = []
+    step.shadowPath = []
   } else if (!step.locatorType) {
     step.locatorType = 'CSS'
   }
@@ -776,6 +786,8 @@ function handleStepElementChange(step: EditableStep, elementId: number | null) {
   if (!element) {
     step.elementId = null
     step.elementName = null
+    step.framePath = []
+    step.shadowPath = []
     return
   }
   step.elementId = element.id
@@ -785,6 +797,8 @@ function handleStepElementChange(step: EditableStep, elementId: number | null) {
   step.elementGroupId = element.groupId
   step.locatorType = element.locatorType
   step.locatorValue = element.locatorValue
+  step.framePath = Array.isArray(element.framePath) ? element.framePath : []
+  step.shadowPath = Array.isArray(element.shadowPath) ? element.shadowPath : []
   if (!step.name.trim()) {
     step.name = element.elementName
   }
@@ -797,12 +811,28 @@ function getStepReferencedElement(step: EditableStep) {
   return elements.value.find(item => item.id === step.elementId) || null
 }
 
+function locatorContextKey(
+  framePath?: WebUiLocatorContextPathItem[] | null,
+  shadowPath?: WebUiLocatorContextPathItem[] | null,
+) {
+  return JSON.stringify({
+    framePath: Array.isArray(framePath) ? framePath : [],
+    shadowPath: Array.isArray(shadowPath) ? shadowPath : [],
+  })
+}
+
+function hasLocatorContext(step: EditableStep) {
+  return step.framePath.length > 0 || step.shadowPath.length > 0
+}
+
 function isStepLocatorSynced(step: EditableStep) {
   const element = getStepReferencedElement(step)
   if (!element) {
     return true
   }
-  return step.locatorType === element.locatorType && step.locatorValue.trim() === element.locatorValue
+  return step.locatorType === element.locatorType
+    && step.locatorValue.trim() === element.locatorValue
+    && locatorContextKey(step.framePath, step.shadowPath) === locatorContextKey(element.framePath, element.shadowPath)
 }
 
 function restoreStepLocatorFromElement(step: EditableStep) {
@@ -813,6 +843,8 @@ function restoreStepLocatorFromElement(step: EditableStep) {
   }
   step.locatorType = element.locatorType
   step.locatorValue = element.locatorValue
+  step.framePath = Array.isArray(element.framePath) ? element.framePath : []
+  step.shadowPath = Array.isArray(element.shadowPath) ? element.shadowPath : []
   ElMessage.success('已恢复为元素库定位器')
 }
 
@@ -976,6 +1008,8 @@ function buildPayload(): SaveWebUiCasePayload {
       elementId: step.elementId ?? null,
       locatorType: stepNeedsLocator(step.type) ? step.locatorType : null,
       locatorValue: stepNeedsLocator(step.type) ? step.locatorValue.trim() || null : null,
+      framePath: stepNeedsLocator(step.type) ? step.framePath : [],
+      shadowPath: stepNeedsLocator(step.type) ? step.shadowPath : [],
       inputValue: stepNeedsInput(step.type) ? step.inputValue.trim() || null : null,
       timeoutMs: step.timeoutMs === null || step.timeoutMs === undefined ? null : clampTimeout(step.timeoutMs),
       continueOnFailure: step.continueOnFailure,
@@ -1129,7 +1163,7 @@ async function runCaseWithLocalRunner() {
     }
     const selectedRunner = runnerNodes.value.find(item => item.runnerId === selectedRunnerId.value)
     if (!selectedRunner || !isRunnerSelectable(selectedRunner, WEB_CASE_RUNNER_TASK_TYPE)) {
-      ElMessage.warning('当前 Local Runner 离线或不支持 Web UI 用例运行，请重新选择')
+      ElMessage.warning(`当前 Local Runner 不可用：${selectedRunner ? runnerUnselectableReason(selectedRunner, WEB_CASE_RUNNER_TASK_TYPE) || '请重新选择' : '请重新选择'}`)
       return
     }
     const response = await webUiAutomationApi.createLocalRunnerRun(props.workspaceCode, props.caseId, {
@@ -1151,7 +1185,10 @@ async function runCaseWithLocalRunner() {
 async function loadRunnerNodes() {
   loadingRunnerNodes.value = true
   try {
-    runnerNodes.value = await localRunnerApi.getRunnerNodes()
+    runnerNodes.value = await localRunnerApi.getRunnerNodes({
+      taskType: WEB_CASE_RUNNER_TASK_TYPE,
+      resourceCost: 5,
+    })
     selectedRunnerId.value = selectDefaultRunnerId(runnerNodes.value, selectedRunnerId.value, WEB_CASE_RUNNER_TASK_TYPE)
   } catch (error) {
     runnerNodes.value = []
@@ -1193,6 +1230,8 @@ async function validateLocator(index: number) {
       headless: form.value.headless,
       locatorType: step.locatorType,
       locatorValue: step.locatorValue.trim(),
+      framePath: step.framePath,
+      shadowPath: step.shadowPath,
       timeoutMs: step.timeoutMs ?? form.value.defaultTimeoutMs,
     })
     locatorValidationResult.value = result
@@ -1562,6 +1601,14 @@ onBeforeUnmount(() => {
                   </el-button>
                 </div>
                 <div v-if="row.elementId" class="web-ui-locator-sync">
+                  <el-tag
+                    v-if="hasLocatorContext(row)"
+                    type="info"
+                    effect="plain"
+                    size="small"
+                  >
+                    含上下文
+                  </el-tag>
                   <el-tag
                     :type="isStepLocatorSynced(row) ? 'success' : 'warning'"
                     effect="light"

@@ -6,7 +6,6 @@ export type ConfigCenterTab =
   | 'notification'
   | 'proxy'
   | 'dbConnection'
-  | 'aiProvider'
 
 export type ConfigStatus = 0 | 1
 

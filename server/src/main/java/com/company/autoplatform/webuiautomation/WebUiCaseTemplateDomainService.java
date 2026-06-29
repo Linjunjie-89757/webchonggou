@@ -26,6 +26,7 @@ public class WebUiCaseTemplateDomainService {
     private final WebUiCaseDomainService caseDomainService;
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
+    private final WebUiLocatorContextSupport locatorContextSupport;
 
     public WebUiCaseTemplateDomainService(
             WebUiCaseTemplateMapper templateMapper,
@@ -33,7 +34,8 @@ public class WebUiCaseTemplateDomainService {
             WebUiElementMapper elementMapper,
             WebUiCaseDomainService caseDomainService,
             WorkspaceService workspaceService,
-            ApiWorkspaceScopeSupport workspaceScopeSupport
+            ApiWorkspaceScopeSupport workspaceScopeSupport,
+            WebUiLocatorContextSupport locatorContextSupport
     ) {
         this.templateMapper = templateMapper;
         this.templateStepMapper = templateStepMapper;
@@ -41,6 +43,7 @@ public class WebUiCaseTemplateDomainService {
         this.caseDomainService = caseDomainService;
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
+        this.locatorContextSupport = locatorContextSupport;
     }
 
     public PageResponse<WebUiCaseTemplateItem> listTemplates(
@@ -190,6 +193,7 @@ public class WebUiCaseTemplateDomainService {
         entity.setElementId(elementId);
         entity.setLocatorType(locatorType);
         entity.setLocatorValue(locatorValue);
+        entity.setLocatorContextJson(locatorContextSupport.write(request.framePath(), request.shadowPath()));
         entity.setInputValue(inputValue);
         entity.setTimeoutMs(normalizeStepTimeout(request.timeoutMs()));
         entity.setContinueOnFailure(Boolean.TRUE.equals(request.continueOnFailure()));
@@ -205,6 +209,8 @@ public class WebUiCaseTemplateDomainService {
                 step.elementId(),
                 step.locatorType(),
                 step.locatorValue(),
+                step.framePath(),
+                step.shadowPath(),
                 step.inputValue(),
                 step.timeoutMs(),
                 step.continueOnFailure(),
@@ -305,6 +311,8 @@ public class WebUiCaseTemplateDomainService {
                 getElementName(entity.getElementId()),
                 entity.getLocatorType(),
                 entity.getLocatorValue(),
+                locatorContextSupport.framePath(entity.getLocatorContextJson()),
+                locatorContextSupport.shadowPath(entity.getLocatorContextJson()),
                 entity.getInputValue(),
                 entity.getTimeoutMs(),
                 entity.getContinueOnFailure(),

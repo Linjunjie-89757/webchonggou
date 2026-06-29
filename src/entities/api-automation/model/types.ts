@@ -602,6 +602,10 @@ export interface ApiRunResult {
 }
 
 export interface ApiRuntimeContextSnapshot {
+  executionLocation?: string | null
+  runnerId?: string | null
+  runnerRunId?: string | null
+  taskType?: string | null
   environment?: {
     id?: number | null
     baseUrl?: string | null

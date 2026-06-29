@@ -52,6 +52,7 @@ import {
   runnerHeartbeatText,
   runnerOptionLabel,
   runnerStatusText,
+  runnerUnselectableReason,
   selectDefaultRunnerId,
   type RunnerNodeSummary,
 } from '@/entities/local-runner'
@@ -1196,7 +1197,8 @@ async function handleRunSuite() {
       }
       const selectedRunner = suiteRunnerNodes.value.find(item => item.runnerId === selectedSuiteRunnerId.value)
       if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SUITE_RUNNER_TASK_TYPE)) {
-        ElMessage.warning('当前 Local Runner 离线或不支持接口套件运行，请重新选择')
+        const reason = selectedRunner ? runnerUnselectableReason(selectedRunner, API_SUITE_RUNNER_TASK_TYPE) : 'Runner 不存在或已离线'
+        ElMessage.warning(`当前 Local Runner 不可用：${reason}`)
         return
       }
     }
@@ -1237,7 +1239,8 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
       }
       const selectedRunner = suiteRunnerNodes.value.find(item => item.runnerId === selectedSuiteRunnerId.value)
       if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SUITE_RUNNER_TASK_TYPE)) {
-        ElMessage.warning('当前 Local Runner 离线或不支持接口套件运行，请重新选择')
+        const reason = selectedRunner ? runnerUnselectableReason(selectedRunner, API_SUITE_RUNNER_TASK_TYPE) : 'Runner 不存在或已离线'
+        ElMessage.warning(`当前 Local Runner 不可用：${reason}`)
         return
       }
     }
@@ -1265,7 +1268,10 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
 async function loadSuiteRunnerNodes() {
   suiteRunnerNodesLoading.value = true
   try {
-    suiteRunnerNodes.value = await localRunnerApi.getRunnerNodes()
+    suiteRunnerNodes.value = await localRunnerApi.getRunnerNodes({
+      taskType: API_SUITE_RUNNER_TASK_TYPE,
+      resourceCost: 1,
+    })
     selectedSuiteRunnerId.value = selectDefaultRunnerId(suiteRunnerNodes.value, selectedSuiteRunnerId.value, API_SUITE_RUNNER_TASK_TYPE)
   } catch (error) {
     suiteRunnerNodes.value = []

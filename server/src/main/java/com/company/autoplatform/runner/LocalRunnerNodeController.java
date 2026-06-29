@@ -4,6 +4,7 @@ import com.company.autoplatform.auth.CurrentUserContext;
 import com.company.autoplatform.common.ApiResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Duration;
@@ -22,8 +23,11 @@ public class LocalRunnerNodeController {
     }
 
     @GetMapping
-    public ApiResponse<List<RunnerNodeSummaryResponse>> listNodes() {
+    public ApiResponse<List<RunnerNodeSummaryResponse>> listNodes(
+            @RequestParam(value = "taskType", required = false) String taskType,
+            @RequestParam(value = "resourceCost", required = false) Integer resourceCost
+    ) {
         CurrentUserContext.require();
-        return ApiResponse.ok(localRunnerService.listRunnerNodes(Duration.ofMinutes(2)));
+        return ApiResponse.ok(localRunnerService.listRunnerNodes(Duration.ofMinutes(2), taskType, resourceCost));
     }
 }

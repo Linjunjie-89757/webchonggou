@@ -82,6 +82,7 @@ public class WebUiExecutionDomainService {
     private final LocalRunnerService localRunnerService;
     private final WebUiArtifactStorageService artifactStorageService;
     private final WebUiExecutionContextSupport executionContextSupport;
+    private final WebUiLocatorContextSupport locatorContextSupport;
     private final String mockPublicBaseUrl;
 
     public WebUiExecutionDomainService(
@@ -102,6 +103,7 @@ public class WebUiExecutionDomainService {
             LocalRunnerService localRunnerService,
             WebUiArtifactStorageService artifactStorageService,
             WebUiExecutionContextSupport executionContextSupport,
+            WebUiLocatorContextSupport locatorContextSupport,
             @Value("${autoplatform.mock.public-base-url:http://localhost:${server.port:8080}/api/mock}") String mockPublicBaseUrl
     ) {
         this.runBatchMapper = runBatchMapper;
@@ -121,6 +123,7 @@ public class WebUiExecutionDomainService {
         this.localRunnerService = localRunnerService;
         this.artifactStorageService = artifactStorageService;
         this.executionContextSupport = executionContextSupport;
+        this.locatorContextSupport = locatorContextSupport;
         this.mockPublicBaseUrl = trimTrailingSlash(mockPublicBaseUrl);
     }
 
@@ -598,6 +601,8 @@ public class WebUiExecutionDomainService {
                             item.put("stepType", step.getStepType());
                             item.put("locatorType", step.getLocatorType());
                             item.put("locatorValue", step.getLocatorValue());
+                            item.put("framePath", locatorContextSupport.framePath(step.getLocatorContextJson()));
+                            item.put("shadowPath", locatorContextSupport.shadowPath(step.getLocatorContextJson()));
                             item.put("inputValue", step.getInputValue());
                             item.put("timeoutMs", step.getTimeoutMs());
                             item.put("continueOnFailure", Boolean.TRUE.equals(step.getContinueOnFailure()));
@@ -1564,6 +1569,7 @@ public class WebUiExecutionDomainService {
             step.setStepType(stepType);
             step.setLocatorType(locatorType);
             step.setLocatorValue(locatorValue);
+            step.setLocatorContextJson(locatorContextSupport.write(request.framePath(), request.shadowPath()));
             step.setInputValue(inputValue);
             step.setTimeoutMs(normalizeStepTimeout(request.timeoutMs()));
             step.setContinueOnFailure(Boolean.TRUE.equals(request.continueOnFailure()));

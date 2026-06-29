@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 test('polls platform validation command and submits local validation results', async () => {
@@ -116,6 +119,54 @@ test('polls platform validation command and submits local validation results', a
     runner.kill();
     await closeServer(fakePlatform);
     await once(runner, 'exit').catch(() => {});
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('reports productized runtime configuration from health endpoint', async () => {
+  const runnerPort = await findAvailablePort();
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const runnerDataDir = await mkdtemp(join(tmpdir(), 'runner-productized-'));
+  const runner = spawn(process.execPath, [
+    'tools/web-ui-runner/server.mjs',
+    `--port=${runnerPort}`,
+    '--runner-name=Productized Runner',
+    '--install-id=productized-install',
+    `--data-dir=${runnerDataDir}`,
+    '--max-resource-slots=7',
+    '--session-ttl-minutes=25',
+    '--start-command=web-ui-runner.exe',
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: '39000',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const health = await getJson(runnerBaseUrl, '/health');
+
+    assert.equal(health.runner.name, 'Productized Runner');
+    assert.equal(health.runner.productName, 'Web UI Local Runner');
+    assert.equal(health.runner.installId, 'productized-install');
+    assert.equal(health.runner.port, runnerPort);
+    assert.equal(health.diagnostics.sessionTtlMinutes, 25);
+    assert.equal(health.diagnostics.maxResourceSlots, 7);
+    assert.equal(health.diagnostics.dataDir, runnerDataDir);
+    assert.equal(health.diagnostics.logDir, `${runnerDataDir}\\logs`);
+    assert.equal(health.diagnostics.configPath, `${runnerDataDir}\\config.json`);
+    assert.equal(health.diagnostics.startCommand, 'web-ui-runner.exe');
+  } finally {
+    runner.kill();
+    await once(runner, 'exit').catch(() => {});
+    await rm(runnerDataDir, { recursive: true, force: true });
   }
 
   assert.deepEqual(stderr, []);

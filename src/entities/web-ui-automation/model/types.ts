@@ -35,6 +35,13 @@ export type WebUiScreenshotPolicy = 'NONE' | 'ON_FAILURE' | 'ALWAYS'
 
 export type WebUiEnvironmentStatus = 0 | 1
 
+export type WebUiLocatorContextPathItem = string | {
+  selector?: string | null
+  url?: string | null
+  name?: string | null
+  index?: number | null
+}
+
 export type WebUiRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELED'
 
 export type WebUiRunStepStatus = 'PENDING' | 'RUNNING' | 'PASSED' | 'FAILED' | 'SKIPPED'
@@ -55,6 +62,8 @@ export interface WebUiCaseStepItem {
   elementName?: string | null
   locatorType?: WebUiLocatorType | null
   locatorValue?: string | null
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   inputValue?: string | null
   timeoutMs?: number | null
   continueOnFailure: boolean
@@ -191,6 +200,8 @@ export interface WebUiElementItem {
   elementName: string
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   description: string | null
   status: WebUiCaseStatus
   lastValidateResult: 'PASSED' | 'FAILED' | string | null
@@ -303,6 +314,8 @@ export interface WebUiElementCollectCandidate {
   elementName: string
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   confidence: number
   reason: string
   tagName: string | null
@@ -327,6 +340,8 @@ export interface WebUiElementCollectCandidate {
 export interface WebUiElementCollectValidationResult {
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   validationStatus: 'PASSED' | 'FAILED' | 'MULTIPLE' | 'UNVERIFIED' | string
   matchCount: number
   validationMessage: string | null
@@ -348,6 +363,8 @@ export interface LocalRunnerCollectValidationCommandPayload {
 export interface WebUiElementCollectValidationTarget {
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
 }
 
 export interface LocalRunnerCollectValidationCommandResponse {
@@ -540,6 +557,8 @@ export interface SaveWebUiElementPayload {
   elementName: string
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   description?: string | null
   status?: WebUiCaseStatus
   collectTaskId?: number | null
@@ -659,6 +678,8 @@ export interface ValidateWebUiLocatorPayload {
   headless?: boolean
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   timeoutMs?: number | null
 }
 

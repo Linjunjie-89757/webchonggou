@@ -123,6 +123,33 @@ test('buildCandidatesFromElements removes duplicate alternative locators', () =>
   );
 });
 
+test('buildCandidatesFromElements preserves frame and shadow context metadata', () => {
+  const [candidate] = buildCandidatesFromElements([
+    {
+      tagName: 'button',
+      visible: true,
+      text: 'Save',
+      placeholder: '',
+      ariaLabel: '',
+      name: '',
+      id: '',
+      testId: 'save',
+      href: '',
+      role: '',
+      label: '',
+      cssPath: 'button',
+      xpath: '//button',
+      framePath: [{ selector: 'iframe#child', url: 'https://example.test/frame' }],
+      shadowPath: ['custom-shell'],
+    },
+  ]);
+
+  assert.deepEqual(candidate.framePath, [{ selector: 'iframe#child', url: 'https://example.test/frame' }]);
+  assert.deepEqual(candidate.shadowPath, ['custom-shell']);
+  assert.deepEqual(candidate.locator.framePath, [{ selector: 'iframe#child', url: 'https://example.test/frame' }]);
+  assert.deepEqual(candidate.locator.shadowPath, ['custom-shell']);
+});
+
 test('normalizeLocatorValidationResult maps match counts to validation statuses', () => {
   assert.deepEqual(
     normalizeLocatorValidationResult({
@@ -151,4 +178,19 @@ test('normalizeLocatorValidationResult maps match counts to validation statuses'
 
   assert.equal(normalizeLocatorValidationResult({ locatorType: 'CSS', locatorValue: '.row', matchCount: 2 }).validationStatus, 'MULTIPLE');
   assert.equal(normalizeLocatorValidationResult({ locatorType: 'CSS', locatorValue: '#missing', matchCount: 0 }).validationStatus, 'FAILED');
+});
+
+test('normalizeLocatorValidationResult preserves locator context metadata', () => {
+  const result = normalizeLocatorValidationResult({
+    locatorType: 'CSS',
+    locatorValue: '#submit',
+    framePath: [{ selector: 'iframe#child' }],
+    shadowPath: ['custom-shell'],
+    matchCount: 1,
+    visible: true,
+    enabled: true,
+  });
+
+  assert.deepEqual(result.framePath, [{ selector: 'iframe#child' }]);
+  assert.deepEqual(result.shadowPath, ['custom-shell']);
 });

@@ -26,6 +26,7 @@ import {
   type WebUiElementQualityIssue,
   type WebUiElementReferenceItem,
   type WebUiEnvironmentItem,
+  type WebUiLocatorContextPathItem,
   type WebUiLocatorType,
 } from '@/entities/web-ui-automation'
 import {
@@ -154,6 +155,8 @@ interface AiElementCandidate {
   elementName: string
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
   confidence: number
   reason: string
   tagName: string | null
@@ -1357,6 +1360,8 @@ function mapCollectCandidatesToAiCandidates(
     elementName: item.elementName,
     locatorType: item.locatorType,
     locatorValue: item.locatorValue,
+    framePath: Array.isArray(item.framePath) ? item.framePath : [],
+    shadowPath: Array.isArray(item.shadowPath) ? item.shadowPath : [],
     confidence: item.confidence,
     reason: item.reason,
     tagName: item.tagName,
@@ -2700,6 +2705,8 @@ async function saveAiCandidates() {
         elementName: candidate.elementName.trim(),
         locatorType: candidate.locatorType,
         locatorValue: candidate.locatorValue.trim(),
+        framePath: Array.isArray(candidate.framePath) ? candidate.framePath : [],
+        shadowPath: Array.isArray(candidate.shadowPath) ? candidate.shadowPath : [],
         description: buildAiCandidateDescription(candidate),
         status: 'ENABLED',
       })

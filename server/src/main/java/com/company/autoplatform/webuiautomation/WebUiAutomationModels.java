@@ -35,6 +35,8 @@ public final class WebUiAutomationModels {
             Long elementId,
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String inputValue,
             Integer timeoutMs,
             Boolean continueOnFailure,
@@ -92,6 +94,8 @@ public final class WebUiAutomationModels {
             String elementName,
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String inputValue,
             Integer timeoutMs,
             Boolean continueOnFailure,
@@ -167,6 +171,8 @@ public final class WebUiAutomationModels {
             String elementName,
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String inputValue,
             Integer timeoutMs,
             Boolean continueOnFailure,
@@ -308,6 +314,8 @@ public final class WebUiAutomationModels {
             @NotBlank(message = "Element name cannot be blank") String elementName,
             @NotBlank(message = "Locator type cannot be blank") String locatorType,
             @NotBlank(message = "Locator value cannot be blank") String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String description,
             String status,
             Long collectTaskId,
@@ -415,6 +423,8 @@ public final class WebUiAutomationModels {
             String elementName,
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             Integer confidence,
             String reason,
             String tagName,
@@ -543,7 +553,9 @@ public final class WebUiAutomationModels {
 
     public record WebUiElementCollectValidationTarget(
             String locatorType,
-            String locatorValue
+            String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath
     ) {
     }
 
@@ -565,6 +577,8 @@ public final class WebUiAutomationModels {
     public record WebUiElementCollectValidationResult(
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String validationStatus,
             Integer matchCount,
             String validationMessage,
@@ -644,6 +658,8 @@ public final class WebUiAutomationModels {
             String elementName,
             String locatorType,
             String locatorValue,
+            List<Map<String, Object>> framePath,
+            List<Object> shadowPath,
             String description,
             String status,
             String lastValidateResult,

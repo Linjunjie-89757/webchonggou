@@ -604,6 +604,8 @@ public class WebUiElementCollectService {
                 candidate.elementName(),
                 candidate.locatorType(),
                 candidate.locatorValue(),
+                candidate.framePath(),
+                candidate.shadowPath(),
                 confidence,
                 candidate.reason(),
                 candidate.tagName(),
@@ -670,7 +672,7 @@ public class WebUiElementCollectService {
             String locatorValue = blankToNull(candidate.locatorValue());
             String key = locatorKey(locatorType, locatorValue);
             if (key != null && !targets.containsKey(key)) {
-                targets.put(key, new WebUiElementCollectValidationTarget(locatorType, locatorValue));
+                targets.put(key, new WebUiElementCollectValidationTarget(locatorType, locatorValue, candidate.framePath(), candidate.shadowPath()));
             }
         }
         return new ArrayList<>(targets.values());
@@ -692,7 +694,7 @@ public class WebUiElementCollectService {
             String locatorValue = blankToNull(item.locatorValue());
             String key = locatorKey(locatorType, locatorValue);
             if (key != null && !targets.containsKey(key)) {
-                targets.put(key, new WebUiElementCollectValidationTarget(locatorType, locatorValue));
+                targets.put(key, new WebUiElementCollectValidationTarget(locatorType, locatorValue, item.framePath(), item.shadowPath()));
             }
         }
         return new ArrayList<>(targets.values());
@@ -1310,6 +1312,8 @@ public class WebUiElementCollectService {
                 elementName,
                 locatorType,
                 locatorValue,
+                null,
+                null,
                 confidence,
                 reason,
                 element.tagName(),
@@ -1429,6 +1433,8 @@ public class WebUiElementCollectService {
                 candidate.elementName(),
                 candidate.locatorType(),
                 candidate.locatorValue(),
+                candidate.framePath(),
+                candidate.shadowPath(),
                 candidate.confidence(),
                 candidate.reason(),
                 candidate.tagName(),
@@ -1468,6 +1474,8 @@ public class WebUiElementCollectService {
                 candidate.elementName(),
                 candidate.locatorType(),
                 candidate.locatorValue(),
+                candidate.framePath(),
+                candidate.shadowPath(),
                 candidate.confidence(),
                 candidate.reason(),
                 candidate.tagName(),

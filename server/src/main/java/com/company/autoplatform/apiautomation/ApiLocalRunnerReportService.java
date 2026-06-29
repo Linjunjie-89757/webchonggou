@@ -85,7 +85,9 @@ public class ApiLocalRunnerReportService {
                 null,
                 safeMap(reportData.get("request")),
                 safeMap(reportData.get("response")),
-                safeList(reportData.get("assertions"))
+                safeList(reportData.get("assertions")),
+                safeMap(reportData.get("extractedVariables")),
+                safeMap(reportData.get("scriptResults"))
         );
         stepResultMapper.insert(step);
 
@@ -140,7 +142,9 @@ public class ApiLocalRunnerReportService {
                     stringValue(stepResult.get("errorMessage")),
                     safeMap(stepResult.get("request")),
                     safeMap(stepResult.get("response")),
-                    safeList(stepResult.get("assertions"))
+                    safeList(stepResult.get("assertions")),
+                    safeMap(stepResult.get("extractedVariables")),
+                    safeMap(stepResult.get("scriptResults"))
             ));
         }
 
@@ -213,7 +217,9 @@ public class ApiLocalRunnerReportService {
             String errorMessage,
             Map<String, Object> request,
             Map<String, Object> response,
-            List<Map<String, Object>> assertions
+            List<Map<String, Object>> assertions,
+            Map<String, Object> extractedVariables,
+            Map<String, Object> scriptResults
     ) {
         ApiRunStepResultEntity entity = new ApiRunStepResultEntity();
         entity.setWorkspaceId(workspaceId);
@@ -226,8 +232,8 @@ public class ApiLocalRunnerReportService {
         entity.setRequestSnapshotJson(ApiAutomationJsonSupport.toJson(toRequestSnapshot(request), "Failed to serialize Local Runner API request snapshot"));
         entity.setResponseSnapshotJson(ApiAutomationJsonSupport.toJson(toResponseSnapshot(response), "Failed to serialize Local Runner API response snapshot"));
         entity.setAssertionResultsJson(ApiAutomationJsonSupport.toJson(toAssertionResults(assertions), "Failed to serialize Local Runner API assertions"));
-        entity.setExtractionResultsJson("[]");
-        entity.setProcessorResultsJson("[]");
+        entity.setExtractionResultsJson(ApiAutomationJsonSupport.toJson(toExtractionResults(extractedVariables), "Failed to serialize Local Runner API extractions"));
+        entity.setProcessorResultsJson(ApiAutomationJsonSupport.toJson(toProcessorResults(scriptResults), "Failed to serialize Local Runner API processors"));
         entity.setErrorMessage(errorMessage);
         entity.setCreatedAt(LocalDateTime.now());
         entity.setUpdatedAt(LocalDateTime.now());
@@ -275,6 +281,43 @@ public class ApiLocalRunnerReportService {
                 .toList();
     }
 
+    private List<ApiExtractionResult> toExtractionResults(Map<String, Object> extractedVariables) {
+        return extractedVariables.entrySet().stream()
+                .filter(entry -> entry.getKey() != null)
+                .map(entry -> new ApiExtractionResult(
+                        entry.getKey(),
+                        true,
+                        stringValue(entry.getValue()),
+                        "Extracted by Local Runner"
+                ))
+                .toList();
+    }
+
+    private List<ApiProcessorResult> toProcessorResults(Map<String, Object> scriptResults) {
+        List<ApiProcessorResult> results = new java.util.ArrayList<>();
+        appendScriptProcessorResult(results, "PRE", safeMap(scriptResults.get("pre")));
+        appendScriptProcessorResult(results, "POST", safeMap(scriptResults.get("post")));
+        return results;
+    }
+
+    private void appendScriptProcessorResult(List<ApiProcessorResult> results, String stage, Map<String, Object> scriptResult) {
+        if (scriptResult.isEmpty()) {
+            return;
+        }
+        String status = stringValue(scriptResult.get("status"));
+        boolean success = status == null || !"FAILED".equalsIgnoreCase(status);
+        results.add(new ApiProcessorResult(
+                stage,
+                "SCRIPT",
+                stage + " script",
+                success,
+                longValue(scriptResult.get("durationMs"), 0L),
+                stringValue(firstPresent(scriptResult.get("message"), scriptResult.get("errorMessage"))),
+                safeStringList(scriptResult.get("logs")),
+                Map.of()
+        ));
+    }
+
     private String contextSnapshot(LocalRunnerTaskFinalResultEvent event) {
         return ApiAutomationJsonSupport.toJson(Map.of(
                 "executionLocation", EXECUTION_LOCATION_LOCAL_RUNNER,
@@ -297,6 +340,16 @@ public class ApiLocalRunnerReportService {
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> safeList(Object value) {
         return value instanceof List<?> list ? (List<Map<String, Object>>) list : List.of();
+    }
+
+    private List<String> safeStringList(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .map(this::stringValue)
+                .filter(item -> item != null && !item.isBlank())
+                .toList();
     }
 
     private Map<String, String> stringMap(Object value) {

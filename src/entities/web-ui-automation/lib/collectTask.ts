@@ -94,6 +94,7 @@ type CandidateFilterShape = Pick<
 >
 
 type CandidateLocatorShape = Pick<WebUiElementCollectCandidate, 'locatorType' | 'locatorValue'>
+  & Pick<WebUiElementCollectCandidate, 'framePath' | 'shadowPath'>
 
 type CandidateSortShape = CandidateFilterShape & CandidateReviewShape & {
   id?: string | number
@@ -433,15 +434,23 @@ export function buildCollectCandidateValidationLocators(candidates: CandidateLoc
   return candidates.reduce<CandidateLocatorShape[]>((result, candidate) => {
     const locatorValue = candidate.locatorValue?.trim()
     if (!locatorValue) return result
-    const key = `${candidate.locatorType}::${locatorValue}`
+    const framePath = normalizeLocatorContextPath(candidate.framePath)
+    const shadowPath = normalizeLocatorContextPath(candidate.shadowPath)
+    const key = `${candidate.locatorType}::${locatorValue}::${JSON.stringify(framePath)}::${JSON.stringify(shadowPath)}`
     if (seen.has(key)) return result
     seen.add(key)
     result.push({
       locatorType: candidate.locatorType,
       locatorValue,
+      ...(framePath.length > 0 ? { framePath } : {}),
+      ...(shadowPath.length > 0 ? { shadowPath } : {}),
     })
     return result
   }, [])
+}
+
+function normalizeLocatorContextPath(value: CandidateLocatorShape['framePath']) {
+  return Array.isArray(value) ? value : []
 }
 
 export function formatCollectFilterReason(reason?: string | null) {

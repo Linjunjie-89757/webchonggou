@@ -29,6 +29,9 @@ public class WebUiCaseStepEntity extends BaseEntity {
     @TableField("locator_value")
     private String locatorValue;
 
+    @TableField("locator_context_json")
+    private String locatorContextJson;
+
     @TableField("input_value")
     private String inputValue;
 

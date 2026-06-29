@@ -37,6 +37,9 @@ public class WebUiElementEntity extends BaseEntity {
     @TableField("locator_value")
     private String locatorValue;
 
+    @TableField("locator_context_json")
+    private String locatorContextJson;
+
     private String description;
 
     private String status;

@@ -9,18 +9,22 @@ import { buildCandidatesFromElements, normalizeLocatorValidationResult, isProbab
 import { isAllowedRunnerOrigin, parseAllowedOrigins } from './cors.mjs';
 import { createRunnerTaskPoller } from './platformTaskPoller.mjs';
 import { resolveOpenTarget } from './session.mjs';
+import { evaluateAuthStateHealth } from './authState.mjs';
+import { ensureRunnerRuntimeDirectories, resolveRunnerRuntimeConfig } from './runnerConfig.mjs';
 
-const HOST = '127.0.0.1';
-const DEFAULT_PORT = 39118;
-const RUNNER_VERSION = '0.1.0';
-const DATA_DIR = join(homedir(), '.auto-web-ui-runner');
-const AUTH_DIR = join(DATA_DIR, 'auth');
 const VALIDATION_LOCATOR_LIMIT = 200;
 const VALIDATION_SCREENSHOT_LIMIT = 8;
 const AUTH_STALE_MINUTES = 24 * 60;
-const DEFAULT_SESSION_TTL_MINUTES = 15;
-const START_COMMAND = 'npm.cmd run runner';
-const INSTALL_CHROMIUM_COMMAND = 'npx playwright install chromium';
+const runtimeConfig = resolveRunnerRuntimeConfig({
+  env: process.env,
+  argv: process.argv.slice(2),
+  homeDir: homedir(),
+  hostname: hostname(),
+});
+const HOST = runtimeConfig.host;
+const RUNNER_VERSION = runtimeConfig.runnerVersion;
+const DATA_DIR = runtimeConfig.dataDir;
+const AUTH_DIR = runtimeConfig.authDir;
 
 let browser;
 let context;
@@ -29,17 +33,13 @@ let activeSession;
 let playwrightModule;
 let platformPoller;
 
-const port = Number.parseInt(process.env.WEB_UI_RUNNER_PORT || '', 10) || DEFAULT_PORT;
+const port = runtimeConfig.port;
 const allowedOrigins = parseAllowedOrigins(process.env.WEB_UI_RUNNER_ORIGINS);
-const sessionTtlMinutes = normalizePositiveNumber(process.env.WEB_UI_RUNNER_SESSION_TTL_MINUTES, DEFAULT_SESSION_TTL_MINUTES);
+const sessionTtlMinutes = runtimeConfig.sessionTtlMinutes;
 const runnerTaskPoller = createRunnerTaskPoller({
   runnerVersion: RUNNER_VERSION,
-  defaultInstallId: process.env.WEB_UI_RUNNER_INSTALL_ID || `web-ui-runner-${hostname()}`,
-  machineHint: {
-    deviceName: hostname(),
-    runnerName: 'Web UI Local Runner',
-    source: 'node-local-runner',
-  },
+  defaultInstallId: runtimeConfig.installId,
+  machineHint: runtimeConfig.machineHint,
   webElementValidateExecutor: async ({ locators }) => validateCurrentPageLocators({
     locators,
   }),
@@ -52,6 +52,8 @@ const runnerTaskPoller = createRunnerTaskPoller({
     onStepResult,
   }),
 });
+
+await ensureRunnerRuntimeDirectories(runtimeConfig);
 
 const server = createServer(async (request, response) => {
   try {
@@ -115,7 +117,11 @@ const server = createServer(async (request, response) => {
 
     if (route === 'POST /tasks/poll/start') {
       const payload = await readJson(request);
-      const result = await runnerTaskPoller.start(payload);
+      const result = await runnerTaskPoller.start({
+        capabilities: runtimeConfig.capabilities,
+        maxResourceSlots: runtimeConfig.maxResourceSlots,
+        ...payload,
+      });
       return sendJson(response, 200, result);
     }
 
@@ -184,10 +190,12 @@ async function getHealth() {
   return {
     success: true,
     runner: {
-      name: 'Web UI Local Runner',
+      name: runtimeConfig.runnerName,
+      productName: runtimeConfig.productName,
       version: RUNNER_VERSION,
       host: HOST,
       port,
+      installId: runtimeConfig.installId,
     },
     playwright: {
       available: playwright.available,
@@ -204,9 +212,14 @@ async function getHealth() {
       chromiumInstalled,
     }),
     diagnostics: {
-      startCommand: START_COMMAND,
-      installChromiumCommand: INSTALL_CHROMIUM_COMMAND,
+      startCommand: runtimeConfig.commands.start,
+      installChromiumCommand: runtimeConfig.commands.installChromium,
       sessionTtlMinutes,
+      maxResourceSlots: runtimeConfig.maxResourceSlots,
+      dataDir: runtimeConfig.dataDir,
+      authDir: runtimeConfig.authDir,
+      logDir: runtimeConfig.logDir,
+      configPath: runtimeConfig.configPath,
       validationLocatorLimit: VALIDATION_LOCATOR_LIMIT,
       validationScreenshotLimit: VALIDATION_SCREENSHOT_LIMIT,
     },
@@ -342,7 +355,7 @@ async function captureCurrentPage(payload) {
     await page.waitForTimeout(Math.min(Number(payload.waitMs), 10_000));
   }
 
-  const rawElements = await page.evaluate(collectElementsInPage);
+  const rawElements = await collectRawElementsFromPage();
   const pageInfo = await getPageInfo(page);
   const screenshot = await page.screenshot({
     fullPage: false,
@@ -357,6 +370,53 @@ async function captureCurrentPage(payload) {
     rawCount: rawElements.length,
     screenshotBase64: screenshot.toString('base64'),
   };
+}
+
+async function collectRawElementsFromPage() {
+  ensurePage();
+  const frames = page.frames();
+  const elements = [];
+  for (const frame of frames) {
+    const framePath = await resolveFramePath(frame).catch(() => []);
+    const frameElements = await frame.evaluate(collectElementsInPage, {
+      framePath,
+      shadowPath: [],
+    }).catch(() => []);
+    elements.push(...frameElements);
+  }
+  return elements;
+}
+
+async function resolveFramePath(frame) {
+  if (!page || frame === page.mainFrame()) {
+    return [];
+  }
+  const parent = frame.parentFrame();
+  const parentPath = parent ? await resolveFramePath(parent) : [];
+  const frameElement = await frame.frameElement().catch(() => null);
+  const selector = frameElement ? await frameElement.evaluate(buildFrameElementSelector).catch(() => '') : '';
+  return selector ? [...parentPath, { selector }] : parentPath;
+}
+
+function buildFrameElementSelector(element) {
+  if (!element) {
+    return '';
+  }
+  const tag = String(element.tagName || '').toLowerCase() || 'iframe';
+  if (element.id) {
+    return `${tag}#${CSS.escape(element.id)}`;
+  }
+  const name = element.getAttribute('name');
+  if (name) {
+    return `${tag}[name="${String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"]`;
+  }
+  const parent = element.parentElement;
+  if (!parent) {
+    return tag;
+  }
+  const siblings = Array.from(parent.children).filter(child => child.tagName === element.tagName);
+  const index = siblings.indexOf(element) + 1;
+  return siblings.length > 1 ? `${tag}:nth-of-type(${index})` : tag;
 }
 
 async function validateCurrentPageLocators(payload) {
@@ -375,12 +435,15 @@ async function validateCurrentPageLocators(payload) {
         locatorValue,
         matchCount: 0,
         screenshotBase64: null,
+        framePath: item.framePath,
+        shadowPath: item.shadowPath,
       }));
       continue;
     }
 
     try {
-      const locator = resolveLocator(page, locatorType, locatorValue);
+      const target = resolveLocatorTarget(page, item.framePath, item.shadowPath);
+      const locator = resolveLocator(target, locatorType, locatorValue);
       const matchCount = await locator.count();
       let screenshotBase64 = null;
       let visible = false;
@@ -408,6 +471,8 @@ async function validateCurrentPageLocators(payload) {
         editable,
         enabled,
         screenshotBase64,
+        framePath: item.framePath,
+        shadowPath: item.shadowPath,
       }));
     } catch (error) {
       results.push({
@@ -417,6 +482,7 @@ async function validateCurrentPageLocators(payload) {
         matchCount: 0,
         validationMessage: error instanceof Error ? error.message : String(error),
         screenshotBase64: null,
+        ...buildLocatorContextExtra(item),
       });
     }
   }
@@ -506,13 +572,14 @@ async function executeCurrentPageCaseStep(input) {
       if (!url) {
         throw new Error('OPEN step requires inputValue or case baseUrl');
       }
-      assertRequiredAuthState(input.task, input.caseSnapshot);
+      await assertRequiredAuthState(input.task, input.caseSnapshot);
       await openCollectPage({
         url,
         workspaceId: input.task.workspaceCode || 'default-workspace',
         environmentId: input.caseSnapshot.environmentId || 'default-environment',
         headless: input.caseSnapshot.headless === true,
       });
+      await assertPageStillAuthenticated(input.caseSnapshot);
       return;
     }
     case 'CLICK': {
@@ -721,16 +788,47 @@ function isAbsoluteBrowserUrl(value) {
   return /^(https?:|file:|data:|about:)/i.test(optionalString(value));
 }
 
-function assertRequiredAuthState(task, caseSnapshot) {
+async function assertRequiredAuthState(task, caseSnapshot) {
   if (caseSnapshot.requireAuthState !== true && caseSnapshot.authRequired !== true) {
     return;
   }
   const workspaceId = optionalString(task.workspaceCode) || 'default-workspace';
   const environmentId = optionalString(caseSnapshot.environmentId) || 'default-environment';
   const storageStatePath = getStorageStatePath(workspaceId, environmentId);
-  if (!existsSync(storageStatePath)) {
-    throw new Error(`本地登录态不存在：当前用例要求登录态，请先在 Local Runner 中打开目标环境页面并保存登录态（工作空间：${workspaceId}，环境：${environmentId}）`);
+  const health = evaluateAuthStateHealth({
+    required: true,
+    exists: existsSync(storageStatePath),
+    workspaceId,
+    environmentId,
+    storageState: await readJsonFile(storageStatePath),
+    minTtlMs: resolveAuthStateMinTtlMs(task, caseSnapshot),
+  });
+  if (!health.ok) {
+    throw new Error(health.message);
   }
+}
+
+async function assertPageStillAuthenticated(caseSnapshot) {
+  if (caseSnapshot.requireAuthState !== true && caseSnapshot.authRequired !== true) {
+    return;
+  }
+  const pageInfo = await getPageInfo(page);
+  if (pageInfo.isProbablyLoginPage) {
+    throw new Error(`本地登录态已失效：打开目标页面后跳转到登录页（当前 URL：${pageInfo.url}），请重新保存登录态后再执行`);
+  }
+}
+
+function resolveAuthStateMinTtlMs(task, caseSnapshot) {
+  const timeoutPolicy = normalizePlainObject(task.timeoutPolicy);
+  const explicit = Number(caseSnapshot.authStateMinTtlMs ?? timeoutPolicy.authStateMinTtlMs);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return explicit;
+  }
+  const maxDuration = Number(timeoutPolicy.maxDurationMs ?? timeoutPolicy.taskTimeoutMs ?? task.taskTimeoutMs);
+  if (Number.isFinite(maxDuration) && maxDuration > 0) {
+    return maxDuration;
+  }
+  return 5 * 60_000;
 }
 
 function buildCaseRenderContext(payload) {
@@ -826,7 +924,8 @@ function resolveCaseStepLocator(step, timeoutMs) {
   if (!locatorType || !locatorValue) {
     throw new Error('Step locatorType and locatorValue are required');
   }
-  const locator = resolveLocator(page, locatorType, locatorValue);
+  const target = resolveLocatorTarget(page, step.framePath, step.shadowPath);
+  const locator = resolveLocator(target, locatorType, locatorValue);
   return locator.first();
 }
 
@@ -877,8 +976,18 @@ function buildCaseStepResult(step, result) {
       sortOrder: step.sortOrder || null,
       locatorType: step.locatorType || null,
       locatorValue: step.locatorValue || null,
+      ...buildLocatorContextExtra(step),
       ...(result.extra || {}),
     },
+  };
+}
+
+function buildLocatorContextExtra(value) {
+  const framePath = normalizeFramePath(value.framePath);
+  const shadowPath = normalizeShadowPath(value.shadowPath);
+  return {
+    ...(framePath.length > 0 ? { framePath } : {}),
+    ...(shadowPath.length > 0 ? { shadowPath } : {}),
   };
 }
 
@@ -944,6 +1053,31 @@ function resolveLocator(targetPage, locatorType, locatorValue) {
     default:
       return targetPage.locator(locatorValue);
   }
+}
+
+function resolveLocatorTarget(rootPage, framePath, shadowPath) {
+  let target = rootPage;
+  for (const item of normalizeFramePath(framePath)) {
+    const selector = optionalString(item?.selector || item);
+    if (selector) {
+      target = target.frameLocator(selector);
+    }
+  }
+  for (const item of normalizeShadowPath(shadowPath)) {
+    const selector = optionalString(item?.selector || item);
+    if (selector) {
+      target = target.locator(selector);
+    }
+  }
+  return target;
+}
+
+function normalizeFramePath(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeShadowPath(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function cssAttributeEscape(value) {
@@ -1231,7 +1365,7 @@ async function getPageInfo(targetPage) {
   };
 }
 
-function collectElementsInPage() {
+function collectElementsInPage(context = {}) {
   const selector = [
     'a',
     'button',
@@ -1243,8 +1377,25 @@ function collectElementsInPage() {
     '[data-test]',
     '[aria-label]',
   ].join(',');
+  const baseFramePath = Array.isArray(context.framePath) ? context.framePath : [];
+  const baseShadowPath = Array.isArray(context.shadowPath) ? context.shadowPath : [];
+  const elements = [];
 
-  return Array.from(document.querySelectorAll(selector)).slice(0, 500).map((element) => {
+  collectFromRoot(document, baseShadowPath);
+  return elements.slice(0, 500);
+
+  function collectFromRoot(root, shadowPath) {
+    for (const element of Array.from(root.querySelectorAll(selector))) {
+      elements.push(buildElementInfo(element, shadowPath));
+    }
+    for (const host of Array.from(root.querySelectorAll('*'))) {
+      if (host.shadowRoot) {
+        collectFromRoot(host.shadowRoot, [...shadowPath, buildShadowHostSelector(host, root)]);
+      }
+    }
+  }
+
+  function buildElementInfo(element, shadowPath) {
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
     const label = findLabelText(element);
@@ -1266,8 +1417,10 @@ function collectElementsInPage() {
       label,
       cssPath: buildCssPath(element),
       xpath: buildXPath(element),
+      framePath: baseFramePath,
+      shadowPath,
     };
-  });
+  }
 
   function findLabelText(element) {
     if (element.id) {
@@ -1305,6 +1458,23 @@ function collectElementsInPage() {
     return parts.join(' > ');
   }
 
+  function buildShadowHostSelector(element, root) {
+    const tag = element.tagName.toLowerCase();
+    if (element.id) {
+      return `${tag}#${CSS.escape(element.id)}`;
+    }
+    const testId = element.getAttribute('data-testid') || element.getAttribute('data-test');
+    if (testId) {
+      return `${tag}[data-testid="${cssAttributeEscape(testId)}"]`;
+    }
+    const name = element.getAttribute('name');
+    if (name) {
+      return `${tag}[name="${cssAttributeEscape(name)}"]`;
+    }
+    const sameTagCount = root.querySelectorAll(tag).length;
+    return sameTagCount === 1 ? tag : buildCssPath(element);
+  }
+
   function buildXPath(element) {
     const parts = [];
     let current = element;
@@ -1325,6 +1495,10 @@ function collectElementsInPage() {
       current = parent;
     }
     return `/${parts.join('/')}`;
+  }
+
+  function cssAttributeEscape(value) {
+    return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   }
 }
 

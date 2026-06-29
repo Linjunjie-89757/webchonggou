@@ -597,6 +597,7 @@ test('builds unique locator list for collect candidate revalidation', () => {
     {
       locatorType: 'CSS',
       locatorValue: '#submit',
+      shadowPath: ['submit-shell'],
     },
     {
       locatorType: 'TEXT',
@@ -610,6 +611,7 @@ test('builds unique locator list for collect candidate revalidation', () => {
 
   assert.deepEqual(locators, [
     { locatorType: 'CSS', locatorValue: '#submit' },
+    { locatorType: 'CSS', locatorValue: '#submit', shadowPath: ['submit-shell'] },
     { locatorType: 'TEXT', locatorValue: '提交' },
   ])
 })

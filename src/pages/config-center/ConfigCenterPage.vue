@@ -5,7 +5,6 @@ import type { ConfigCenterTab } from '@/entities/config'
 import { useWorkspaceContext, workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
-import AiProviderPanel from '@/widgets/ai-provider-panel/AiProviderPanel.vue'
 import ConfigComingSoonPanel from '@/widgets/config-coming-soon-panel/ConfigComingSoonPanel.vue'
 import ConfigDbPanel from '@/widgets/config-db-panel/ConfigDbPanel.vue'
 import ConfigEnvPanel from '@/widgets/config-env-panel/ConfigEnvPanel.vue'
@@ -118,7 +117,6 @@ onMounted(() => {
           :items="['代理地址与端口', '敏感账号密码', '环境级代理引用']"
         />
         <ConfigDbPanel v-else-if="activeTab === 'dbConnection'" :workspace-code="workspaceCode" />
-        <AiProviderPanel v-else :workspace-code="workspaceCode" />
       </main>
     </div>
   </AppPage>

@@ -547,7 +547,11 @@ public class ApiExecutionDomainService {
         Map<String, Object> scenarioSnapshot = new LinkedHashMap<>();
         scenarioSnapshot.put("scenarioId", scenario.getId());
         scenarioSnapshot.put("scenarioName", scenario.getScenarioName());
-        scenarioSnapshot.put("steps", readScenarioSteps(scenario.getStepsJson()));
+        scenarioSnapshot.put("steps", ApiLocalRunnerPayloadSupport.buildScenarioSteps(
+                readScenarioSteps(scenario.getStepsJson()),
+                Boolean.TRUE.equals(scenario.getContinueOnFailure()),
+                caseMapper
+        ));
         scenarioSnapshot.put("assertions", readScenarioAssertions(scenario.getScenarioAssertionsJson()));
 
         Map<String, Object> runOptions = new LinkedHashMap<>();

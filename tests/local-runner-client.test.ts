@@ -37,7 +37,12 @@ test('mapRunnerCandidateToCollectCandidate maps runner candidates as static unve
     candidate: {
       name: 'Username',
       elementType: 'INPUT',
-      locator: { strategy: 'TEST_ID', value: 'login-username' },
+      locator: {
+        strategy: 'TEST_ID',
+        value: 'login-username',
+        framePath: [{ selector: 'iframe#login' }],
+        shadowPath: ['login-shell'],
+      },
       text: '',
       placeholder: 'Input username',
       tagName: 'input',
@@ -56,6 +61,8 @@ test('mapRunnerCandidateToCollectCandidate maps runner candidates as static unve
   assert.equal(candidate.matchCount, null)
   assert.equal(candidate.validationMessage, '静态生成，尚未经过 Runner 真机验证')
   assert.equal(candidate.screenshotBase64, 'screen')
+  assert.deepEqual(candidate.framePath, [{ selector: 'iframe#login' }])
+  assert.deepEqual(candidate.shadowPath, ['login-shell'])
 })
 
 test('validateLocalRunnerLocators posts locators and normalizes validation results', async () => {
@@ -93,7 +100,7 @@ test('validateLocalRunnerLocators posts locators and normalizes validation resul
 
   try {
     const results = await validateLocalRunnerLocators([
-      { locatorType: 'CSS', locatorValue: '#search' },
+      { locatorType: 'CSS', locatorValue: '#search', framePath: [{ selector: 'iframe#orders' }], shadowPath: ['order-shell'] },
       { locatorType: 'TEXT', locatorValue: 'Submit' },
       { locatorType: 'CSS', locatorValue: '' },
     ])
@@ -102,7 +109,7 @@ test('validateLocalRunnerLocators posts locators and normalizes validation resul
     assert.equal(requestSignal instanceof AbortSignal, true)
     assert.deepEqual(requestBody, {
       locators: [
-        { locatorType: 'CSS', locatorValue: '#search' },
+        { locatorType: 'CSS', locatorValue: '#search', framePath: [{ selector: 'iframe#orders' }], shadowPath: ['order-shell'] },
         { locatorType: 'TEXT', locatorValue: 'Submit' },
       ],
     })
@@ -114,6 +121,8 @@ test('validateLocalRunnerLocators posts locators and normalizes validation resul
         matchCount: 1,
         validationMessage: 'ok',
         screenshotBase64: 'png',
+        framePath: [{ selector: 'iframe#orders' }],
+        shadowPath: ['order-shell'],
       },
       {
         locatorType: 'TEXT',

@@ -212,7 +212,9 @@ public final class LocalRunnerModels {
             LocalDateTime lastHeartbeatAt,
             Long secondsSinceHeartbeat,
             Boolean offline,
-            List<RunnerActiveTaskSummary> activeTasks
+            List<RunnerActiveTaskSummary> activeTasks,
+            Boolean selectable,
+            String unselectableReason
     ) {
     }
 

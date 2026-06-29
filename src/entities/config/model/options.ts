@@ -12,7 +12,6 @@ export const configCenterTabs: Array<{
   { id: 'notification', label: '通知配置', description: '失败通知与渠道' },
   { id: 'proxy', label: '网络代理', description: '网络出口与代理' },
   { id: 'dbConnection', label: '数据库连接', description: '数据源配置' },
-  { id: 'aiProvider', label: 'AI 连接池', description: '模型服务连接' },
 ]
 
 export const configEnvTypeOptions = [

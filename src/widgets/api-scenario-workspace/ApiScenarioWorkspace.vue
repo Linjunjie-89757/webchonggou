@@ -56,6 +56,7 @@ import { configApi, type DbConnectionItem } from '@/entities/config'
 import {
   isRunnerSelectable,
   localRunnerApi,
+  runnerUnselectableReason,
   runnerActiveTaskText,
   runnerHeartbeatText,
   runnerOptionLabel,
@@ -2845,7 +2846,8 @@ async function runScenario() {
       }
       const selectedRunner = scenarioRunnerNodes.value.find(item => item.runnerId === selectedScenarioRunnerId.value)
       if (!selectedRunner || !isRunnerSelectable(selectedRunner, API_SCENARIO_RUNNER_TASK_TYPE)) {
-        ElMessage.warning('当前 Local Runner 离线或不支持接口场景运行，请重新选择')
+        const reason = selectedRunner ? runnerUnselectableReason(selectedRunner, API_SCENARIO_RUNNER_TASK_TYPE) : 'Runner 不存在或已离线'
+        ElMessage.warning(`当前 Local Runner 不可用：${reason}`)
         return
       }
     }
@@ -2882,7 +2884,10 @@ async function runScenario() {
 async function loadScenarioRunnerNodes() {
   scenarioRunnerNodesLoading.value = true
   try {
-    scenarioRunnerNodes.value = await localRunnerApi.getRunnerNodes()
+    scenarioRunnerNodes.value = await localRunnerApi.getRunnerNodes({
+      taskType: API_SCENARIO_RUNNER_TASK_TYPE,
+      resourceCost: 1,
+    })
     selectedScenarioRunnerId.value = selectDefaultRunnerId(scenarioRunnerNodes.value, selectedScenarioRunnerId.value, API_SCENARIO_RUNNER_TASK_TYPE)
   } catch (error) {
     scenarioRunnerNodes.value = []

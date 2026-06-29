@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 test('polls generic runner task and reports real WEB_ELEMENT_VALIDATE result', async () => {
@@ -627,6 +630,495 @@ test('polls generic runner task and reports real WEB_CASE_RUN result', async () 
   assert.deepEqual(stderr, []);
 });
 
+test('validates locator inside iframe when framePath is provided', async () => {
+  const runnerPort = await findAvailablePort();
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const opened = await postJson(runnerBaseUrl, '/collect/open', {
+      url: 'data:text/html,<iframe id="child" srcdoc="<button id=&quot;inside&quot;>Inside</button>"></iframe>',
+      workspaceId: 'account-open',
+      environmentId: 'iframe-validate',
+      headless: true,
+    });
+    assert.equal(opened.success, true);
+
+    const validation = await postJson(runnerBaseUrl, '/collect/validate', {
+      locators: [
+        {
+          locatorType: 'CSS',
+          locatorValue: '#inside',
+          framePath: [{ selector: 'iframe#child' }],
+        },
+      ],
+    });
+
+    assert.equal(validation.results[0].validationStatus, 'PASSED');
+    assert.equal(validation.results[0].matchCount, 1);
+    assert.deepEqual(validation.results[0].framePath, [{ selector: 'iframe#child' }]);
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await postJson(runnerBaseUrl, '/session/release', {}).catch(() => {});
+    await stopRunnerProcess(runner);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('validates locator inside shadow root when shadowPath is provided', async () => {
+  const runnerPort = await findAvailablePort();
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const pageHtml = [
+    '<button id="inside">Outer</button>',
+    '<custom-shell></custom-shell>',
+    '<script>',
+    'const root = document.querySelector("custom-shell").attachShadow({ mode: "open" });',
+    'root.innerHTML = `<button id="inside">Shadow</button>`;',
+    '</script>',
+  ].join('');
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const opened = await postJson(runnerBaseUrl, '/collect/open', {
+      url: `data:text/html,${encodeURIComponent(pageHtml)}`,
+      workspaceId: 'account-open',
+      environmentId: 'shadow-validate',
+      headless: true,
+    });
+    assert.equal(opened.success, true);
+
+    const validation = await postJson(runnerBaseUrl, '/collect/validate', {
+      locators: [
+        {
+          locatorType: 'CSS',
+          locatorValue: '#inside',
+          shadowPath: ['custom-shell'],
+        },
+      ],
+    });
+
+    assert.equal(validation.results[0].validationStatus, 'PASSED');
+    assert.equal(validation.results[0].matchCount, 1);
+    assert.deepEqual(validation.results[0].shadowPath, ['custom-shell']);
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await postJson(runnerBaseUrl, '/session/release', {}).catch(() => {});
+    await stopRunnerProcess(runner);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('runs WEB_CASE_RUN step inside iframe when framePath is provided', async () => {
+  const runnerPort = await findAvailablePort();
+  let platformPort = await findAvailablePort();
+  while (platformPort === runnerPort) {
+    platformPort = await findAvailablePort();
+  }
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const platformBaseUrl = `http://127.0.0.1:${platformPort}`;
+  const pageUrl = 'data:text/html,<iframe id="child" srcdoc="<button id=&quot;inside&quot; onclick=&quot;document.body.dataset.clicked=1&quot;>Inside</button><div id=&quot;state&quot;>ready</div><script>document.getElementById(&quot;inside&quot;).addEventListener(&quot;click&quot;,()=>document.getElementById(&quot;state&quot;).textContent=&quot;clicked&quot;)</script>"></iframe>';
+  const reports = {
+    register: [],
+    pull: [],
+    status: [],
+    logs: [],
+    steps: [],
+    results: [],
+  };
+  let taskPulled = false;
+
+  const fakePlatform = createServer(async (request, response) => {
+    const url = new URL(request.url || '/', platformBaseUrl);
+    const body = await readJson(request);
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/register') {
+      reports.register.push(body);
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          runnerId: 'runner_iframe_case_test',
+          runnerToken: 'runner_token',
+          runnerName: 'Iframe Case Test Runner',
+          protocolVersion: '1.0',
+          accepted: true,
+          message: 'registered',
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/pull') {
+      reports.pull.push(body);
+      if (taskPulled) {
+        return sendJson(response, 200, {
+          success: true,
+          data: {
+            hasTask: false,
+            serverTime: new Date().toISOString(),
+            pollIntervalMs: 1000,
+            task: null,
+          },
+        });
+      }
+      taskPulled = true;
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          hasTask: true,
+          serverTime: new Date().toISOString(),
+          pollIntervalMs: 1000,
+          task: {
+            runId: 'run_generic_case_iframe_001',
+            taskType: 'WEB_CASE_RUN',
+            executionLocation: 'LOCAL_RUNNER',
+            executionToken: 'execution_token',
+            runnerId: 'runner_iframe_case_test',
+            workspaceCode: 'account-open',
+            userId: '1',
+            protocolVersion: '1.0',
+            priority: 'MANUAL',
+            resourceCost: 5,
+            createdAt: new Date().toISOString(),
+            deadlineAt: null,
+            timeoutPolicy: {},
+            environmentSnapshot: {},
+            variableSnapshot: {},
+            scriptSnapshot: {},
+            artifactRefs: [],
+            maskingRules: [],
+            screenshotPolicy: {},
+            payload: {
+              caseSnapshot: {
+                caseId: 1008,
+                caseName: 'Iframe case',
+                baseUrl: pageUrl,
+                headless: true,
+                defaultTimeoutMs: 5000,
+                steps: [
+                  {
+                    stepId: 'open-page',
+                    stepName: 'Open page',
+                    stepType: 'OPEN',
+                    enabled: true,
+                    sortOrder: 1,
+                  },
+                  {
+                    stepId: 'click-inside-frame',
+                    stepName: 'Click iframe button',
+                    stepType: 'CLICK',
+                    locatorType: 'CSS',
+                    locatorValue: '#inside',
+                    framePath: [{ selector: 'iframe#child' }],
+                    enabled: true,
+                    sortOrder: 2,
+                  },
+                  {
+                    stepId: 'assert-frame-state',
+                    stepName: 'Assert iframe state',
+                    stepType: 'ASSERT_TEXT',
+                    locatorType: 'CSS',
+                    locatorValue: '#state',
+                    inputValue: 'clicked',
+                    framePath: [{ selector: 'iframe#child' }],
+                    enabled: true,
+                    sortOrder: 3,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_iframe_001/status') {
+      reports.status.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_iframe_001/logs') {
+      reports.logs.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_iframe_001/steps') {
+      reports.steps.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_iframe_001/result') {
+      reports.results.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    return sendJson(response, 404, {
+      success: false,
+      message: `Unexpected platform route: ${request.method} ${url.pathname}`,
+    });
+  });
+
+  await listen(fakePlatform, platformPort);
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const started = await postJson(runnerBaseUrl, '/tasks/poll/start', {
+      apiBaseUrl: platformBaseUrl,
+      installId: 'generic-case-iframe-test',
+      intervalMs: 1000,
+      capabilities: ['WEB_CASE_RUN'],
+    });
+    assert.equal(started.success, true);
+
+    await waitFor(() => reports.results.length > 0);
+
+    assert.equal(reports.steps.length, 3);
+    assert.equal(reports.steps[1].status, 'SUCCESS');
+    assert.deepEqual(reports.steps[1].extra.framePath, [{ selector: 'iframe#child' }]);
+    assert.equal(reports.steps[2].status, 'SUCCESS');
+    assert.equal(reports.results[0].status, 'SUCCESS');
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await closeServer(fakePlatform);
+    await stopRunnerProcess(runner);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('runs WEB_CASE_RUN step inside shadow root when shadowPath is provided', async () => {
+  const runnerPort = await findAvailablePort();
+  let platformPort = await findAvailablePort();
+  while (platformPort === runnerPort) {
+    platformPort = await findAvailablePort();
+  }
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const platformBaseUrl = `http://127.0.0.1:${platformPort}`;
+  const pageHtml = [
+    '<button id="inside">Outer</button>',
+    '<custom-shell></custom-shell>',
+    '<script>',
+    'const root = document.querySelector("custom-shell").attachShadow({ mode: "open" });',
+    'root.innerHTML = `<button id="inside">Shadow</button><div id="state">ready</div>`;',
+    'root.querySelector("#inside").addEventListener("click", () => root.querySelector("#state").textContent = "clicked");',
+    '</script>',
+  ].join('');
+  const pageUrl = `data:text/html,${encodeURIComponent(pageHtml)}`;
+  const reports = {
+    register: [],
+    pull: [],
+    status: [],
+    logs: [],
+    steps: [],
+    results: [],
+  };
+  let taskPulled = false;
+
+  const fakePlatform = createServer(async (request, response) => {
+    const url = new URL(request.url || '/', platformBaseUrl);
+    const body = await readJson(request);
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/register') {
+      reports.register.push(body);
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          runnerId: 'runner_shadow_case_test',
+          runnerToken: 'runner_token',
+          runnerName: 'Shadow Case Test Runner',
+          protocolVersion: '1.0',
+          accepted: true,
+          message: 'registered',
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/pull') {
+      reports.pull.push(body);
+      if (taskPulled) {
+        return sendJson(response, 200, {
+          success: true,
+          data: {
+            hasTask: false,
+            serverTime: new Date().toISOString(),
+            pollIntervalMs: 1000,
+            task: null,
+          },
+        });
+      }
+      taskPulled = true;
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          hasTask: true,
+          serverTime: new Date().toISOString(),
+          pollIntervalMs: 1000,
+          task: {
+            runId: 'run_generic_case_shadow_001',
+            taskType: 'WEB_CASE_RUN',
+            executionLocation: 'LOCAL_RUNNER',
+            executionToken: 'execution_token',
+            runnerId: 'runner_shadow_case_test',
+            workspaceCode: 'account-open',
+            userId: '1',
+            protocolVersion: '1.0',
+            priority: 'MANUAL',
+            resourceCost: 5,
+            createdAt: new Date().toISOString(),
+            deadlineAt: null,
+            timeoutPolicy: {},
+            environmentSnapshot: {},
+            variableSnapshot: {},
+            scriptSnapshot: {},
+            artifactRefs: [],
+            maskingRules: [],
+            screenshotPolicy: {},
+            payload: {
+              caseSnapshot: {
+                caseId: 1009,
+                caseName: 'Shadow case',
+                baseUrl: pageUrl,
+                headless: true,
+                defaultTimeoutMs: 5000,
+                steps: [
+                  {
+                    stepId: 'open-page',
+                    stepName: 'Open page',
+                    stepType: 'OPEN',
+                    enabled: true,
+                    sortOrder: 1,
+                  },
+                  {
+                    stepId: 'click-inside-shadow',
+                    stepName: 'Click shadow button',
+                    stepType: 'CLICK',
+                    locatorType: 'CSS',
+                    locatorValue: '#inside',
+                    shadowPath: ['custom-shell'],
+                    enabled: true,
+                    sortOrder: 2,
+                  },
+                  {
+                    stepId: 'assert-shadow-state',
+                    stepName: 'Assert shadow state',
+                    stepType: 'ASSERT_TEXT',
+                    locatorType: 'CSS',
+                    locatorValue: '#state',
+                    inputValue: 'clicked',
+                    shadowPath: ['custom-shell'],
+                    enabled: true,
+                    sortOrder: 3,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_shadow_001/status') {
+      reports.status.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_shadow_001/logs') {
+      reports.logs.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_shadow_001/steps') {
+      reports.steps.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_shadow_001/result') {
+      reports.results.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    return sendJson(response, 404, {
+      success: false,
+      message: `Unexpected platform route: ${request.method} ${url.pathname}`,
+    });
+  });
+
+  await listen(fakePlatform, platformPort);
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const started = await postJson(runnerBaseUrl, '/tasks/poll/start', {
+      apiBaseUrl: platformBaseUrl,
+      installId: 'generic-case-shadow-test',
+      intervalMs: 1000,
+      capabilities: ['WEB_CASE_RUN'],
+    });
+    assert.equal(started.success, true);
+
+    await waitFor(() => reports.results.length > 0);
+
+    assert.equal(reports.steps.length, 3);
+    assert.equal(reports.steps[1].status, 'SUCCESS');
+    assert.deepEqual(reports.steps[1].extra.shadowPath, ['custom-shell']);
+    assert.equal(reports.steps[2].status, 'SUCCESS');
+    assert.equal(reports.results[0].status, 'SUCCESS');
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await closeServer(fakePlatform);
+    await stopRunnerProcess(runner);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
 test('reports clear WEB_CASE_RUN failure when FILE_UPLOAD artifact is not available locally', async () => {
   const runnerPort = await findAvailablePort();
   let platformPort = await findAvailablePort();
@@ -973,6 +1465,408 @@ test('reports clear WEB_CASE_RUN failure when required auth state is missing', a
     await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
     await closeServer(fakePlatform);
     await stopRunnerProcess(runner);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('reports WEB_CASE_RUN failure when required auth state is expiring soon', async () => {
+  const runnerPort = await findAvailablePort();
+  let platformPort = await findAvailablePort();
+  while (platformPort === runnerPort) {
+    platformPort = await findAvailablePort();
+  }
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const platformBaseUrl = `http://127.0.0.1:${platformPort}`;
+  const workspaceCode = 'account-open';
+  const environmentId = 'auth-expiring-env';
+  const reports = {
+    register: [],
+    pull: [],
+    status: [],
+    logs: [],
+    steps: [],
+    results: [],
+  };
+  let taskPulled = false;
+
+  await writeStorageState(workspaceCode, environmentId, {
+    cookies: [
+      {
+        name: 'sid',
+        value: 'soon-expired',
+        domain: '127.0.0.1',
+        path: '/',
+        expires: Math.floor((Date.now() + 60_000) / 1000),
+        httpOnly: false,
+        secure: false,
+        sameSite: 'Lax',
+      },
+    ],
+    origins: [],
+  });
+
+  const fakePlatform = createServer(async (request, response) => {
+    const url = new URL(request.url || '/', platformBaseUrl);
+    const body = await readJson(request);
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/register') {
+      reports.register.push(body);
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          runnerId: 'runner_auth_expiring_test',
+          runnerToken: 'runner_token',
+          runnerName: 'Auth Expiring Test Runner',
+          protocolVersion: '1.0',
+          accepted: true,
+          message: 'registered',
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/pull') {
+      reports.pull.push(body);
+      if (taskPulled) {
+        return sendJson(response, 200, {
+          success: true,
+          data: {
+            hasTask: false,
+            serverTime: new Date().toISOString(),
+            pollIntervalMs: 1000,
+            task: null,
+          },
+        });
+      }
+      taskPulled = true;
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          hasTask: true,
+          serverTime: new Date().toISOString(),
+          pollIntervalMs: 1000,
+          task: {
+            runId: 'run_generic_case_auth_expiring_001',
+            taskType: 'WEB_CASE_RUN',
+            executionLocation: 'LOCAL_RUNNER',
+            executionToken: 'execution_token',
+            runnerId: 'runner_auth_expiring_test',
+            workspaceCode,
+            userId: '1',
+            protocolVersion: '1.0',
+            priority: 'MANUAL',
+            resourceCost: 5,
+            createdAt: new Date().toISOString(),
+            deadlineAt: null,
+            timeoutPolicy: {
+              authStateMinTtlMs: 5 * 60_000,
+            },
+            environmentSnapshot: {
+              environmentId,
+              baseUrl: 'https://example.test/',
+            },
+            variableSnapshot: {},
+            scriptSnapshot: {},
+            artifactRefs: [],
+            maskingRules: [],
+            screenshotPolicy: {},
+            payload: {
+              caseSnapshot: {
+                caseId: 1006,
+                caseName: 'Auth expiring case',
+                baseUrl: '${baseUrl}',
+                environmentId,
+                requireAuthState: true,
+                headless: true,
+                defaultTimeoutMs: 1000,
+                steps: [
+                  {
+                    stepId: 'open-page',
+                    stepName: 'Open page',
+                    stepType: 'OPEN',
+                    inputValue: './secure',
+                    enabled: true,
+                    sortOrder: 1,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_expiring_001/status') {
+      reports.status.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_expiring_001/logs') {
+      reports.logs.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_expiring_001/steps') {
+      reports.steps.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_expiring_001/result') {
+      reports.results.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    return sendJson(response, 404, {
+      success: false,
+      message: `Unexpected platform route: ${request.method} ${url.pathname}`,
+    });
+  });
+
+  await listen(fakePlatform, platformPort);
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const started = await postJson(runnerBaseUrl, '/tasks/poll/start', {
+      apiBaseUrl: platformBaseUrl,
+      installId: 'generic-case-auth-expiring-test',
+      intervalMs: 1000,
+      capabilities: ['WEB_CASE_RUN'],
+    });
+    assert.equal(started.success, true);
+
+    await waitFor(() => reports.results.length > 0);
+
+    assert.equal(reports.steps.length, 1);
+    assert.equal(reports.steps[0].status, 'FAILED');
+    assert.match(reports.steps[0].errorMessage, /即将过期/);
+    assert.equal(reports.results[0].status, 'FAILED');
+    assert.match(reports.results[0].errorMessage, /即将过期/);
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await closeServer(fakePlatform);
+    await stopRunnerProcess(runner);
+    await removeStorageState(workspaceCode, environmentId);
+  }
+
+  assert.deepEqual(stderr, []);
+});
+
+test('reports WEB_CASE_RUN failure when saved auth state lands on login page', async () => {
+  const runnerPort = await findAvailablePort();
+  let platformPort = await findAvailablePort();
+  while (platformPort === runnerPort) {
+    platformPort = await findAvailablePort();
+  }
+  let targetPort = await findAvailablePort();
+  while (targetPort === runnerPort || targetPort === platformPort) {
+    targetPort = await findAvailablePort();
+  }
+  const runnerBaseUrl = `http://127.0.0.1:${runnerPort}`;
+  const platformBaseUrl = `http://127.0.0.1:${platformPort}`;
+  const targetBaseUrl = `http://127.0.0.1:${targetPort}`;
+  const workspaceCode = 'account-open';
+  const environmentId = 'auth-login-env';
+  const reports = {
+    register: [],
+    pull: [],
+    status: [],
+    logs: [],
+    steps: [],
+    results: [],
+  };
+  let taskPulled = false;
+
+  await writeStorageState(workspaceCode, environmentId, {
+    cookies: [
+      {
+        name: 'sid',
+        value: 'valid-but-rejected',
+        domain: '127.0.0.1',
+        path: '/',
+        expires: Math.floor((Date.now() + 60 * 60_000) / 1000),
+        httpOnly: false,
+        secure: false,
+        sameSite: 'Lax',
+      },
+    ],
+    origins: [],
+  });
+
+  const targetApp = createServer((request, response) => {
+    const url = new URL(request.url || '/', targetBaseUrl);
+    if (url.pathname === '/secure') {
+      response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      response.end('<title>Login</title><input type="password" aria-label="Password"><button>Login</button>');
+      return;
+    }
+    response.writeHead(404);
+    response.end('not found');
+  });
+
+  const fakePlatform = createServer(async (request, response) => {
+    const url = new URL(request.url || '/', platformBaseUrl);
+    const body = await readJson(request);
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/register') {
+      reports.register.push(body);
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          runnerId: 'runner_auth_login_test',
+          runnerToken: 'runner_token',
+          runnerName: 'Auth Login Test Runner',
+          protocolVersion: '1.0',
+          accepted: true,
+          message: 'registered',
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/pull') {
+      reports.pull.push(body);
+      if (taskPulled) {
+        return sendJson(response, 200, {
+          success: true,
+          data: {
+            hasTask: false,
+            serverTime: new Date().toISOString(),
+            pollIntervalMs: 1000,
+            task: null,
+          },
+        });
+      }
+      taskPulled = true;
+      return sendJson(response, 200, {
+        success: true,
+        data: {
+          hasTask: true,
+          serverTime: new Date().toISOString(),
+          pollIntervalMs: 1000,
+          task: {
+            runId: 'run_generic_case_auth_login_001',
+            taskType: 'WEB_CASE_RUN',
+            executionLocation: 'LOCAL_RUNNER',
+            executionToken: 'execution_token',
+            runnerId: 'runner_auth_login_test',
+            workspaceCode,
+            userId: '1',
+            protocolVersion: '1.0',
+            priority: 'MANUAL',
+            resourceCost: 5,
+            createdAt: new Date().toISOString(),
+            deadlineAt: null,
+            timeoutPolicy: {},
+            environmentSnapshot: {
+              environmentId,
+              baseUrl: targetBaseUrl,
+            },
+            variableSnapshot: {},
+            scriptSnapshot: {},
+            artifactRefs: [],
+            maskingRules: [],
+            screenshotPolicy: {},
+            payload: {
+              caseSnapshot: {
+                caseId: 1007,
+                caseName: 'Auth login redirect case',
+                baseUrl: '${baseUrl}',
+                environmentId,
+                requireAuthState: true,
+                headless: true,
+                defaultTimeoutMs: 1000,
+                steps: [
+                  {
+                    stepId: 'open-page',
+                    stepName: 'Open page',
+                    stepType: 'OPEN',
+                    inputValue: './secure',
+                    enabled: true,
+                    sortOrder: 1,
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_login_001/status') {
+      reports.status.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_login_001/logs') {
+      reports.logs.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_login_001/steps') {
+      reports.steps.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: 'RUNNING' } });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/public/local-runner/tasks/run_generic_case_auth_login_001/result') {
+      reports.results.push(body);
+      return sendJson(response, 200, { success: true, data: { accepted: true, status: body.status } });
+    }
+
+    return sendJson(response, 404, {
+      success: false,
+      message: `Unexpected platform route: ${request.method} ${url.pathname}`,
+    });
+  });
+
+  await listen(targetApp, targetPort);
+  await listen(fakePlatform, platformPort);
+
+  const runner = spawn(process.execPath, ['tools/web-ui-runner/server.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      WEB_UI_RUNNER_PORT: String(runnerPort),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  const stderr = [];
+  runner.stderr.on('data', chunk => stderr.push(String(chunk)));
+
+  try {
+    await waitForRunnerHealth(runnerBaseUrl);
+    const started = await postJson(runnerBaseUrl, '/tasks/poll/start', {
+      apiBaseUrl: platformBaseUrl,
+      installId: 'generic-case-auth-login-test',
+      intervalMs: 1000,
+      capabilities: ['WEB_CASE_RUN'],
+    });
+    assert.equal(started.success, true);
+
+    await waitFor(() => reports.results.length > 0);
+
+    assert.equal(reports.steps.length, 1);
+    assert.equal(reports.steps[0].status, 'FAILED');
+    assert.match(reports.steps[0].errorMessage, /登录页|登录态已失效/);
+    assert.equal(reports.results[0].status, 'FAILED');
+    assert.match(reports.results[0].errorMessage, /登录页|登录态已失效/);
+  } finally {
+    await postJson(runnerBaseUrl, '/tasks/poll/stop', {}).catch(() => {});
+    await closeServer(targetApp);
+    await closeServer(fakePlatform);
+    await stopRunnerProcess(runner);
+    await removeStorageState(workspaceCode, environmentId);
   }
 
   assert.deepEqual(stderr, []);
@@ -2896,6 +3790,32 @@ async function findAvailablePort() {
   const port = typeof address === 'object' && address ? address.port : 0;
   await closeServer(server);
   return port;
+}
+
+async function writeStorageState(workspaceId, environmentId, storageState) {
+  const filePath = storageStatePath(workspaceId, environmentId);
+  await mkdir(join(homedir(), '.auto-web-ui-runner', 'auth'), { recursive: true });
+  await writeFile(filePath, JSON.stringify(storageState), 'utf8');
+  await writeFile(`${filePath}.meta.json`, JSON.stringify({
+    workspaceId,
+    environmentId,
+    savedAt: new Date().toISOString(),
+    url: '',
+  }), 'utf8');
+}
+
+async function removeStorageState(workspaceId, environmentId) {
+  const filePath = storageStatePath(workspaceId, environmentId);
+  await rm(filePath, { force: true });
+  await rm(`${filePath}.meta.json`, { force: true });
+}
+
+function storageStatePath(workspaceId, environmentId) {
+  return join(homedir(), '.auto-web-ui-runner', 'auth', `${safeName(workspaceId)}__${safeName(environmentId)}.json`);
+}
+
+function safeName(value) {
+  return String(value || 'default').replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
 async function getJson(baseUrl, path) {

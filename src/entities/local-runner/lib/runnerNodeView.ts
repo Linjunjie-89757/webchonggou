@@ -15,6 +15,12 @@ export function runnerSupportsTask(runner: RunnerNodeSummary, taskType: string) 
 }
 
 export function isRunnerSelectable(runner: RunnerNodeSummary, taskType: string) {
+  if (runner.selectable === false) {
+    return false
+  }
+  if (runner.selectable === true) {
+    return true
+  }
   return isRunnerOnline(runner) && runnerSupportsTask(runner, taskType)
 }
 
@@ -32,8 +38,25 @@ export function runnerDisplayName(runner: RunnerNodeSummary) {
 export function runnerOptionLabel(runner: RunnerNodeSummary, taskType: string) {
   const status = isRunnerOnline(runner) ? '在线' : '离线'
   const taskCount = Array.isArray(runner.activeTasks) ? runner.activeTasks.length : 0
-  const capability = runnerSupportsTask(runner, taskType) ? taskType : '能力不匹配'
+  const reason = runnerUnselectableReason(runner, taskType)
+  const capability = reason ? `不可用：${reason}` : taskType
   return `${runnerDisplayName(runner)} · ${status} · ${capability} · ${taskCount} 个任务`
+}
+
+export function runnerUnselectableReason(runner: RunnerNodeSummary, taskType: string) {
+  if (runner.selectable === true) {
+    return ''
+  }
+  if (runner.unselectableReason) {
+    return runner.unselectableReason
+  }
+  if (!isRunnerOnline(runner)) {
+    return '离线'
+  }
+  if (!runnerSupportsTask(runner, taskType)) {
+    return '能力不匹配'
+  }
+  return ''
 }
 
 export function runnerStatusText(runner: RunnerNodeSummary) {
@@ -64,4 +87,3 @@ export function runnerActiveTaskText(runner: RunnerNodeSummary) {
   const taskCount = Array.isArray(runner.activeTasks) ? runner.activeTasks.length : 0
   return `${taskCount} 个任务`
 }
-

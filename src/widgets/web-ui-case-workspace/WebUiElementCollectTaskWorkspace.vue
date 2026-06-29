@@ -1128,6 +1128,8 @@ async function saveSelectedCandidates() {
         elementName: candidate.elementName.trim(),
         locatorType: candidate.locatorType as WebUiLocatorType,
         locatorValue: candidate.locatorValue.trim(),
+        framePath: Array.isArray(candidate.framePath) ? candidate.framePath : [],
+        shadowPath: Array.isArray(candidate.shadowPath) ? candidate.shadowPath : [],
         description: buildCandidateDescription(candidate),
         status: 'ENABLED',
         collectTaskId: task.value?.taskId || null,

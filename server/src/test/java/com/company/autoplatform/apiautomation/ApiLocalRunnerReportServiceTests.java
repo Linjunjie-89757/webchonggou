@@ -105,6 +105,70 @@ class ApiLocalRunnerReportServiceTests {
     }
 
     @Test
+    void persistsApiCaseScriptResultsAndExtractedVariablesInFormalStepDetail() {
+        TaskMapper taskMapper = mock(TaskMapper.class);
+        ReportMapper reportMapper = mock(ReportMapper.class);
+        ApiRunStepResultMapper stepMapper = mock(ApiRunStepResultMapper.class);
+        ApiDefinitionCaseMapper caseMapper = mock(ApiDefinitionCaseMapper.class);
+        ApiDefinitionCaseRunHistoryMapper caseHistoryMapper = mock(ApiDefinitionCaseRunHistoryMapper.class);
+        ApiScenarioMapper scenarioMapper = mock(ApiScenarioMapper.class);
+        ApiScenarioRunHistoryMapper scenarioHistoryMapper = mock(ApiScenarioRunHistoryMapper.class);
+        ApiDefinitionCaseEntity apiCase = new ApiDefinitionCaseEntity();
+        apiCase.setId(2002L);
+        apiCase.setWorkspaceId(7L);
+        apiCase.setDefinitionId(1002L);
+        apiCase.setCaseName("Scripted API case");
+        when(caseMapper.selectById(2002L)).thenReturn(apiCase);
+
+        ApiLocalRunnerReportService service = new ApiLocalRunnerReportService(
+                taskMapper,
+                reportMapper,
+                stepMapper,
+                caseMapper,
+                caseHistoryMapper,
+                scenarioMapper,
+                scenarioHistoryMapper
+        );
+
+        service.handleLocalRunnerTaskFinalResult(new LocalRunnerTaskFinalResultEvent(
+                "run_api_case_script_001",
+                "API_CASE_RUN",
+                "SUCCESS",
+                7L,
+                "risk-ops",
+                "runner_local",
+                Map.of("apiCaseSnapshot", Map.of(
+                        "caseId", 2002,
+                        "caseName", "Scripted API case"
+                )),
+                Map.of(
+                        "durationMs", 88,
+                        "reportData", Map.of(
+                                "request", Map.of("method", "GET", "url", "http://127.0.0.1/case-script"),
+                                "response", Map.of("status", 200, "body", "{\"token\":\"case-token\"}"),
+                                "assertions", List.of(),
+                                "scriptResults", Map.of(
+                                        "pre", Map.of("status", "SUCCESS", "phase", "pre"),
+                                        "post", Map.of("status", "SUCCESS", "phase", "post")
+                                ),
+                                "extractedVariables", Map.of(
+                                        "CASE_TOKEN", "case-token",
+                                        "SERVER_TOKEN", "server-token"
+                                )
+                        )
+                )
+        ));
+
+        ArgumentCaptor<ApiRunStepResultEntity> stepCaptor = ArgumentCaptor.forClass(ApiRunStepResultEntity.class);
+        verify(stepMapper).insert(stepCaptor.capture());
+
+        assertThat(stepCaptor.getValue().getProcessorResultsJson())
+                .contains("\"processorType\":\"SCRIPT\"", "\"stage\":\"PRE\"", "\"stage\":\"POST\"");
+        assertThat(stepCaptor.getValue().getExtractionResultsJson())
+                .contains("\"name\":\"CASE_TOKEN\"", "\"value\":\"case-token\"", "\"name\":\"SERVER_TOKEN\"");
+    }
+
+    @Test
     void persistsApiScenarioRunResultAsFormalReport() {
         TaskMapper taskMapper = mock(TaskMapper.class);
         ReportMapper reportMapper = mock(ReportMapper.class);
@@ -184,6 +248,78 @@ class ApiLocalRunnerReportServiceTests {
         assertThat(historyCaptor.getValue().getFailedCount()).isEqualTo(1);
         assertThat(historyCaptor.getValue().getContextSnapshotJson()).contains("LOCAL_RUNNER", "run_api_scenario_001");
         assertThat(scenario.getLastRunResult()).isEqualTo("FAILED");
+    }
+
+    @Test
+    void persistsApiScenarioStepScriptResultsAndExtractedVariables() {
+        TaskMapper taskMapper = mock(TaskMapper.class);
+        ReportMapper reportMapper = mock(ReportMapper.class);
+        ApiRunStepResultMapper stepMapper = mock(ApiRunStepResultMapper.class);
+        ApiDefinitionCaseMapper caseMapper = mock(ApiDefinitionCaseMapper.class);
+        ApiDefinitionCaseRunHistoryMapper caseHistoryMapper = mock(ApiDefinitionCaseRunHistoryMapper.class);
+        ApiScenarioMapper scenarioMapper = mock(ApiScenarioMapper.class);
+        ApiScenarioRunHistoryMapper scenarioHistoryMapper = mock(ApiScenarioRunHistoryMapper.class);
+        ApiScenarioEntity scenario = new ApiScenarioEntity();
+        scenario.setId(3002L);
+        scenario.setWorkspaceId(7L);
+        scenario.setScenarioName("Scripted API scenario");
+        when(scenarioMapper.selectById(3002L)).thenReturn(scenario);
+
+        ApiLocalRunnerReportService service = new ApiLocalRunnerReportService(
+                taskMapper,
+                reportMapper,
+                stepMapper,
+                caseMapper,
+                caseHistoryMapper,
+                scenarioMapper,
+                scenarioHistoryMapper
+        );
+
+        service.handleLocalRunnerTaskFinalResult(new LocalRunnerTaskFinalResultEvent(
+                "run_api_scenario_script_001",
+                "API_SCENARIO_RUN",
+                "SUCCESS",
+                7L,
+                "risk-ops",
+                "runner_local",
+                Map.of("scenarioSnapshot", Map.of(
+                        "scenarioId", 3002,
+                        "scenarioName", "Scripted API scenario"
+                )),
+                Map.of(
+                        "durationMs", 99,
+                        "summary", Map.of("totalSteps", 1, "passedSteps", 1, "failedSteps", 0),
+                        "reportData", Map.of(
+                                "extractedVariables", Map.of("GLOBAL_TOKEN", "global-token"),
+                                "stepResults", List.of(Map.of(
+                                        "stepId", "step-script",
+                                        "stepName", "Scripted step",
+                                        "status", "SUCCESS",
+                                        "durationMs", 99,
+                                        "request", Map.of("method", "GET", "url", "http://127.0.0.1/scripted"),
+                                        "response", Map.of("status", 200, "body", "{\"token\":\"step-token\"}"),
+                                        "assertions", List.of(),
+                                        "scriptResults", Map.of(
+                                                "pre", Map.of("status", "SUCCESS", "phase", "pre"),
+                                                "post", Map.of("status", "SUCCESS", "phase", "post")
+                                        ),
+                                        "extractedVariables", Map.of("STEP_TOKEN", "step-token")
+                                ))
+                        )
+                )
+        ));
+
+        ArgumentCaptor<ApiRunStepResultEntity> stepCaptor = ArgumentCaptor.forClass(ApiRunStepResultEntity.class);
+        ArgumentCaptor<ApiScenarioRunHistoryEntity> historyCaptor = ArgumentCaptor.forClass(ApiScenarioRunHistoryEntity.class);
+        verify(stepMapper).insert(stepCaptor.capture());
+        verify(scenarioHistoryMapper).insert(historyCaptor.capture());
+
+        assertThat(stepCaptor.getValue().getProcessorResultsJson())
+                .contains("\"processorType\":\"SCRIPT\"", "\"stage\":\"PRE\"", "\"stage\":\"POST\"");
+        assertThat(stepCaptor.getValue().getExtractionResultsJson())
+                .contains("\"name\":\"STEP_TOKEN\"", "\"value\":\"step-token\"");
+        assertThat(historyCaptor.getValue().getDetailJson())
+                .contains("GLOBAL_TOKEN", "STEP_TOKEN", "scriptResults");
     }
 
     @Test

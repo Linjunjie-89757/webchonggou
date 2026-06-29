@@ -25,19 +25,22 @@ public class WebUiCaseDomainService {
     private final WebUiElementMapper elementMapper;
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
+    private final WebUiLocatorContextSupport locatorContextSupport;
 
     public WebUiCaseDomainService(
             WebUiCaseMapper caseMapper,
             WebUiCaseStepMapper stepMapper,
             WebUiElementMapper elementMapper,
             WorkspaceService workspaceService,
-            ApiWorkspaceScopeSupport workspaceScopeSupport
+            ApiWorkspaceScopeSupport workspaceScopeSupport,
+            WebUiLocatorContextSupport locatorContextSupport
     ) {
         this.caseMapper = caseMapper;
         this.stepMapper = stepMapper;
         this.elementMapper = elementMapper;
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
+        this.locatorContextSupport = locatorContextSupport;
     }
 
     public PageResponse<WebUiCaseItem> listCases(
@@ -161,6 +164,7 @@ public class WebUiCaseDomainService {
         entity.setElementId(elementId);
         entity.setLocatorType(locatorType);
         entity.setLocatorValue(locatorValue);
+        entity.setLocatorContextJson(locatorContextSupport.write(request.framePath(), request.shadowPath()));
         entity.setInputValue(inputValue);
         entity.setTimeoutMs(normalizeStepTimeout(request.timeoutMs()));
         entity.setContinueOnFailure(Boolean.TRUE.equals(request.continueOnFailure()));
@@ -262,6 +266,8 @@ public class WebUiCaseDomainService {
                 getElementName(entity.getElementId()),
                 entity.getLocatorType(),
                 entity.getLocatorValue(),
+                locatorContextSupport.framePath(entity.getLocatorContextJson()),
+                locatorContextSupport.shadowPath(entity.getLocatorContextJson()),
                 entity.getInputValue(),
                 entity.getTimeoutMs(),
                 entity.getContinueOnFailure(),

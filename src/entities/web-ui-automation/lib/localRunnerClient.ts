@@ -2,6 +2,7 @@ import type {
   WebUiElementCollectCandidate,
   WebUiElementCollectValidationTarget,
   WebUiElementCollectValidationResult,
+  WebUiLocatorContextPathItem,
   WebUiLocatorType,
 } from '../model/types'
 import { env } from '@/shared/config/env'
@@ -205,6 +206,8 @@ export interface LocalRunnerCandidate {
   locator: {
     strategy: string
     value: string
+    framePath?: WebUiLocatorContextPathItem[] | null
+    shadowPath?: WebUiLocatorContextPathItem[] | null
   }
   text?: string | null
   placeholder?: string | null
@@ -216,6 +219,8 @@ export interface LocalRunnerCandidate {
 export interface LocalRunnerValidateLocatorInput {
   locatorType: WebUiLocatorType
   locatorValue: string
+  framePath?: WebUiLocatorContextPathItem[] | null
+  shadowPath?: WebUiLocatorContextPathItem[] | null
 }
 
 export interface LocalRunnerValidationProgress {
@@ -428,6 +433,7 @@ export async function validateLocalRunnerLocators(
     .map(item => ({
       locatorType: normalizeLocatorType(item.locatorType),
       locatorValue: item.locatorValue.trim(),
+      ...buildLocatorContext(item),
     }))
   const results: WebUiElementCollectValidationResult[] = []
   let batchFailed = 0
@@ -444,7 +450,7 @@ export async function validateLocalRunnerLocators(
         },
       })
       if (Array.isArray(payload.results)) {
-        results.push(...payload.results.map(normalizeLocalRunnerValidationResult))
+        results.push(...payload.results.map((item, resultIndex) => normalizeLocalRunnerValidationResult(item, batch[resultIndex])))
       }
     } catch (error) {
       batchFailed += 1
@@ -456,6 +462,7 @@ export async function validateLocalRunnerLocators(
         matchCount: 0,
         validationMessage: `本批真机验证失败：${getLocalRunnerErrorMessage(error)}`,
         screenshotBase64: null,
+        ...buildLocatorContext(item),
       })))
     }
     options.onProgress?.({
@@ -576,6 +583,7 @@ export function mapRunnerCandidateToCollectCandidate(input: {
     elementName: input.candidate.name || '页面元素',
     locatorType,
     locatorValue: input.candidate.locator?.value || '',
+    ...buildLocatorContext(input.candidate.locator),
     confidence,
     reason: '本地 Runner 静态规则采集',
     tagName: input.candidate.tagName || null,
@@ -652,15 +660,35 @@ function normalizeLocatorType(value?: string | null): WebUiLocatorType {
   return 'CSS'
 }
 
-function normalizeLocalRunnerValidationResult(item: WebUiElementCollectValidationResult): WebUiElementCollectValidationResult {
+function normalizeLocalRunnerValidationResult(
+  item: WebUiElementCollectValidationResult,
+  fallback?: Pick<WebUiElementCollectValidationTarget, 'framePath' | 'shadowPath'>,
+): WebUiElementCollectValidationResult {
   return {
     locatorType: normalizeLocatorType(item.locatorType),
     locatorValue: item.locatorValue || '',
+    ...buildLocatorContext({
+      framePath: item.framePath ?? fallback?.framePath,
+      shadowPath: item.shadowPath ?? fallback?.shadowPath,
+    }),
     validationStatus: item.validationStatus || 'UNVERIFIED',
     matchCount: Number(item.matchCount || 0),
     validationMessage: item.validationMessage || null,
     screenshotBase64: item.screenshotBase64 || null,
   }
+}
+
+function buildLocatorContext(value?: Pick<WebUiElementCollectValidationTarget, 'framePath' | 'shadowPath'> | null) {
+  const framePath = normalizeLocatorContextPath(value?.framePath)
+  const shadowPath = normalizeLocatorContextPath(value?.shadowPath)
+  return {
+    ...(framePath.length > 0 ? { framePath } : {}),
+    ...(shadowPath.length > 0 ? { shadowPath } : {}),
+  }
+}
+
+function normalizeLocatorContextPath(value?: WebUiLocatorContextPathItem[] | null) {
+  return Array.isArray(value) ? value : []
 }
 
 function getLocalRunnerErrorMessage(error: unknown) {

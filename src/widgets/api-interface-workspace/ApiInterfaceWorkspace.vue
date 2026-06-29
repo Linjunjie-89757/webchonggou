@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, toRaw, watch, type Component } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
   ArrowRight,
@@ -59,6 +59,11 @@ import {
   type SaveApiDefinitionCasePayload,
   type SaveApiDefinitionPayload,
 } from '@/entities/api-automation'
+import {
+  buildLocalRunnerContextRows,
+  buildStepEvidenceRows,
+  type ReportEvidenceRow,
+} from '@/entities/api-automation/lib/reportEvidence'
 import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
 import {
   configApi,
@@ -131,6 +136,7 @@ const CASE_RUN_HISTORY_TABLE_ROW_HEIGHT = 54
 const DIRECTORY_SEARCH_DEBOUNCE_MS = 260
 const DIRECTORY_SEARCH_RESULT_LIMIT = 150
 const DIRECTORY_MODULE_REQUEST_PAGE_SIZE = 200
+const DIRECTORY_MODULE_LOADING_MIN_MS = 320
 const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
 const aiCaseGenerationFinishedIcon = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMu b3JnLzIwMDAvc3ZnIj4KICA8ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfMTA2NV8yMTk5MDQpIj4KICAgIDxwYXRoCiAgICAgIGQ9Ik01LjI0MTIxIDMuMDYxNTJDNS40MjgyOCAyLjE0NjI4IDYuNzM1NzggMi4xNDYyOCA2LjkyMjg1IDMuMDYxNTJDNy4zMzYxIDUuMDgyODEgOC45MTYxNyA2LjY2MzAzIDEwLjkzNzUgNy4wNzYxN0MxMS44NTI3IDcuMjYzMjcgMTEuODUyNyA4LjU3MDc1IDEwLjkzNzUgOC43NTc4MUM4LjkxNjI0IDkuMTcxMDMgNy4zMzYwNiAxMC43NTAyIDYuOTIyODUgMTIuNzcxNUM2LjczNTY4IDEzLjY4NjUgNS40MjgzOCAxMy42ODY1IDUuMjQxMjEgMTIuNzcxNUM0LjgyNzk4IDEwLjc1MDQgMy4yNDg2MiA5LjE3MTEgMS4yMjc1NCA4Ljc1NzgxQzAuMzEyMzA1IDguNTcwNzUgMC4zMTIzMzQgNy4yNjMyNyAxLjIyNzU0IDcuMDc2MTdDMy4yNDg2OSA2LjY2Mjk1IDQuODI3OTQgNS4wODI2NSA1LjI0MTIxIDMuMDYxNTJaTTEwLjY2MTEgMS4yMzkyNkMxMC43MzAxIDAuOTAyMDYxIDExLjIxMjMgMC45MDIwNjEgMTEuMjgxMiAxLjIzOTI2QzExLjQzMzYgMS45ODM3MSAxMi4wMTUzIDIuNTY1NDcgMTIuNzU5OCAyLjcxNzc3QzEzLjA5NyAyLjc4NjY5IDEzLjA5NyAzLjI2ODk3IDEyLjc1OTggMy4zMzc4OUMxMi4wMTUzIDMuNDkwMjQgMTEuNDMzNSA0LjA3MTg0IDExLjI4MTIgNC44MTY0MUMxMS4yMTIzIDUuMTUzNiAxMC43MzAxIDUuMTUzNiAxMC42NjExIDQuODE2NDFDMTAuNTA4OSA0LjA3MTggOS45MjcyMSAzLjQ5MDE2IDkuMTgyNjIgMy4zMzc4OUM4Ljg0NTU0IDMuMjY4OTEgOC44NDU1NCAyLjc4Njc1IDkuMTgyNjIgMi43MTc3N0M5LjkyNzE1IDIuNTY1NTQgMTAuNTA4OCAxLjk4Mzc1IDEwLjY2MTEgMS4yMzkyNloiCiAgICAgIGZpbGw9InVybCgjcGFpbnQwX2xpbmVhcl8xMDY1XzIxOTkwNCkiIC8+CiAgPC9nPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwYWludDBfbGluZWFyXzEwNjVfMjE5OTA0IiB4MT0iMC41NDEwMTYiIHkxPSIzLjUzMTQ2IiB4Mj0iMTMuMTEwNSIgeTI9IjMuNzAxNzUiCiAgICAgIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iI0U5NTZFOSIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIwLjcyIiBzdG9wLWNvbG9yPSIjRkY1ODVFIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNGRkEzMDAiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGNsaXBQYXRoIGlkPSJjbGlwMF8xMDY1XzIxOTkwNCI+CiAgICAgIDxyZWN0IHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgZmlsbD0id2hpdGUiIC8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KPC9zdmc+Cg=='.replace(/\s/g, '')
@@ -315,6 +321,7 @@ const props = defineProps<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 
 const emit = defineEmits<{
   loaded: [payload: { definitions: ApiDefinitionItem[]; modules: ApiDefinitionModuleItem[]; cases: ApiDefinitionCaseItem[] }]
@@ -333,6 +340,7 @@ const directorySearchTotal = ref(0)
 const directorySearchLoading = ref(false)
 const loadedDefinitionModuleKeys = ref<Set<string>>(new Set())
 const loadingDefinitionModuleKeys = ref<Set<string>>(new Set())
+const activeLoadingDirectoryKeys = ref<Set<string>>(new Set())
 const cases = ref<ApiDefinitionCaseItem[]>([])
 const environments = ref<ApiAutomationEnvironmentItem[]>([])
 const variableSets = ref<ApiAutomationVariableSetItem[]>([])
@@ -352,6 +360,9 @@ const directoryKeyword = ref('')
 const debouncedDirectoryKeyword = ref('')
 const selectedDirectoryKey = ref('definition-root')
 const expandedKeys = ref<string[]>(['definition-root'])
+const directoryExpandedRestored = ref(false)
+const restoringDirectoryExpanded = ref(false)
+const directoryTreeVersion = ref(0)
 const activeDirectoryNodeKey = ref('')
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
@@ -361,7 +372,7 @@ const definitionResponseViewMode = ref<DefinitionSchemaViewMode>('schema')
 const activeDefinitionResponseCode = ref('200')
 const editorTabNavRef = ref<HTMLElement | null>(null)
 const directoryTreeRef = ref<{
-  getNode: (key: string) => { expanded?: boolean; expand?: () => void } | null
+  getNode: (key: string) => { expanded?: boolean; expand?: () => void; collapse?: () => void } | null
   setCurrentKey?: (key: string) => void
   store?: {
     value?: { _getAllNodes?: () => Array<{ key?: string | number; expanded?: boolean; data?: DirectoryNode }> }
@@ -1194,6 +1205,31 @@ function definitionModuleLoadKey(workspaceCode: string, moduleId: number | null,
   return moduleId != null ? `${workspaceCode}:module:${moduleId}` : `${workspaceCode}:path:${fullPath || ''}`
 }
 
+function refreshDirectoryTree() {
+  directoryTreeVersion.value += 1
+}
+
+function waitForMs(ms: number) {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
+
+function canLoadDefinitionsForDirectoryNode(node: DirectoryNode) {
+  if (node.type !== 'module') return false
+  if (node.children.some(child => child.type === 'module')) return false
+  return (node.directCount ?? node.count) > 0
+}
+
+function markDirectoryNodeLoading(key: string, loadingState: boolean) {
+  const next = new Set(activeLoadingDirectoryKeys.value)
+  if (loadingState) {
+    next.add(key)
+  } else {
+    next.delete(key)
+  }
+  activeLoadingDirectoryKeys.value = next
+  refreshDirectoryTree()
+}
+
 function markDefinitionModuleLoading(key: string, loadingState: boolean) {
   const next = new Set(loadingDefinitionModuleKeys.value)
   if (loadingState) {
@@ -1206,6 +1242,29 @@ function markDefinitionModuleLoading(key: string, loadingState: boolean) {
 
 function markDefinitionModuleLoaded(key: string) {
   loadedDefinitionModuleKeys.value = new Set([...loadedDefinitionModuleKeys.value, key])
+}
+
+function directoryExpandedStorageKey() {
+  return `api-interface-directory-expanded:${props.workspaceCode || 'ALL'}`
+}
+
+function readStoredExpandedKeys() {
+  try {
+    const raw = window.localStorage.getItem(directoryExpandedStorageKey())
+    const value = raw ? JSON.parse(raw) : []
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function persistExpandedKeys() {
+  if (!directoryExpandedRestored.value) return
+  try {
+    window.localStorage.setItem(directoryExpandedStorageKey(), JSON.stringify(expandedKeys.value))
+  } catch {
+    // localStorage can be unavailable in restricted browser modes.
+  }
 }
 
 function mergeDefinitions(items: ApiDefinitionItem[]) {
@@ -1431,15 +1490,15 @@ const directoryTree = computed<DirectoryNode[]>(() => {
         : ''
       const isLoadingModule = node.type === 'module' && loadingDefinitionModuleKeys.value.has(moduleLoadKey)
       const isLoadedModule = node.type === 'module' && loadedDefinitionModuleKeys.value.has(moduleLoadKey)
-      const shouldAddLazyPlaceholder = node.type === 'module'
-        && (node.directCount ?? node.count) > 0
+      const shouldLoadDefinitions = canLoadDefinitionsForDirectoryNode({ ...node, children })
+      const shouldAddLazyPlaceholder = shouldLoadDefinitions
         && !hasRequestChild
         && !isLoadedModule
       if (shouldAddLazyPlaceholder || isLoadingModule) {
-        children.push({
+        const placeholderNode: DirectoryNode = {
           key: `${node.key}:${isLoadingModule ? 'loading' : 'lazy'}-placeholder`,
           type: 'placeholder',
-          label: isLoadingModule ? '加载接口中...' : '展开加载接口',
+          label: isLoadingModule ? '加载接口中...' : '',
           count: 0,
           directCount: 0,
           moduleId: null,
@@ -1448,7 +1507,12 @@ const directoryTree = computed<DirectoryNode[]>(() => {
           fullPath: node.fullPath,
           loading: isLoadingModule,
           children: [],
-        })
+        }
+        if (isLoadingModule) {
+          children.unshift(placeholderNode)
+        } else {
+          children.push(placeholderNode)
+        }
       }
       const loadedRequestCount = children
         .filter(child => child.type !== 'placeholder')
@@ -1522,7 +1586,7 @@ const directoryTree = computed<DirectoryNode[]>(() => {
 })
 
 const visibleDirectoryTree = computed<DirectoryNode[]>(() => directoryTree.value[0]?.children ?? [])
-const directoryTreeRenderKey = computed(() => props.workspaceCode)
+const directoryTreeRenderKey = computed(() => `${props.workspaceCode}:${directoryTreeVersion.value}`)
 const importModuleOptions = computed<ImportModuleOption[]>(() => {
   const workspaceCodes = props.workspaceCode === 'ALL'
     ? Array.from(new Set([
@@ -1686,6 +1750,10 @@ const selectedReportContextSnapshot = computed<ApiRuntimeContextSnapshot | null>
   return parseRuntimeContextSnapshot(selectedReportDetail.value?.contextSnapshotJson)
 })
 
+const selectedReportLocalRunnerRows = computed(() => {
+  return buildLocalRunnerContextRows(selectedReportContextSnapshot.value)
+})
+
 const selectedReportContextVariables = computed(() => {
   const variables = selectedReportContextSnapshot.value?.variables || {}
   return Object.entries(variables).map(([key, value]) => ({ key, value }))
@@ -1712,6 +1780,10 @@ function parseRuntimeContextSnapshot(value?: string | null): ApiRuntimeContextSn
   } catch {
     return null
   }
+}
+
+function reportStepEvidenceRows(step: ApiRunStepResult): ReportEvidenceRow[] {
+  return buildStepEvidenceRows(step)
 }
 
 async function exportReports() {
@@ -1824,8 +1896,17 @@ watch(
   (tree) => {
     const available = new Set(collectExpandableDirectoryKeys(tree))
     expandedKeys.value = expandedKeys.value.filter(key => available.has(key))
+    persistExpandedKeys()
   },
   { immediate: true },
+)
+
+watch(
+  expandedKeys,
+  () => {
+    persistExpandedKeys()
+  },
+  { deep: true },
 )
 
 watch(selectedEnvironmentId, () => {
@@ -3818,6 +3899,86 @@ function guardAllWorkspaceAction(editor: EditorTab, actionText: string) {
   return false
 }
 
+function targetDefinitionIdFromRoute() {
+  const raw = route.query.definitionId || route.query.interfaceId || route.query.apiDefinitionId
+  const value = Array.isArray(raw) ? raw[0] : raw
+  const id = Number(value)
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function findModuleByDirectoryName(workspaceCode: string, directoryName: string | null | undefined) {
+  const targetPath = (directoryName || '').trim()
+  if (!targetPath) return null
+  const sameWorkspaceModules = modules.value.filter(item => item.workspaceCode === workspaceCode)
+  return sameWorkspaceModules.find(item => (item.fullPath || item.name || '').trim() === targetPath) || null
+}
+
+function moduleNodeFromModule(module: ApiDefinitionModuleItem) {
+  const fullPath = (module.fullPath || module.name || '').trim()
+  return {
+    key: `module:${module.workspaceCode}:${module.id}`,
+    type: 'module',
+    label: module.name,
+    count: module.definitionCount || 0,
+    directCount: module.definitionCount || 0,
+    moduleId: module.id,
+    workspaceCode: module.workspaceCode,
+    definitionId: null,
+    fullPath,
+    children: [],
+  } satisfies DirectoryNode
+}
+
+async function openRouteTargetDefinition() {
+  if (activeTopTab.value !== 'definitions') return
+  const definitionId = targetDefinitionIdFromRoute()
+  if (!definitionId) return
+  if (tabs.value.some(tab => tab.definitionId === definitionId)) return
+  try {
+    const detail = await apiAutomationApi.getDefinitionDetail(props.workspaceCode, definitionId)
+    const summary: ApiDefinitionItem = {
+      id: detail.id || definitionId,
+      workspaceCode: detail.workspaceCode || props.workspaceCode,
+      workspaceName: detail.workspaceName || '',
+      name: detail.name,
+      method: detail.method || detail.requestConfig.method,
+      path: detail.path || detail.requestConfig.path,
+      directoryName: detail.directoryName || '',
+      description: detail.description || '',
+      tags: detail.tags || [],
+      lastRunResult: null,
+      lastRunAt: null,
+      updatedAt: detail.updatedAt,
+    }
+    const module = findModuleByDirectoryName(summary.workspaceCode, summary.directoryName)
+    if (module) {
+      const workspaceKey = `workspace:${module.workspaceCode}`
+      expandedKeys.value = Array.from(new Set([...expandedKeys.value, workspaceKey, `module:${module.workspaceCode}:${module.id}`]))
+      await keepDirectoryNodeExpanded({
+        key: workspaceKey,
+        type: 'workspace',
+        label: summary.workspaceName || module.workspaceName || module.workspaceCode,
+        count: 0,
+        directCount: 0,
+        moduleId: null,
+        workspaceCode: module.workspaceCode,
+        definitionId: null,
+        fullPath: null,
+        children: [],
+      })
+      await loadDefinitionsForDirectoryNode(moduleNodeFromModule(module))
+    } else {
+      mergeDefinitions([summary])
+    }
+    await openDefinition(summary)
+    await nextTick()
+    directoryTreeRef.value?.setCurrentKey?.(`request:${definitionId}`)
+    document.querySelector(`[data-key="request:${definitionId}"]`)?.scrollIntoView({ block: 'nearest' })
+  } catch (error) {
+    ElMessage.warning(getRequestErrorMessage(error))
+  }
+}
+
 async function loadWorkspaceData(options?: { openDefaultTab?: boolean }) {
   if (!props.workspaceReady) {
     return
@@ -3847,14 +4008,26 @@ async function loadWorkspaceData(options?: { openDefaultTab?: boolean }) {
     directorySearchRequestSeq += 1
     loadedDefinitionModuleKeys.value = new Set()
     loadingDefinitionModuleKeys.value = new Set()
+    activeLoadingDirectoryKeys.value = new Set()
     environments.value = environmentPage.items
     variableSets.value = variableSetPage.items
     await nextTick()
+    directoryExpandedRestored.value = false
+    const availableKeys = new Set(collectExpandableDirectoryKeys(directoryTree.value))
+    const restoredKeys = readStoredExpandedKeys().filter(key => availableKeys.has(key))
     expandedKeys.value = directoryKeyword.value.trim()
       ? collectExpandableDirectoryKeys(directoryTree.value)
-      : []
+      : restoredKeys
+    directoryExpandedRestored.value = true
+    restoringDirectoryExpanded.value = restoredKeys.length > 0 && !directoryKeyword.value.trim()
+    if (restoringDirectoryExpanded.value) {
+      window.setTimeout(() => {
+        restoringDirectoryExpanded.value = false
+      }, 0)
+    }
     restoreRunOptions()
     emit('loaded', { definitions: definitions.value, modules: modules.value, cases: cases.value })
+    await openRouteTargetDefinition()
     if (openDefaultTab && !tabs.value.length) {
       openNewRequestTab()
     }
@@ -4129,7 +4302,8 @@ function scrollActiveEditorTabIntoView() {
 function setDirectoryNodeExpanded(node: DirectoryNode, expanded: boolean) {
   if (expanded) {
     expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
-    if (node.type === 'module') {
+    void syncDirectoryTreeExpandedState()
+    if (canLoadDefinitionsForDirectoryNode(node) && !restoringDirectoryExpanded.value) {
       void loadDefinitionsForDirectoryNode(node)
     }
     return
@@ -4164,7 +4338,7 @@ async function keepDirectoryNodeExpanded(node: DirectoryNode, options: { force?:
 }
 
 async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
-  if (node.type !== 'module') return
+  if (!canLoadDefinitionsForDirectoryNode(node)) return
   const moduleFullPath = node.fullPath ?? null
   const key = definitionModuleLoadKey(node.workspaceCode, node.moduleId, moduleFullPath)
   if (loadedDefinitionModuleKeys.value.has(key)) {
@@ -4175,8 +4349,12 @@ async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
     await keepDirectoryNodeExpanded(node)
     return
   }
+  node.loading = true
   markDefinitionModuleLoading(key, true)
+  markDirectoryNodeLoading(node.key, true)
   await keepDirectoryNodeExpanded(node)
+  await nextTick()
+  await waitForMs(DIRECTORY_MODULE_LOADING_MIN_MS)
   try {
     const page = await apiAutomationApi.getDefinitions(node.workspaceCode, {
       moduleId: node.moduleId,
@@ -4190,7 +4368,9 @@ async function loadDefinitionsForDirectoryNode(node: DirectoryNode) {
   } catch (error) {
     ElMessage.warning(getRequestErrorMessage(error))
   } finally {
+    node.loading = false
     markDefinitionModuleLoading(key, false)
+    markDirectoryNodeLoading(node.key, false)
     void syncDirectoryTreeExpandedState()
   }
 }
@@ -4200,9 +4380,8 @@ function handleDirectorySelect(node: DirectoryNode) {
   selectedDirectoryKey.value = node.key
   directoryTreeRef.value?.setCurrentKey?.(node.key)
   if (node.type === 'module') {
-    expandedKeys.value = Array.from(new Set([...expandedKeys.value, node.key]))
-    void loadDefinitionsForDirectoryNode(node)
-    void keepDirectoryNodeExpanded(node, { force: true })
+    setDirectoryNodeExpanded(node, !expandedKeys.value.includes(node.key))
+    return
   }
   if (node.type === 'workspace' || node.type === 'root' || node.type === 'unassigned') {
     const shouldOpen = !expandedKeys.value.includes(node.key)
@@ -5795,7 +5974,7 @@ onBeforeUnmount(() => {
           >
             <template #default="{ data }">
               <div
-                :class="['api-directory-node', { 'is-request': data.type === 'request' }]"
+                :class="['api-directory-node', { 'is-request': data.type === 'request', 'is-placeholder': data.type === 'placeholder' }]"
                 @mouseenter="activeDirectoryNodeKey = data.key"
                 @mouseleave="activeDirectoryNodeKey = activeDirectoryNodeKey === data.key ? '' : activeDirectoryNodeKey"
               >
@@ -8791,6 +8970,12 @@ onBeforeUnmount(() => {
                 <small>保存本次运行实际变量</small>
               </div>
             </div>
+            <div v-if="selectedReportLocalRunnerRows.length" class="api-report-runner-context">
+              <div v-for="row in selectedReportLocalRunnerRows" :key="row.label">
+                <span>{{ row.label }}</span>
+                <strong>{{ row.value }}</strong>
+              </div>
+            </div>
             <details v-if="selectedReportContextVariables.length" class="api-report-context-variables">
               <summary>查看变量快照</summary>
               <div>
@@ -8861,6 +9046,18 @@ onBeforeUnmount(() => {
                     <span v-if="step.assertionResults?.length">断言 {{ step.assertionResults.length }}</span>
                     <span v-if="step.extractionResults?.length">提取 {{ step.extractionResults.length }}</span>
                     <span v-if="step.processorResults?.length">处理 {{ step.processorResults.length }}</span>
+                  </div>
+                  <div v-if="reportStepEvidenceRows(step).length" class="api-report-step-evidence">
+                    <div
+                      v-for="item in reportStepEvidenceRows(step)"
+                      :key="`${item.type}-${item.label}-${item.name}`"
+                      :class="['api-report-step-evidence__row', `is-${item.tone}`]"
+                    >
+                      <span>{{ item.label }}</span>
+                      <strong>{{ item.name }}</strong>
+                      <em>{{ item.status }}</em>
+                      <small>{{ item.value }}</small>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -9536,6 +9733,40 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.api-report-runner-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.api-report-runner-context div {
+  min-width: 0;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+  padding: 8px 10px;
+}
+
+.api-report-runner-context span,
+.api-report-runner-context strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-runner-context span {
+  color: #1d4ed8;
+  font-size: 12px;
+}
+
+.api-report-runner-context strong {
+  margin-top: 4px;
+  color: #111827;
+  font-size: 13px;
+}
+
 .api-report-context-variables {
   margin-top: 12px;
   color: #374151;
@@ -9663,6 +9894,67 @@ onBeforeUnmount(() => {
   padding: 0 8px;
   color: #4338ca;
   font-size: 12px;
+}
+
+.api-report-step-evidence {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.api-report-step-evidence__row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 84px minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  padding: 7px 9px;
+}
+
+.api-report-step-evidence__row span,
+.api-report-step-evidence__row strong,
+.api-report-step-evidence__row em,
+.api-report-step-evidence__row small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-step-evidence__row span {
+  color: #4f46e5;
+  font-size: 12px;
+}
+
+.api-report-step-evidence__row strong {
+  color: #111827;
+  font-size: 12px;
+}
+
+.api-report-step-evidence__row em {
+  color: #047857;
+  font-size: 12px;
+  font-style: normal;
+  text-align: right;
+}
+
+.api-report-step-evidence__row small {
+  grid-column: 2 / 4;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-step-evidence__row.is-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
+.api-report-step-evidence__row.is-danger em {
+  color: #b91c1c;
 }
 
 .api-report-empty {
@@ -9928,6 +10220,18 @@ onBeforeUnmount(() => {
   gap: 8px;
   font-size: 14px;
   line-height: 21px;
+}
+
+.api-directory-tree :deep(.el-tree-node__content:has(.api-directory-node.is-placeholder)) {
+  min-height: 32px;
+  height: 32px;
+}
+
+.api-directory-node.is-placeholder {
+  min-height: 32px;
+  height: 32px;
+  align-items: center;
+  overflow: visible;
 }
 
 .api-directory-node__main {
