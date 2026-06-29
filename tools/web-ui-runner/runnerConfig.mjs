@@ -15,6 +15,7 @@ export const DEFAULT_RUNNER_CAPABILITIES = Object.freeze([
   'WEB_CASE_RUN',
   'API_CASE_RUN',
   'API_SCENARIO_RUN',
+  'API_SUITE_RUN',
 ]);
 
 export function resolveRunnerRuntimeConfig(input = {}) {

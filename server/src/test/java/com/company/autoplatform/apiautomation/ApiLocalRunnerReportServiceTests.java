@@ -251,6 +251,99 @@ class ApiLocalRunnerReportServiceTests {
     }
 
     @Test
+    void persistsApiSuiteRunResultAsFormalSuiteHistory() {
+        TaskMapper taskMapper = mock(TaskMapper.class);
+        ReportMapper reportMapper = mock(ReportMapper.class);
+        ApiRunStepResultMapper stepMapper = mock(ApiRunStepResultMapper.class);
+        ApiDefinitionCaseMapper caseMapper = mock(ApiDefinitionCaseMapper.class);
+        ApiDefinitionCaseRunHistoryMapper caseHistoryMapper = mock(ApiDefinitionCaseRunHistoryMapper.class);
+        ApiScenarioMapper scenarioMapper = mock(ApiScenarioMapper.class);
+        ApiScenarioRunHistoryMapper scenarioHistoryMapper = mock(ApiScenarioRunHistoryMapper.class);
+        ApiExecutionSuiteMapper suiteMapper = mock(ApiExecutionSuiteMapper.class);
+        ApiExecutionSuiteRunHistoryMapper suiteHistoryMapper = mock(ApiExecutionSuiteRunHistoryMapper.class);
+        ApiExecutionSuiteEntity suite = new ApiExecutionSuiteEntity();
+        suite.setId(8001L);
+        suite.setWorkspaceId(7L);
+        suite.setSuiteName("Local API suite");
+        suite.setRunMode("SERIAL");
+        suite.setRunOn("LOCAL");
+        suite.setContinueOnFailure(false);
+        when(suiteMapper.selectById(8001L)).thenReturn(suite);
+
+        ApiLocalRunnerReportService service = new ApiLocalRunnerReportService(
+                taskMapper,
+                reportMapper,
+                stepMapper,
+                caseMapper,
+                caseHistoryMapper,
+                scenarioMapper,
+                scenarioHistoryMapper,
+                suiteMapper,
+                suiteHistoryMapper
+        );
+
+        service.handleLocalRunnerTaskFinalResult(new LocalRunnerTaskFinalResultEvent(
+                "run_api_suite_001",
+                "API_SUITE_RUN",
+                "SUCCESS",
+                7L,
+                "risk-ops",
+                "runner_local",
+                Map.of("suiteSnapshot", Map.of(
+                        "suiteId", 8001,
+                        "suiteName", "Local API suite"
+                )),
+                Map.of(
+                        "durationMs", 300,
+                        "summary", Map.of("totalSteps", 2, "passedSteps", 2, "failedSteps", 0),
+                        "reportData", Map.of(
+                                "itemSnapshots", List.of(
+                                        Map.of("itemId", 1, "itemType", "API_CASE", "itemName", "Create order", "sortOrder", 10, "result", "SUCCESS", "totalCount", 1, "durationMs", 100),
+                                        Map.of("itemId", 2, "itemType", "SCENARIO", "itemName", "Pay order", "sortOrder", 20, "result", "SUCCESS", "totalCount", 1, "durationMs", 200)
+                                ),
+                                "stepResults", List.of(
+                                        Map.of(
+                                                "stepId", "suite-item-1-create",
+                                                "stepName", "Create order",
+                                                "status", "SUCCESS",
+                                                "durationMs", 100,
+                                                "request", Map.of("method", "POST", "url", "http://127.0.0.1/orders"),
+                                                "response", Map.of("status", 201, "body", "{\"id\":\"S100\"}"),
+                                                "assertions", List.of()
+                                        ),
+                                        Map.of(
+                                                "stepId", "suite-item-2-pay",
+                                                "stepName", "Pay order",
+                                                "status", "SUCCESS",
+                                                "durationMs", 200,
+                                                "request", Map.of("method", "GET", "url", "http://127.0.0.1/orders/S100"),
+                                                "response", Map.of("status", 200, "body", "{\"status\":\"PAID\"}"),
+                                                "assertions", List.of()
+                                        )
+                                )
+                        )
+                )
+        ));
+
+        ArgumentCaptor<ApiExecutionSuiteRunHistoryEntity> historyCaptor = ArgumentCaptor.forClass(ApiExecutionSuiteRunHistoryEntity.class);
+
+        verify(taskMapper).insert(org.mockito.ArgumentMatchers.any(TaskEntity.class));
+        verify(reportMapper).insert(org.mockito.ArgumentMatchers.any(ReportEntity.class));
+        verify(stepMapper, org.mockito.Mockito.times(2)).insert(org.mockito.ArgumentMatchers.any(ApiRunStepResultEntity.class));
+        verify(suiteHistoryMapper).insert(historyCaptor.capture());
+        verify(suiteMapper).updateById(suite);
+
+        assertThat(historyCaptor.getValue().getSuiteId()).isEqualTo(8001L);
+        assertThat(historyCaptor.getValue().getResult()).isEqualTo("SUCCESS");
+        assertThat(historyCaptor.getValue().getRunOn()).isEqualTo("LOCAL_RUNNER");
+        assertThat(historyCaptor.getValue().getTotalCount()).isEqualTo(2);
+        assertThat(historyCaptor.getValue().getSuccessCount()).isEqualTo(2);
+        assertThat(historyCaptor.getValue().getItemSnapshotJson()).contains("Create order", "Pay order");
+        assertThat(historyCaptor.getValue().getDetailJson()).contains("Create order", "Pay order");
+        assertThat(suite.getLastRunResult()).isEqualTo("SUCCESS");
+    }
+
+    @Test
     void persistsApiScenarioStepScriptResultsAndExtractedVariables() {
         TaskMapper taskMapper = mock(TaskMapper.class);
         ReportMapper reportMapper = mock(ReportMapper.class);

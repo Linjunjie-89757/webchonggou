@@ -2,7 +2,7 @@ import vm from 'node:vm';
 
 const DEFAULT_PROTOCOL_VERSION = '1.0';
 const DEFAULT_POLL_INTERVAL_MS = 2000;
-const DEFAULT_CAPABILITIES = ['WEB_ELEMENT_VALIDATE', 'WEB_CASE_RUN', 'API_CASE_RUN', 'API_SCENARIO_RUN'];
+const DEFAULT_CAPABILITIES = ['WEB_ELEMENT_VALIDATE', 'WEB_CASE_RUN', 'API_CASE_RUN', 'API_SCENARIO_RUN', 'API_SUITE_RUN'];
 const DEFAULT_SCRIPT_TIMEOUT_MS = 1000;
 const DEFAULT_MAX_RESOURCE_SLOTS = 5;
 
@@ -167,7 +167,7 @@ export function createRunnerTaskPoller(options = {}) {
       await appendLog(current, task, 'INFO', `开始执行 ${taskType || 'UNKNOWN'} 任务`, {
         validationMode: taskType === 'WEB_ELEMENT_VALIDATE' ? 'LOCAL_PLAYWRIGHT' : 'UNKNOWN',
         executionMode: taskType === 'WEB_CASE_RUN' ? 'LOCAL_PLAYWRIGHT' : 'UNKNOWN',
-        apiMode: taskType === 'API_CASE_RUN' || taskType === 'API_SCENARIO_RUN' ? 'LOCAL_HTTP' : 'UNKNOWN',
+        apiMode: taskType === 'API_CASE_RUN' || taskType === 'API_SCENARIO_RUN' || taskType === 'API_SUITE_RUN' ? 'LOCAL_HTTP' : 'UNKNOWN',
       });
 
       if (taskType === 'WEB_ELEMENT_VALIDATE') {
@@ -187,6 +187,11 @@ export function createRunnerTaskPoller(options = {}) {
 
       if (taskType === 'API_SCENARIO_RUN') {
         await withTaskTimeout(task, () => executeApiScenarioRunTask(current, task));
+        return { stopped: false };
+      }
+
+      if (taskType === 'API_SUITE_RUN') {
+        await withTaskTimeout(task, () => executeApiSuiteRunTask(current, task));
         return { stopped: false };
       }
 
@@ -539,7 +544,6 @@ export function createRunnerTaskPoller(options = {}) {
     const runOptions = normalizeObject(task.payload?.runOptions);
     const startedAt = Date.now();
     const runtimeVariables = {};
-    const stepResults = [];
 
     try {
       await reportStatus(current, task, {
@@ -549,83 +553,13 @@ export function createRunnerTaskPoller(options = {}) {
         message: `本地接口场景执行开始：共 ${steps.length} 个步骤`,
       });
 
-      for (const [index, step] of steps.entries()) {
-        const stepStartedAt = Date.now();
-        const caseSnapshot = normalizeApiCaseSnapshot(step.caseSnapshot || step);
-        const stepId = optionalString(step.stepId || step.id) || `api-step-${index + 1}`;
-        let execution;
-        try {
-          execution = await executeApiCaseRequest(task, caseSnapshot, runtimeVariables);
-          const extracted = {
-            ...extractApiVariables(caseSnapshot.extractors, execution.response),
-            ...normalizeObject(execution.scriptVariables),
-          };
-          Object.assign(runtimeVariables, extracted);
-          const stepResult = {
-            stepId,
-            stepName: caseSnapshot.caseName || step.name || stepId,
-            status: execution.success ? 'SUCCESS' : 'FAILED',
-            durationMs: Date.now() - stepStartedAt,
-            errorMessage: execution.errorMessage || null,
-            request: execution.request,
-            response: execution.response,
-            assertions: execution.assertions,
-            extractedVariables: extracted,
-            scriptResults: execution.scriptResults,
-          };
-          stepResults.push(stepResult);
-          await reportStepResult(current, task, {
-            stepId,
-            status: stepResult.status,
-            durationMs: stepResult.durationMs,
-            errorMessage: stepResult.errorMessage,
-            extra: {
-              method: execution.request.method,
-              url: execution.request.url,
-              statusCode: execution.response.status,
-              passedAssertions: execution.passedAssertions,
-              failedAssertions: execution.failedAssertions,
-              extractedVariables: extracted,
-            },
-          });
-          await reportStatus(current, task, {
-            status: 'RUNNING',
-            currentStage: 'EXECUTING',
-            progress: buildProgress(index + 1, steps.length),
-            message: `本地接口场景执行中：${index + 1}/${steps.length}`,
-          });
-          if (!execution.success && (step.continueOnFailure !== true || runOptions.stopOnFirstFailure === true)) {
-            break;
-          }
-        } catch (error) {
-          if (error instanceof RunnerTaskStoppedError) {
-            throw error;
-          }
-          const message = humanizeRunnerError(error);
-          const stepResult = {
-            stepId,
-            stepName: caseSnapshot.caseName || step.name || stepId,
-            status: 'FAILED',
-            durationMs: Date.now() - stepStartedAt,
-            errorMessage: message,
-            request: null,
-            response: null,
-            assertions: [],
-            extractedVariables: {},
-          };
-          stepResults.push(stepResult);
-          await reportStepResult(current, task, {
-            stepId,
-            status: 'FAILED',
-            durationMs: stepResult.durationMs,
-            errorMessage: message,
-            extra: {},
-          });
-          if (step.continueOnFailure !== true || runOptions.stopOnFirstFailure === true) {
-            break;
-          }
-        }
-      }
+      const execution = await runApiScenarioSteps(current, task, {
+        steps,
+        runtimeVariables,
+        runOptions,
+        totalSteps: steps.length,
+      });
+      const stepResults = execution.stepResults;
 
       const failedSteps = stepResults.filter(item => item.status === 'FAILED').length;
       const passedSteps = stepResults.filter(item => item.status === 'SUCCESS').length;
@@ -678,6 +612,202 @@ export function createRunnerTaskPoller(options = {}) {
         },
       });
     }
+  }
+
+  async function executeApiSuiteRunTask(current, task) {
+    const suiteSnapshot = normalizeApiSuiteSnapshot(task.payload);
+    const items = normalizeApiSuiteItems(suiteSnapshot.items);
+    const runOptions = normalizeObject(task.payload?.runOptions);
+    const startedAt = Date.now();
+    const runtimeVariables = {};
+    const stepResults = [];
+    const itemSnapshots = [];
+    const totalSteps = items.reduce((total, item) => total + buildApiSuiteItemSteps(item).length, 0);
+
+    try {
+      await reportStatus(current, task, {
+        status: 'RUNNING',
+        currentStage: 'EXECUTING',
+        progress: { current: 0, total: totalSteps, percent: 0 },
+        message: `本地接口套件执行开始：共 ${items.length} 个条目`,
+      });
+
+      for (const [index, item] of items.entries()) {
+        const itemStartedAt = Date.now();
+        const itemSteps = buildApiSuiteItemSteps(item);
+        const execution = await runApiScenarioSteps(current, task, {
+          steps: itemSteps,
+          runtimeVariables,
+          runOptions,
+          progressOffset: stepResults.length,
+          totalSteps,
+          stepIdPrefix: `suite-item-${item.itemId || index + 1}-`,
+        });
+        stepResults.push(...execution.stepResults);
+        const itemFailed = execution.stepResults.some(result => result.status === 'FAILED');
+        itemSnapshots.push({
+          itemId: item.itemId ?? null,
+          resourceId: item.resourceId ?? null,
+          itemType: optionalString(item.itemType || item.type).toUpperCase() || 'UNKNOWN',
+          itemName: item.itemName || item.name || '',
+          sortOrder: Number(item.sortOrder || index + 1),
+          result: itemFailed ? 'FAILED' : 'SUCCESS',
+          totalCount: execution.stepResults.length,
+          durationMs: Date.now() - itemStartedAt,
+          failureSummary: execution.stepResults.find(result => result.status === 'FAILED')?.errorMessage || null,
+        });
+        if (itemFailed && runOptions.stopOnFirstFailure === true) {
+          break;
+        }
+      }
+
+      const failedSteps = stepResults.filter(item => item.status === 'FAILED').length;
+      const passedSteps = stepResults.filter(item => item.status === 'SUCCESS').length;
+      const finalStatus = failedSteps > 0 ? 'FAILED' : 'SUCCESS';
+      await reportStatus(current, task, {
+        status: finalStatus,
+        currentStage: 'COMPLETED',
+        progress: buildProgress(stepResults.length, totalSteps),
+        message: `本地接口套件执行完成：成功 ${passedSteps} 步，失败 ${failedSteps} 步`,
+      });
+      await reportFinalResult(current, task, {
+        status: finalStatus,
+        durationMs: Date.now() - startedAt,
+        summary: {
+          mode: 'LOCAL_HTTP',
+          totalSteps,
+          passedSteps,
+          failedSteps,
+          totalItems: items.length,
+          failedItems: itemSnapshots.filter(item => item.result === 'FAILED').length,
+        },
+        errorMessage: stepResults.find(item => item.status === 'FAILED')?.errorMessage || null,
+        reportData: {
+          executionMode: 'LOCAL_HTTP',
+          suiteId: suiteSnapshot.suiteId ?? null,
+          suiteName: suiteSnapshot.suiteName || '',
+          itemSnapshots,
+          stepResults,
+          extractedVariables: runtimeVariables,
+        },
+      });
+    } catch (error) {
+      if (error instanceof RunnerTaskStoppedError) {
+        throw error;
+      }
+      const message = humanizeRunnerError(error);
+      await reportFinalResult(current, task, {
+        status: 'FAILED',
+        durationMs: Date.now() - startedAt,
+        summary: {
+          mode: 'LOCAL_HTTP',
+          totalSteps,
+          passedSteps: 0,
+          failedSteps: Math.max(1, stepResults.filter(item => item.status === 'FAILED').length),
+          totalItems: items.length,
+        },
+        errorMessage: message,
+        reportData: {
+          executionMode: 'LOCAL_HTTP',
+          suiteId: suiteSnapshot.suiteId ?? null,
+          suiteName: suiteSnapshot.suiteName || '',
+          itemSnapshots,
+          stepResults,
+          extractedVariables: runtimeVariables,
+        },
+      });
+    }
+  }
+
+  async function runApiScenarioSteps(current, task, options) {
+    const steps = normalizeApiScenarioSteps(options.steps);
+    const runtimeVariables = normalizeObject(options.runtimeVariables);
+    const runOptions = normalizeObject(options.runOptions);
+    const progressOffset = Number(options.progressOffset || 0);
+    const totalSteps = Number(options.totalSteps || steps.length);
+    const stepIdPrefix = optionalString(options.stepIdPrefix);
+    const stepResults = [];
+
+    for (const [index, step] of steps.entries()) {
+      const stepStartedAt = Date.now();
+      const caseSnapshot = normalizeApiCaseSnapshot(step.caseSnapshot || step);
+      const rawStepId = optionalString(step.stepId || step.id) || `api-step-${index + 1}`;
+      const stepId = `${stepIdPrefix}${rawStepId}`;
+      let execution;
+      try {
+        execution = await executeApiCaseRequest(task, caseSnapshot, runtimeVariables);
+        const extracted = {
+          ...extractApiVariables(caseSnapshot.extractors, execution.response),
+          ...normalizeObject(execution.scriptVariables),
+        };
+        Object.assign(runtimeVariables, extracted);
+        const stepResult = {
+          stepId,
+          stepName: caseSnapshot.caseName || step.name || rawStepId,
+          status: execution.success ? 'SUCCESS' : 'FAILED',
+          durationMs: Date.now() - stepStartedAt,
+          errorMessage: execution.errorMessage || null,
+          request: execution.request,
+          response: execution.response,
+          assertions: execution.assertions,
+          extractedVariables: extracted,
+          scriptResults: execution.scriptResults,
+        };
+        stepResults.push(stepResult);
+        await reportStepResult(current, task, {
+          stepId,
+          status: stepResult.status,
+          durationMs: stepResult.durationMs,
+          errorMessage: stepResult.errorMessage,
+          extra: {
+            method: execution.request.method,
+            url: execution.request.url,
+            statusCode: execution.response.status,
+            passedAssertions: execution.passedAssertions,
+            failedAssertions: execution.failedAssertions,
+            extractedVariables: extracted,
+          },
+        });
+        await reportStatus(current, task, {
+          status: 'RUNNING',
+          currentStage: 'EXECUTING',
+          progress: buildProgress(progressOffset + index + 1, totalSteps),
+          message: `本地接口执行中：${progressOffset + index + 1}/${totalSteps}`,
+        });
+        if (!execution.success && (step.continueOnFailure !== true || runOptions.stopOnFirstFailure === true)) {
+          break;
+        }
+      } catch (error) {
+        if (error instanceof RunnerTaskStoppedError) {
+          throw error;
+        }
+        const message = humanizeRunnerError(error);
+        const stepResult = {
+          stepId,
+          stepName: caseSnapshot.caseName || step.name || rawStepId,
+          status: 'FAILED',
+          durationMs: Date.now() - stepStartedAt,
+          errorMessage: message,
+          request: null,
+          response: null,
+          assertions: [],
+          extractedVariables: {},
+        };
+        stepResults.push(stepResult);
+        await reportStepResult(current, task, {
+          stepId,
+          status: 'FAILED',
+          durationMs: stepResult.durationMs,
+          errorMessage: message,
+          extra: {},
+        });
+        if (step.continueOnFailure !== true || runOptions.stopOnFirstFailure === true) {
+          break;
+        }
+      }
+    }
+
+    return { stepResults, runtimeVariables };
   }
 
   async function registerRunner(current, machineHint) {
@@ -860,7 +990,7 @@ function estimateTaskResourceCost(taskType) {
   if (normalized === 'WEB_ELEMENT_COLLECT' || normalized === 'WEB_ELEMENT_VALIDATE' || normalized === 'WEB_CASE_RUN') {
     return 5;
   }
-  if (normalized === 'API_CASE_RUN' || normalized === 'API_SCENARIO_RUN') {
+  if (normalized === 'API_CASE_RUN' || normalized === 'API_SCENARIO_RUN' || normalized === 'API_SUITE_RUN') {
     return 1;
   }
   return 1;
@@ -891,8 +1021,24 @@ function normalizeApiScenarioSnapshot(payload) {
   return payload && typeof payload === 'object' ? payload : {};
 }
 
+function normalizeApiSuiteSnapshot(payload) {
+  if (payload?.suiteSnapshot && typeof payload.suiteSnapshot === 'object') {
+    return payload.suiteSnapshot;
+  }
+  return payload && typeof payload === 'object' ? payload : {};
+}
+
 function normalizeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function normalizeApiSuiteItems(value) {
+  return Array.isArray(value)
+    ? value
+      .filter(item => item && typeof item === 'object')
+      .filter(item => item.enabled !== false)
+      .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
+    : [];
 }
 
 function normalizeApiScenarioSteps(value) {
@@ -902,6 +1048,22 @@ function normalizeApiScenarioSteps(value) {
       .filter(step => step.enabled !== false)
       .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0))
     : [];
+}
+
+function buildApiSuiteItemSteps(item) {
+  const itemType = optionalString(item?.itemType || item?.type).toUpperCase();
+  if (itemType === 'SCENARIO') {
+    const scenarioSnapshot = normalizeApiScenarioSnapshot(item);
+    return normalizeApiScenarioSteps(scenarioSnapshot.steps);
+  }
+  const caseSnapshot = normalizeApiCaseSnapshot(item.caseSnapshot || item);
+  return [{
+    stepId: optionalString(item.itemId) || optionalString(caseSnapshot.caseId) || 'api-case',
+    name: item.itemName || caseSnapshot.caseName || '',
+    type: 'API_CASE',
+    continueOnFailure: item.continueOnFailure === true,
+    caseSnapshot,
+  }];
 }
 
 async function executeApiCaseRequest(task, apiCaseSnapshot, runtimeVariables = {}) {

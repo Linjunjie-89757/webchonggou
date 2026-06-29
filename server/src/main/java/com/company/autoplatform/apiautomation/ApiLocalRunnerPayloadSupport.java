@@ -49,6 +49,21 @@ final class ApiLocalRunnerPayloadSupport {
         return values;
     }
 
+    static Map<String, Object> buildApiCaseSnapshot(ApiDefinitionCaseEntity apiCase) {
+        if (apiCase == null) {
+            throw new NotFoundException("API case not found");
+        }
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("caseId", apiCase.getId());
+        value.put("caseName", apiCase.getCaseName());
+        value.put("definitionId", apiCase.getDefinitionId());
+        value.put("request", buildRequest(readCaseRequestConfig(apiCase)));
+        value.put("assertions", buildAssertions(readAssertions(apiCase.getAssertionsJson())));
+        value.put("preScript", buildScript(readProcessorsJson(apiCase.getPreprocessorsJson())));
+        value.put("postScript", buildScript(readProcessorsJson(apiCase.getPostprocessorsJson())));
+        return value;
+    }
+
     private static String normalizeScenarioStepType(ApiScenarioStepInput step) {
         String rawType = blankToNull(step.stepType());
         if (rawType == null) {
@@ -66,18 +81,7 @@ final class ApiLocalRunnerPayloadSupport {
         if (SCENARIO_STEP_API_CASE.equals(stepType)
                 && SCENARIO_STEP_REF_REF.equalsIgnoreCase(blankToFallback(step.refType(), SCENARIO_STEP_REF_REF))) {
             ApiDefinitionCaseEntity apiCase = caseMapper.selectById(step.resourceId());
-            if (apiCase == null) {
-                throw new NotFoundException("API case not found");
-            }
-            Map<String, Object> value = new LinkedHashMap<>();
-            value.put("caseId", apiCase.getId());
-            value.put("caseName", apiCase.getCaseName());
-            value.put("definitionId", apiCase.getDefinitionId());
-            value.put("request", buildRequest(readCaseRequestConfig(apiCase)));
-            value.put("assertions", buildAssertions(readAssertions(apiCase.getAssertionsJson())));
-            value.put("preScript", buildScript(readProcessorsJson(apiCase.getPreprocessorsJson())));
-            value.put("postScript", buildScript(readProcessorsJson(apiCase.getPostprocessorsJson())));
-            return value;
+            return buildApiCaseSnapshot(apiCase);
         }
 
         Map<String, Object> value = new LinkedHashMap<>();

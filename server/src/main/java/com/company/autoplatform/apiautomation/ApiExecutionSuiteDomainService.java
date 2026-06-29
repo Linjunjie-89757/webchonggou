@@ -6,6 +6,9 @@ import com.company.autoplatform.common.NotFoundException;
 import com.company.autoplatform.common.PageResponse;
 import com.company.autoplatform.auth.CurrentUserContext;
 import com.company.autoplatform.auth.CurrentUserPrincipal;
+import com.company.autoplatform.runner.LocalRunnerModels.CreateRunnerTaskCommand;
+import com.company.autoplatform.runner.LocalRunnerModels.RunnerTaskDetailResponse;
+import com.company.autoplatform.runner.LocalRunnerService;
 import com.company.autoplatform.workspace.WorkspaceEntity;
 import com.company.autoplatform.workspace.WorkspaceScope;
 import com.company.autoplatform.workspace.WorkspaceService;
@@ -22,6 +25,7 @@ import java.util.Objects;
 
 import static com.company.autoplatform.apiautomation.ApiAutomationFormatSupport.blankToFallback;
 import static com.company.autoplatform.apiautomation.ApiAutomationFormatSupport.blankToNull;
+import static com.company.autoplatform.apiautomation.ApiAutomationFormatSupport.readScenarioSteps;
 import static com.company.autoplatform.apiautomation.ApiAutomationModels.*;
 
 @Service
@@ -42,6 +46,7 @@ public class ApiExecutionSuiteDomainService {
     private final ObjectProvider<ApiExecutionDomainService> executionDomainServiceProvider;
     private final WorkspaceService workspaceService;
     private final ApiWorkspaceScopeSupport workspaceScopeSupport;
+    private final LocalRunnerService localRunnerService;
 
     public ApiExecutionSuiteDomainService(
             ApiExecutionSuiteModuleMapper suiteModuleMapper,
@@ -53,7 +58,8 @@ public class ApiExecutionSuiteDomainService {
             ApiDataFileDomainService dataFileDomainService,
             ObjectProvider<ApiExecutionDomainService> executionDomainServiceProvider,
             WorkspaceService workspaceService,
-            ApiWorkspaceScopeSupport workspaceScopeSupport
+            ApiWorkspaceScopeSupport workspaceScopeSupport,
+            LocalRunnerService localRunnerService
     ) {
         this.suiteModuleMapper = suiteModuleMapper;
         this.suiteMapper = suiteMapper;
@@ -65,6 +71,7 @@ public class ApiExecutionSuiteDomainService {
         this.executionDomainServiceProvider = executionDomainServiceProvider;
         this.workspaceService = workspaceService;
         this.workspaceScopeSupport = workspaceScopeSupport;
+        this.localRunnerService = localRunnerService;
     }
 
     public List<ApiExecutionSuiteModuleItem> listSuiteModules(String workspaceCode) {
@@ -312,7 +319,7 @@ public class ApiExecutionSuiteDomainService {
                 request == null ? null : request.mockEnabled(),
                 request == null ? null : request.mockApplicationId(),
                 request == null ? null : request.mockBusinessScenarioId(),
-                null,
+                request == null ? null : request.rowVariables(),
                 request == null ? null : request.runnerId()
         );
         SuiteExecutionPolicy policy = SuiteExecutionPolicy.of(
@@ -321,6 +328,9 @@ public class ApiExecutionSuiteDomainService {
                 suite.getStepFailureRetryCount(),
                 suite.getDefaultStepWaitMs()
         );
+        if (isLocalRunnerRun(effectiveRequest.runOn())) {
+            return createLocalRunnerSuiteRun(suite, workspace, enabledItems, effectiveRequest, policy);
+        }
         SuiteRunAggregate aggregate = runSuiteAggregate(suite, workspace, enabledItems, effectiveRequest, policy);
         suite.setLastRunResult(aggregate.success() ? "SUCCESS" : "FAILED");
         suite.setLastRunAt(LocalDateTime.now());
@@ -407,6 +417,137 @@ public class ApiExecutionSuiteDomainService {
             }
         }
         return new SuiteRunAggregate(taskId, reportId, success, failureSummary, stepResults, itemSnapshots, dataIterations);
+    }
+
+    private ApiRunResponse createLocalRunnerSuiteRun(
+            ApiExecutionSuiteEntity suite,
+            WorkspaceEntity workspace,
+            List<ApiExecutionSuiteItemEntity> enabledItems,
+            ApiRunRequest effectiveRequest,
+            SuiteExecutionPolicy policy
+    ) {
+        String contextSnapshotJson = executionDomainServiceProvider.getObject().buildExecutionContextSnapshot(
+                suite.getWorkspaceId(),
+                effectiveRequest.environmentId(),
+                effectiveRequest.variableSetId(),
+                effectiveRequest.mockApplicationId(),
+                effectiveRequest.mockEnabled()
+        );
+        RunnerTaskDetailResponse task = localRunnerService.createDebugTask(new CreateRunnerTaskCommand(
+                suite.getWorkspaceId(),
+                workspace.getWorkspaceCode(),
+                "api_suite_" + suite.getId() + "_" + System.currentTimeMillis(),
+                "API_SUITE_RUN",
+                "LOCAL_RUNNER",
+                effectiveRequest.runnerId(),
+                null,
+                "1.0",
+                blankToFallback(effectiveRequest.triggerSource(), "MANUAL"),
+                1,
+                null,
+                buildApiLocalRunnerSuiteTimeoutPolicy(policy),
+                buildApiLocalRunnerSuiteEnvironmentSnapshot(effectiveRequest.environmentId(), contextSnapshotJson),
+                buildApiLocalRunnerSuiteVariableSnapshot(effectiveRequest.variableSetId(), effectiveRequest.rowVariables()),
+                Map.of(),
+                List.of(),
+                List.of(),
+                Map.of(),
+                buildApiLocalRunnerSuitePayload(suite, enabledItems, effectiveRequest, policy, contextSnapshotJson)
+        ));
+
+        return new ApiRunResponse(
+                null,
+                null,
+                task == null ? null : task.runId(),
+                null,
+                "PENDING",
+                "Local Runner task created",
+                List.of(),
+                List.of()
+        );
+    }
+
+    private Map<String, Object> buildApiLocalRunnerSuiteTimeoutPolicy(SuiteExecutionPolicy policy) {
+        Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("taskTimeoutMs", policy.globalTimeoutMs());
+        values.put("requestTimeoutMs", 30000);
+        values.put("scriptTimeoutMs", 1000);
+        values.put("stepFailureRetryCount", policy.stepFailureRetryCount());
+        values.put("defaultStepWaitMs", policy.defaultStepWaitMs());
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerSuiteEnvironmentSnapshot(Long environmentId, String contextSnapshotJson) {
+        Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("environmentId", environmentId);
+        values.put("contextSnapshotJson", contextSnapshotJson);
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerSuiteVariableSnapshot(Long variableSetId, Map<String, String> rowVariables) {
+        Map<String, Object> values = new java.util.LinkedHashMap<>();
+        values.put("variableSetId", variableSetId);
+        values.put("variables", rowVariables == null ? Map.of() : new java.util.LinkedHashMap<>(rowVariables));
+        return values;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerSuitePayload(
+            ApiExecutionSuiteEntity suite,
+            List<ApiExecutionSuiteItemEntity> enabledItems,
+            ApiRunRequest effectiveRequest,
+            SuiteExecutionPolicy policy,
+            String contextSnapshotJson
+    ) {
+        Map<String, Object> suiteSnapshot = new java.util.LinkedHashMap<>();
+        suiteSnapshot.put("suiteId", suite.getId());
+        suiteSnapshot.put("suiteName", suite.getSuiteName());
+        suiteSnapshot.put("runMode", suite.getRunMode());
+        suiteSnapshot.put("items", enabledItems.stream().map(this::buildApiLocalRunnerSuiteItem).toList());
+
+        Map<String, Object> runOptions = new java.util.LinkedHashMap<>();
+        runOptions.put("stopOnFirstFailure", !policy.continueOnFailure());
+        runOptions.put("formalReport", true);
+        runOptions.put("debugMode", false);
+        runOptions.put("environmentId", effectiveRequest.environmentId());
+        runOptions.put("variableSetId", effectiveRequest.variableSetId());
+        runOptions.put("contextSnapshotJson", contextSnapshotJson);
+
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("suiteSnapshot", suiteSnapshot);
+        payload.put("runOptions", runOptions);
+        return payload;
+    }
+
+    private Map<String, Object> buildApiLocalRunnerSuiteItem(ApiExecutionSuiteItemEntity item) {
+        Map<String, Object> value = new java.util.LinkedHashMap<>();
+        value.put("itemId", item.getId());
+        value.put("resourceId", item.getItemId());
+        value.put("itemType", item.getItemType());
+        value.put("itemName", item.getItemNameSnapshot());
+        value.put("sortOrder", item.getSortOrder());
+        value.put("enabled", item.getEnabled());
+        if ("API_CASE".equals(item.getItemType())) {
+            ApiDefinitionCaseEntity apiCase = caseMapper.selectById(item.getItemId());
+            value.put("caseSnapshot", ApiLocalRunnerPayloadSupport.buildApiCaseSnapshot(apiCase));
+            return value;
+        }
+        if ("SCENARIO".equals(item.getItemType())) {
+            ApiScenarioEntity scenario = scenarioMapper.selectById(item.getItemId());
+            if (scenario == null) {
+                throw new NotFoundException("Scenario not found");
+            }
+            Map<String, Object> scenarioSnapshot = new java.util.LinkedHashMap<>();
+            scenarioSnapshot.put("scenarioId", scenario.getId());
+            scenarioSnapshot.put("scenarioName", scenario.getScenarioName());
+            scenarioSnapshot.put("steps", ApiLocalRunnerPayloadSupport.buildScenarioSteps(
+                    readScenarioSteps(scenario.getStepsJson()),
+                    Boolean.TRUE.equals(scenario.getContinueOnFailure()),
+                    caseMapper
+            ));
+            value.put("scenarioSnapshot", scenarioSnapshot);
+            return value;
+        }
+        throw new BadRequestException("Unsupported execution suite item type");
     }
 
     private SuiteRunAggregate runSuiteOnce(
@@ -1148,6 +1289,11 @@ public class ApiExecutionSuiteDomainService {
     private String normalizeRunOn(String runOn) {
         String normalized = runOn == null || runOn.isBlank() ? "LOCAL" : runOn.trim().toUpperCase(Locale.ROOT);
         return "REMOTE".equals(normalized) ? "REMOTE" : "LOCAL";
+    }
+
+    private boolean isLocalRunnerRun(String runOn) {
+        String normalized = blankToNull(runOn);
+        return "LOCAL".equalsIgnoreCase(normalized) || "LOCAL_RUNNER".equalsIgnoreCase(normalized);
     }
 
     private Integer normalizeRange(Integer value, int fallback, int min, int max) {

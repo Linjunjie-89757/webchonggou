@@ -24,6 +24,7 @@ public class ApiLocalRunnerReportService {
 
     private static final String TASK_TYPE_API_CASE_RUN = "API_CASE_RUN";
     private static final String TASK_TYPE_API_SCENARIO_RUN = "API_SCENARIO_RUN";
+    private static final String TASK_TYPE_API_SUITE_RUN = "API_SUITE_RUN";
     private static final String EXECUTION_LOCATION_LOCAL_RUNNER = "LOCAL_RUNNER";
 
     private final TaskMapper taskMapper;
@@ -33,6 +34,8 @@ public class ApiLocalRunnerReportService {
     private final ApiDefinitionCaseRunHistoryMapper caseRunHistoryMapper;
     private final ApiScenarioMapper scenarioMapper;
     private final ApiScenarioRunHistoryMapper scenarioRunHistoryMapper;
+    private final ApiExecutionSuiteMapper suiteMapper;
+    private final ApiExecutionSuiteRunHistoryMapper suiteRunHistoryMapper;
 
     public ApiLocalRunnerReportService(
             TaskMapper taskMapper,
@@ -43,6 +46,30 @@ public class ApiLocalRunnerReportService {
             ApiScenarioMapper scenarioMapper,
             ApiScenarioRunHistoryMapper scenarioRunHistoryMapper
     ) {
+        this(
+                taskMapper,
+                reportMapper,
+                stepResultMapper,
+                caseMapper,
+                caseRunHistoryMapper,
+                scenarioMapper,
+                scenarioRunHistoryMapper,
+                null,
+                null
+        );
+    }
+
+    public ApiLocalRunnerReportService(
+            TaskMapper taskMapper,
+            ReportMapper reportMapper,
+            ApiRunStepResultMapper stepResultMapper,
+            ApiDefinitionCaseMapper caseMapper,
+            ApiDefinitionCaseRunHistoryMapper caseRunHistoryMapper,
+            ApiScenarioMapper scenarioMapper,
+            ApiScenarioRunHistoryMapper scenarioRunHistoryMapper,
+            ApiExecutionSuiteMapper suiteMapper,
+            ApiExecutionSuiteRunHistoryMapper suiteRunHistoryMapper
+    ) {
         this.taskMapper = taskMapper;
         this.reportMapper = reportMapper;
         this.stepResultMapper = stepResultMapper;
@@ -50,6 +77,8 @@ public class ApiLocalRunnerReportService {
         this.caseRunHistoryMapper = caseRunHistoryMapper;
         this.scenarioMapper = scenarioMapper;
         this.scenarioRunHistoryMapper = scenarioRunHistoryMapper;
+        this.suiteMapper = suiteMapper;
+        this.suiteRunHistoryMapper = suiteRunHistoryMapper;
     }
 
     @EventListener
@@ -60,6 +89,9 @@ public class ApiLocalRunnerReportService {
         }
         if (TASK_TYPE_API_SCENARIO_RUN.equals(event.taskType())) {
             persistScenarioResult(event);
+        }
+        if (TASK_TYPE_API_SUITE_RUN.equals(event.taskType())) {
+            persistSuiteResult(event);
         }
     }
 
@@ -175,6 +207,81 @@ public class ApiLocalRunnerReportService {
             history.setCreatedAt(LocalDateTime.now());
             history.setUpdatedAt(LocalDateTime.now());
             scenarioRunHistoryMapper.insert(history);
+        }
+    }
+
+    private void persistSuiteResult(LocalRunnerTaskFinalResultEvent event) {
+        Map<String, Object> payload = safeMap(event.payload());
+        Map<String, Object> suiteSnapshot = safeMap(payload.get("suiteSnapshot"));
+        Map<String, Object> result = safeMap(event.result());
+        Map<String, Object> summary = safeMap(result.get("summary"));
+        Map<String, Object> reportData = safeMap(result.get("reportData"));
+        Map<String, Object> runOptions = safeMap(payload.get("runOptions"));
+        List<Map<String, Object>> stepResults = safeList(reportData.get("stepResults"));
+        List<Map<String, Object>> itemSnapshots = safeList(reportData.get("itemSnapshots"));
+        Long suiteId = longValue(suiteSnapshot.get("suiteId"));
+        ApiExecutionSuiteEntity suite = suiteMapper == null || suiteId == null ? null : suiteMapper.selectById(suiteId);
+        Long workspaceId = suite == null ? event.workspaceId() : suite.getWorkspaceId();
+        String suiteName = firstText(suite == null ? null : suite.getSuiteName(), stringValue(suiteSnapshot.get("suiteName")), "Local Runner API suite");
+
+        RunArtifacts artifacts = createRunArtifacts(workspaceId, "接口套件本地执行", suiteName, event);
+        int order = 1;
+        for (Map<String, Object> stepResult : stepResults) {
+            stepResultMapper.insert(toStepEntity(
+                    workspaceId,
+                    artifacts.report().getId(),
+                    order++,
+                    firstText(stringValue(stepResult.get("stepName")), stringValue(stepResult.get("stepId")), "API step"),
+                    null,
+                    "SUCCESS".equals(stringValue(stepResult.get("status"))),
+                    longValue(stepResult.get("durationMs")),
+                    stringValue(stepResult.get("errorMessage")),
+                    safeMap(stepResult.get("request")),
+                    safeMap(stepResult.get("response")),
+                    safeList(stepResult.get("assertions")),
+                    safeMap(stepResult.get("extractedVariables")),
+                    safeMap(stepResult.get("scriptResults"))
+            ));
+        }
+
+        if (suite != null && suiteRunHistoryMapper != null) {
+            suite.setLastRunResult(event.status());
+            suite.setLastRunAt(LocalDateTime.now());
+            suite.setUpdatedAt(LocalDateTime.now());
+            suiteMapper.updateById(suite);
+
+            ApiExecutionSuiteRunHistoryEntity history = new ApiExecutionSuiteRunHistoryEntity();
+            history.setWorkspaceId(suite.getWorkspaceId());
+            history.setSuiteId(suite.getId());
+            history.setSuiteName(suiteName);
+            history.setModuleId(suite.getModuleId());
+            history.setPriority(suite.getPriority());
+            history.setReportId(artifacts.report().getId());
+            history.setResult(event.status());
+            history.setFailureSummary(firstText(stringValue(result.get("errorMessage")), stringValue(summary.get("errorMessage")), null));
+            history.setTotalCount(integerValue(summary.get("totalSteps"), stepResults.size()));
+            history.setSuccessCount(integerValue(summary.get("passedSteps"), countStatus(stepResults, "SUCCESS")));
+            history.setFailedCount(integerValue(summary.get("failedSteps"), countStatus(stepResults, "FAILED")));
+            history.setSkippedCount(integerValue(summary.get("skippedSteps"), countStatus(stepResults, "SKIPPED")));
+            history.setDurationMs(longValue(result.get("durationMs"), 0L));
+            history.setEnvironmentId(longValue(runOptions.get("environmentId")));
+            history.setVariableSetId(longValue(runOptions.get("variableSetId")));
+            history.setRunMode(firstText(suite.getRunMode(), stringValue(suiteSnapshot.get("runMode")), "SERIAL"));
+            history.setRunOn(EXECUTION_LOCATION_LOCAL_RUNNER);
+            history.setContinueOnFailure(suite.getContinueOnFailure());
+            history.setGlobalTimeoutMs(suite.getGlobalTimeoutMs());
+            history.setStepFailureRetryCount(suite.getStepFailureRetryCount());
+            history.setDefaultStepWaitMs(suite.getDefaultStepWaitMs());
+            history.setDataDrivenEnabled(false);
+            history.setDataIterationJson("[]");
+            history.setTriggerSource("LOCAL_RUNNER");
+            history.setOperatorName("Local Runner");
+            history.setDetailJson(ApiAutomationJsonSupport.toJson(stepResults, "Failed to serialize Local Runner API suite step detail"));
+            history.setItemSnapshotJson(ApiAutomationJsonSupport.toJson(itemSnapshots, "Failed to serialize Local Runner API suite item snapshots"));
+            history.setContextSnapshotJson(contextSnapshot(event));
+            history.setCreatedAt(LocalDateTime.now());
+            history.setUpdatedAt(LocalDateTime.now());
+            suiteRunHistoryMapper.insert(history);
         }
     }
 
@@ -395,7 +502,10 @@ public class ApiLocalRunnerReportService {
             return number.longValue();
         }
         try {
-            return value == null ? fallback : Long.parseLong(String.valueOf(value));
+            if (value == null) {
+                return fallback;
+            }
+            return Long.parseLong(String.valueOf(value));
         } catch (NumberFormatException ignored) {
             return fallback;
         }
