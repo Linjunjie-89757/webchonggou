@@ -76,6 +76,7 @@ import ApiCodeEditor from './ApiCodeEditor.vue'
 import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
 import ApiCaseListPanel from './ApiCaseListPanel.vue'
 import ApiDefinitionPanel from './ApiDefinitionPanel.vue'
+import ApiDefinitionSaveDialog from './ApiDefinitionSaveDialog.vue'
 import ApiDirectoryTree from './ApiDirectoryTree.vue'
 import ApiExtractorPanel from './ApiExtractorPanel.vue'
 import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
@@ -96,6 +97,7 @@ import {
   findDirectoryNodeByKey,
   type DirectoryNode,
 } from './lib/apiDirectoryTree'
+import type { ApiDefinitionSaveDraft } from './lib/apiDefinitionSaveDialog'
 
 type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
@@ -343,6 +345,8 @@ const editorTabOverflow = ref({
 })
 const urlInputRef = ref<{ focus: () => void } | null>(null)
 const saving = ref(false)
+const definitionSaveDialogVisible = ref(false)
+const pendingCreateEditorKey = ref('')
 const sending = ref(false)
 const batchAddVisible = ref(false)
 const batchAddTarget = ref<BatchAddTarget>('query')
@@ -4182,6 +4186,19 @@ async function saveActiveEditor() {
     return
   }
 
+  if (!editor.definitionId) {
+    pendingCreateEditorKey.value = editor.key
+    definitionSaveDialogVisible.value = true
+    return
+  }
+
+  await persistActiveEditor()
+}
+
+async function persistActiveEditor() {
+  if (!activeEditor.value) return
+  const editor = activeEditor.value
+  const detail = editor.detail
   saving.value = true
   try {
     const payload = buildPayload(detail)
@@ -4204,6 +4221,21 @@ async function saveActiveEditor() {
   } finally {
     saving.value = false
   }
+}
+
+async function confirmCreateDefinition(draft: ApiDefinitionSaveDraft) {
+  const editor = tabs.value.find(item => item.key === pendingCreateEditorKey.value)
+  if (!editor) {
+    definitionSaveDialogVisible.value = false
+    pendingCreateEditorKey.value = ''
+    return
+  }
+  activeEditorKey.value = editor.key
+  editor.detail.name = draft.name
+  editor.detail.directoryName = draft.directoryName
+  await persistActiveEditor()
+  definitionSaveDialogVisible.value = false
+  pendingCreateEditorKey.value = ''
 }
 
 async function sendActiveEditor() {
@@ -6474,6 +6506,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </el-dialog>
+
+    <ApiDefinitionSaveDialog
+      v-model="definitionSaveDialogVisible"
+      :current-name="activeEditor?.detail.name"
+      :request-path="activeEditor?.detail.requestConfig.path"
+      :current-directory-name="activeEditor?.detail.directoryName"
+      :selected-directory-name="currentImportDirectoryName()"
+      :directory-tree="directoryTree"
+      :submitting="saving"
+      @confirm="confirmCreateDefinition"
+    />
 
     <el-dialog
       v-model="batchAddVisible"

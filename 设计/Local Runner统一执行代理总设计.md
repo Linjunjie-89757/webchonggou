@@ -2205,7 +2205,203 @@ uploadOnFailureOnly
 }
 ```
 
-## 44. 最终结论
+## 44. 开发入口与回归验证清单
+
+本章作为开发和回归时的固定入口。后续新增 Runner 能力时，优先更新本章命令，避免不同会话、不同开发者使用不一致的验证方式。
+
+### 44.1 日常启动
+
+后端：
+
+```powershell
+cd server
+.\run-local-server.cmd
+```
+
+前端：
+
+```powershell
+npm run dev
+```
+
+Local Runner：
+
+```powershell
+npm run runner
+```
+
+Runner 默认监听：
+
+```text
+http://127.0.0.1:39118
+```
+
+健康检查：
+
+```powershell
+curl http://127.0.0.1:39118/health
+```
+
+如果本机 PowerShell 禁止执行 npm 脚本，可使用：
+
+```powershell
+npm.cmd run runner
+npm.cmd run runner:test
+npm.cmd run typecheck
+```
+
+### 44.2 前端联调注意事项
+
+前端页面访问平台时，建议统一使用 `localhost`；Runner 本地服务使用 `127.0.0.1`。
+
+原因：
+
+- 平台登录态依赖浏览器 cookie，`localhost` 和 `127.0.0.1` 混用可能导致 `/auth/me` 返回 401。
+- Runner 是本机 HTTP 服务，只监听 `127.0.0.1`，避免局域网访问。
+- 前端访问 Runner 需要 Runner 正确返回 CORS 头。
+
+### 44.3 Runner 回归测试
+
+统一使用：
+
+```powershell
+npm run runner:test
+```
+
+该命令必须串行执行 Node Runner / Playwright 集成测试：
+
+```text
+node --test --test-concurrency=1 ...
+```
+
+原因：
+
+- Web UI 集成测试会启动本地 HTTP 服务、Runner 进程和 Playwright 浏览器。
+- 并行执行容易出现端口、浏览器进程、系统资源竞争。
+- 并发超时通常是假失败，不代表 Runner 链路本身失败。
+
+当前 `runner:test` 覆盖：
+
+```text
+Web UI 元素采集
+Web UI 元素真机验证
+Web UI 用例本地执行
+API 用例本地执行
+API 场景本地执行
+API 套件本地执行
+Runner 健康检查
+Runner 会话 TTL
+Runner 能力识别
+Runner 资源槽快照
+脚本沙箱基础约束
+iframe / Shadow DOM 定位链路
+登录态缺失、过期、跳登录页
+取消、超时、失败截图
+```
+
+### 44.4 前端类型检查
+
+```powershell
+npm run typecheck
+```
+
+前端 UI、类型、实体辅助函数、Runner 视图模型改动后必须跑。
+
+### 44.5 后端目标测试
+
+Local Runner 相关后端回归优先跑：
+
+```powershell
+cd server
+mvnw.cmd "-Dtest=WebUiExecutionControllerIntegrationTests,ApiExecutionDomainServiceLocalRunnerTests,ApiExecutionSuiteDomainServiceLocalRunnerTests,ApiLocalRunnerReportServiceTests,LocalRunnerNodeQueryTests,LocalRunnerResourceSchedulingTests,LocalRunnerHeartbeatTests" test
+```
+
+覆盖范围：
+
+```text
+Web UI 本地执行接口
+API 用例本地执行任务创建
+API 套件本地执行任务创建
+API Local Runner 正式报告回写
+Runner 节点查询
+Runner 能力筛选
+Runner 资源槽调度
+Runner 心跳
+```
+
+### 44.6 Diff 与编码检查
+
+修改后必须跑：
+
+```powershell
+git diff --check
+```
+
+中文源码、中文 Markdown、Vue 文件修改时要注意：
+
+- 不使用 PowerShell `Get-Content` / `Set-Content` 做整文件替换。
+- 小范围修改优先使用 `apply_patch`。
+- 若出现 LF/CRLF warning，只代表 Git 换行提示，不等同于 diff check 失败。
+- 发现中文乱码时，先停止继续改动，确认编码后再处理。
+
+### 44.7 当前最小手工验收链路
+
+Web UI 本地执行：
+
+```text
+启动后端
+启动前端
+启动 Runner
+打开 Web UI 用例编辑
+选择“运行于：本地执行器”
+点击本地运行
+查看正式报告
+确认执行位置显示 Local Runner
+```
+
+API 场景 / 套件本地执行：
+
+```text
+启动后端
+启动前端
+启动 Runner
+进入接口自动化执行页
+场景或套件选择“运行于：本地执行器”
+点击运行
+查看运行记录 / 正式报告
+确认执行位置显示 Local Runner
+```
+
+AI 采集 / 元素验证：
+
+```text
+启动 Runner
+打开 AI 采集入口
+检查 Runner 连接状态
+打开或复用目标页面
+开始采集
+进入采集工作台
+查看候选、过滤日志、真机验证状态
+保存元素后回到元素库详情
+```
+
+### 44.8 回归失败排查顺序
+
+优先按下面顺序排查：
+
+```text
+1. Runner 是否启动：/health
+2. 前端是否能访问 Runner：浏览器控制台是否有 CORS / ERR_FAILED
+3. 后端是否能创建 Local Runner 任务
+4. Runner 是否轮询到任务
+5. Runner 是否上报 status / logs / steps / result
+6. 后端是否写入正式报告或元素验证结果
+7. 前端是否刷新到最新任务 / 报告
+```
+
+不要在没有定位到层级前直接改执行逻辑。
+
+## 45. 最终结论
 
 Local Runner 最终应从“AI 采集辅助工具”升级为“统一执行代理”。
 

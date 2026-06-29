@@ -5,6 +5,7 @@ import com.company.autoplatform.execution.ReportMapper;
 import com.company.autoplatform.execution.TaskEntity;
 import com.company.autoplatform.execution.TaskMapper;
 import com.company.autoplatform.runner.LocalRunnerTaskFinalResultEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +38,7 @@ public class ApiLocalRunnerReportService {
     private final ApiExecutionSuiteMapper suiteMapper;
     private final ApiExecutionSuiteRunHistoryMapper suiteRunHistoryMapper;
 
+    @Autowired
     public ApiLocalRunnerReportService(
             TaskMapper taskMapper,
             ReportMapper reportMapper,

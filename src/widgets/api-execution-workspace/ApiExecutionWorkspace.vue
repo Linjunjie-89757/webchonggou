@@ -35,9 +35,11 @@ import type {
   ApiScenarioItem,
   ApiAutomationVariableSetItem,
 } from '@/entities/api-automation'
-import { apiAutomationApi } from '@/entities/api-automation'
+import { apiAutomationApi, extractRunnerRunId } from '@/entities/api-automation'
 import {
   apiExecutionSuiteApi,
+  buildApiSuiteLocalRunNotice,
+  findLatestSuiteLocalRunnerHistory,
   type ApiExecutionSuiteArrangeItem,
   type ApiExecutionSuiteDetail,
   type ApiExecutionSuiteItem,
@@ -149,14 +151,20 @@ const suiteRunning = ref(false)
 const suiteRunnerNodesLoading = ref(false)
 const suiteRunnerNodes = ref<RunnerNodeSummary[]>([])
 const selectedSuiteRunnerId = ref<string | null>(null)
+const latestSuiteLocalRunnerRunId = ref<string | null>(null)
 const dirtySuiteDraftIds = ref<Set<number>>(new Set())
 const suiteHeaderNameEditing = ref(false)
 const suiteHeaderNameDraft = ref('')
 let draftSuiteSeed = 0
 
 const visibleEnvironmentOptions = computed(() => props.environments || [])
-const API_SUITE_RUNNER_TASK_TYPE = 'API_SCENARIO_RUN'
-const API_SUITE_LOCAL_RUNNER_NOTE = '当前会将套件中的场景项下发给 Local Runner；套件级完整本地报告将在后续 API_SUITE_RUN 闭环中接入。'
+const API_SUITE_RUNNER_TASK_TYPE = 'API_SUITE_RUN'
+const API_SUITE_LOCAL_RUNNER_NOTE = '当前会创建套件级 Local Runner 任务，执行完成后写入正式套件报告。'
+const latestSuiteLocalRunnerHistory = computed(() => findLatestSuiteLocalRunnerHistory(suiteRunHistories.value))
+const suiteLocalRunNotice = computed(() => buildApiSuiteLocalRunNotice({
+  runId: latestSuiteLocalRunnerRunId.value,
+  history: latestSuiteLocalRunnerHistory.value,
+}))
 
 const executionSuiteTree = computed<ExecutionSuiteNode[]>(() => {
   const workspaceNodes = resolveVisibleWorkspaces()
@@ -1046,6 +1054,31 @@ async function loadSuiteRunHistories() {
   }
 }
 
+async function refreshSuiteLocalRunnerReport(showMessage = true) {
+  await loadSuiteRunHistories()
+  const localHistory = latestSuiteLocalRunnerHistory.value
+  if (localHistory) {
+    await selectSuiteRunHistory(localHistory)
+    if (showMessage) {
+      ElMessage.success('本地执行报告已刷新')
+    }
+    return
+  }
+  if (showMessage) {
+    ElMessage.info('本地执行结果还未回写，请稍后刷新')
+  }
+}
+
+async function openSuiteLocalRunnerReport() {
+  if (suiteLocalRunNotice.value.reportKey && latestSuiteLocalRunnerHistory.value) {
+    await selectSuiteRunHistory(latestSuiteLocalRunnerHistory.value)
+    activeExecutionSubTab.value = 'result'
+    return
+  }
+  await refreshSuiteLocalRunnerReport(true)
+  activeExecutionSubTab.value = 'result'
+}
+
 async function selectSuiteRunHistory(row: ApiExecutionSuiteRunHistoryItem) {
   suiteRunHistoryLoading.value = true
   try {
@@ -1203,7 +1236,7 @@ async function handleRunSuite() {
         return
       }
     }
-    await apiExecutionSuiteApi.runSuite(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id, {
+    const response = await apiExecutionSuiteApi.runSuite(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id, {
       workspaceCode: activeSuiteDetail.value.workspaceCode,
       environmentId: typeof executionVisualEnvironment.value === 'number' ? executionVisualEnvironment.value : null,
       variableSetId: activeSuiteDetail.value.variableSetId,
@@ -1212,9 +1245,13 @@ async function handleRunSuite() {
       runOn,
       runnerId: runOn === 'LOCAL' ? selectedSuiteRunnerId.value : null,
     })
-    ElMessage.success('套件运行已触发')
+    latestSuiteLocalRunnerRunId.value = runOn === 'LOCAL' ? extractRunnerRunId(response) : null
+    ElMessage.success(runOn === 'LOCAL' ? '本地套件任务已创建' : '套件运行已触发')
     await loadSuiteDetail(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id)
-    if (activeExecutionSubTab.value === 'result') {
+    if (runOn === 'LOCAL') {
+      activeExecutionSubTab.value = 'result'
+      await refreshSuiteLocalRunnerReport(false)
+    } else if (activeExecutionSubTab.value === 'result') {
       await loadSuiteRunHistories()
     }
   } catch (error) {
@@ -1245,7 +1282,7 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
         return
       }
     }
-    await apiExecutionSuiteApi.runSuite(suite.workspaceCode, suite.id, {
+    const response = await apiExecutionSuiteApi.runSuite(suite.workspaceCode, suite.id, {
       workspaceCode: suite.workspaceCode,
       environmentId: suite.environmentId,
       variableSetId: suite.variableSetId,
@@ -1254,10 +1291,15 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
       runOn,
       runnerId: runOn === 'LOCAL' ? selectedSuiteRunnerId.value : null,
     })
-    ElMessage.success('套件运行已触发')
+    latestSuiteLocalRunnerRunId.value = runOn === 'LOCAL' ? extractRunnerRunId(response) : null
+    ElMessage.success(runOn === 'LOCAL' ? '本地套件任务已创建' : '套件运行已触发')
     await loadExecutionSuiteDirectory()
     if (activeSuiteDetail.value?.id === suite.id) {
       await loadSuiteDetail(suite.workspaceCode, suite.id)
+      if (runOn === 'LOCAL') {
+        activeExecutionSubTab.value = 'result'
+        await refreshSuiteLocalRunnerReport(false)
+      }
     }
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1674,6 +1716,28 @@ function showPending(message: string) {
             </div>
           </div>
           <div v-else-if="activeExecutionSubTab === 'result'" v-loading="suiteRunHistoryLoading" class="execution-result-panel">
+            <section v-if="suiteLocalRunNotice.visible" class="execution-local-suite-run">
+              <div class="execution-local-suite-run__main">
+                <el-tag :type="suiteLocalRunNotice.tone" effect="light">
+                  Local Runner
+                </el-tag>
+                <div>
+                  <strong>{{ suiteLocalRunNotice.title }}</strong>
+                  <span>{{ suiteLocalRunNotice.description }}</span>
+                </div>
+              </div>
+              <div class="execution-local-suite-run__actions">
+                <el-button size="small" @click="() => refreshSuiteLocalRunnerReport(true)">刷新报告</el-button>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :disabled="!suiteLocalRunNotice.reportKey"
+                  @click="openSuiteLocalRunnerReport"
+                >
+                  查看正式报告
+                </el-button>
+              </div>
+            </section>
             <div class="execution-result-list app-soft-scrollbar">
               <button
                 v-for="history in suiteRunHistories"
@@ -3328,7 +3392,52 @@ function showPending(message: string) {
   min-height: 0;
   flex: 1 1 auto;
   grid-template-columns: minmax(260px, 36%) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+.execution-local-suite-run {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.execution-local-suite-run__main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-local-suite-run__main div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.execution-local-suite-run__main strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.execution-local-suite-run__main span {
+  overflow: hidden;
+  color: #667085;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-local-suite-run__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .execution-result-list,

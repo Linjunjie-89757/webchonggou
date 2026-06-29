@@ -10,6 +10,7 @@ import {
   type EnvConfigItem,
   type ParamSetItem,
 } from '@/entities/config'
+import { workspaceApi, type WorkspaceItem } from '@/entities/workspace'
 import { getRequestErrorMessage } from '@/shared/api/error'
 import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppDialog from '@/shared/ui/app-dialog/AppDialog.vue'
@@ -50,8 +51,11 @@ const formError = reactive({
 })
 const variableSets = ref<ParamSetItem[]>([])
 const mockApplications = ref<MockApplicationItem[]>([])
+const workspaces = ref<WorkspaceItem[]>([])
+const loadingWorkspaces = ref(false)
 const loadingVariableSets = ref(false)
 const loadingMockApplications = ref(false)
+let workspaceRequestSeq = 0
 let variableSetRequestSeq = 0
 let mockApplicationRequestSeq = 0
 const serviceKeySnapshots = new WeakMap<ConfigEnvServiceEndpointForm, string>()
@@ -60,6 +64,23 @@ const paramTypeLabelMap = new Map<string, string>(configParamTypeOptions.map(ite
 
 const enabledVariableSets = computed(() => variableSets.value.filter(item => item.status !== 0))
 const enabledMockApplications = computed(() => mockApplications.value.filter(item => item.status !== 0))
+const workspaceOptions = computed(() => {
+  const options = workspaces.value
+    .filter(item => item.workspaceCode && item.workspaceCode !== 'ALL' && !item.allScope)
+    .map(item => ({
+      label: item.workspaceName || item.workspaceCode,
+      value: item.workspaceCode,
+    }))
+
+  if (form.workspaceCode && form.workspaceCode !== 'ALL' && !options.some(item => item.value === form.workspaceCode)) {
+    options.unshift({
+      label: form.workspaceCode,
+      value: form.workspaceCode,
+    })
+  }
+
+  return options
+})
 const defaultService = computed(() => {
   return form.services.find(service => service.key === form.defaultServiceKey) ?? form.services[0] ?? null
 })
@@ -81,7 +102,18 @@ function resetForm() {
       : createDefaultConfigEnvForm(props.defaultWorkspaceCode)
 
   Object.assign(form, nextForm)
+  ensureSelectedWorkspace()
   formError.message = ''
+}
+
+function ensureSelectedWorkspace() {
+  if (!workspaceOptions.value.length) {
+    return
+  }
+
+  if (form.workspaceCode === 'ALL' || !workspaceOptions.value.some(item => item.value === form.workspaceCode)) {
+    form.workspaceCode = workspaceOptions.value[0].value
+  }
 }
 
 function submit() {
@@ -144,6 +176,26 @@ function isDuplicateServiceKey(service: ConfigEnvServiceEndpointForm) {
   return duplicateServiceKeys.value.has(service.key.trim())
 }
 
+async function loadWorkspaces() {
+  const requestId = ++workspaceRequestSeq
+  loadingWorkspaces.value = true
+  try {
+    const items = await workspaceApi.getSwitchableWorkspaces()
+    if (requestId === workspaceRequestSeq) {
+      workspaces.value = Array.isArray(items) ? items : []
+      ensureSelectedWorkspace()
+    }
+  } catch (error) {
+    if (requestId === workspaceRequestSeq) {
+      formError.message = getRequestErrorMessage(error)
+    }
+  } finally {
+    if (requestId === workspaceRequestSeq) {
+      loadingWorkspaces.value = false
+    }
+  }
+}
+
 async function loadVariableSets() {
   const requestId = ++variableSetRequestSeq
   loadingVariableSets.value = true
@@ -191,6 +243,7 @@ watch(
   (visible) => {
     if (visible) {
       resetForm()
+      void loadWorkspaces()
       void loadVariableSets()
       void loadMockApplications()
     }
@@ -220,7 +273,19 @@ watch(
     <div class="config-env-dialog">
       <div class="config-env-dialog__field">
         <span>目标空间</span>
-        <el-input v-model="form.workspaceCode" placeholder="ALL" />
+        <el-select
+          v-model="form.workspaceCode"
+          filterable
+          :loading="loadingWorkspaces"
+          placeholder="请选择目标空间"
+        >
+          <el-option
+            v-for="workspace in workspaceOptions"
+            :key="workspace.value"
+            :label="workspace.label"
+            :value="workspace.value"
+          />
+        </el-select>
       </div>
 
       <div class="config-env-dialog__field">

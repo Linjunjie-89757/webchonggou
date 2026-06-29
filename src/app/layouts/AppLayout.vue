@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowDown,
+  Bell,
   Cpu,
   Files,
   Grid,
@@ -11,7 +12,7 @@ import {
   User,
   Warning,
 } from '@element-plus/icons-vue'
-import { ChevronDown, Layers } from '@lucide/vue'
+import { ChevronDown, ChevronLeft, Layers } from '@lucide/vue'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -29,6 +30,7 @@ const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext(
 const switchableWorkspaces = ref<WorkspaceItem[]>([])
 const workspaceLoading = ref(false)
 const workspaceErrorMessage = ref('')
+const isMenuCollapsed = ref(localStorage.getItem('app-menu-collapsed') === '1')
 const NAV_GROUP_STORAGE_KEY = 'app:navigation-groups-expanded-v1'
 
 const headerTitle = computed(() => {
@@ -62,6 +64,8 @@ const selectedWorkspaceName = computed(() => {
 const navigationTargetQuery = computed(() => ({
   workspace: selectedWorkspaceCode.value,
 }))
+
+const sidebarWidth = computed(() => (isMenuCollapsed.value ? '60px' : 'var(--app-sidebar-width)'))
 
 interface NavigationItem {
   path: string
@@ -152,6 +156,11 @@ function isNavigationItemActive(item: NavigationItem) {
     return item.children.some(child => matchesNavigationPath(child.path)) || matchesNavigationPath(item.path)
   }
   return matchesNavigationPath(item.path)
+}
+
+function toggleMenuCollapse() {
+  isMenuCollapsed.value = !isMenuCollapsed.value
+  localStorage.setItem('app-menu-collapsed', isMenuCollapsed.value ? '1' : '0')
 }
 
 function isNavigationChildActive(path: string) {
@@ -271,11 +280,24 @@ onMounted(() => {
 
 <template>
   <div class="app-layout">
-    <aside class="app-layout__sidebar">
-      <div class="app-layout__brand">
+    <aside
+      class="app-layout__sidebar"
+      :class="{ 'is-collapsed': isMenuCollapsed }"
+      :style="{ '--app-current-sidebar-width': sidebarWidth }"
+    >
+      <button
+        type="button"
+        class="app-layout__brand"
+        :class="{ 'is-collapsed': isMenuCollapsed }"
+        :title="isMenuCollapsed ? '展开菜单' : '收起菜单'"
+        @click="toggleMenuCollapse"
+      >
         <span class="app-layout__brand-mark">A</span>
-        <span>自动化测试平台</span>
-      </div>
+        <span class="app-layout__brand-copy">自动化测试平台</span>
+        <el-icon class="app-layout__brand-collapse-icon" :class="{ 'is-collapsed': isMenuCollapsed }">
+          <ChevronLeft />
+        </el-icon>
+      </button>
 
       <nav class="app-layout__nav" aria-label="主导航">
         <div
@@ -301,7 +323,7 @@ onMounted(() => {
             <el-icon class="app-layout__nav-icon">
               <component :is="item.icon" />
             </el-icon>
-            <span>{{ item.label }}</span>
+            <span class="app-layout__nav-label">{{ item.label }}</span>
           </button>
           <RouterLink
             v-else
@@ -312,7 +334,7 @@ onMounted(() => {
             <el-icon class="app-layout__nav-icon">
               <component :is="item.icon" />
             </el-icon>
-            <span>{{ item.label }}</span>
+            <span class="app-layout__nav-label">{{ item.label }}</span>
           </RouterLink>
 
           <div v-if="item.children?.length && isNavigationGroupExpanded(item)" class="app-layout__nav-children">
@@ -361,34 +383,40 @@ onMounted(() => {
         </div>
 
         <div class="app-layout__header-actions">
-        <el-dropdown trigger="click" @command="handleLogout">
-          <button
-            class="app-layout__user"
-            type="button"
-            :aria-busy="logoutLoading"
-            :disabled="logoutLoading"
-          >
-            <span class="app-layout__user-avatar">{{ userDisplayName.slice(0, 1).toUpperCase() }}</span>
-            <span class="app-layout__user-main">
-              <span class="app-layout__user-name">{{ userDisplayName }}</span>
-              <span class="app-layout__user-role">{{ userRoleText }}</span>
-            </span>
-            <el-icon class="app-layout__user-arrow">
-              <ArrowDown />
+          <button class="app-layout__header-icon-button" type="button" title="通知">
+            <el-icon class="app-layout__header-bell-icon">
+              <Bell />
             </el-icon>
+            <span class="app-layout__header-icon-dot" />
           </button>
+          <span class="app-layout__header-divider app-layout__header-divider--right" />
 
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="logout" :disabled="logoutLoading">
-                <el-icon>
-                  <SwitchButton />
-                </el-icon>
-                {{ logoutLoading ? '正在退出' : '退出登录' }}
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+          <el-dropdown trigger="click" @command="handleLogout">
+            <button
+              class="app-layout__user"
+              type="button"
+              :aria-busy="logoutLoading"
+              :disabled="logoutLoading"
+            >
+              <span class="app-layout__user-avatar">{{ userDisplayName.slice(0, 1).toUpperCase() }}</span>
+              <span class="app-layout__user-name">{{ userDisplayName }}</span>
+              <el-icon class="app-layout__user-arrow">
+                <ArrowDown />
+              </el-icon>
+            </button>
+
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item disabled>{{ userRoleText }}</el-dropdown-item>
+                <el-dropdown-item divided command="logout" :disabled="logoutLoading">
+                  <el-icon>
+                    <SwitchButton />
+                  </el-icon>
+                  {{ logoutLoading ? '正在退出' : '退出登录' }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </header>
 
@@ -410,20 +438,40 @@ onMounted(() => {
 .app-layout__sidebar {
   position: fixed;
   inset: 0 auto 0 0;
-  width: var(--app-sidebar-width);
-  border-right: 1px solid var(--app-border);
-  background: var(--app-bg-panel);
+  width: var(--app-current-sidebar-width, var(--app-sidebar-width));
+  border-right: 0;
+  background: #0f172a;
+  color: #f8fafc;
+  overflow: hidden;
+  transition: width 0.2s ease-in-out;
 }
 
 .app-layout__brand {
   display: flex;
   align-items: center;
   gap: var(--app-space-3);
+  width: 100%;
   height: 64px;
   padding: 0 var(--app-space-5);
-  border-bottom: 1px solid var(--app-border-soft);
+  border: 0;
+  border-bottom: 1px solid #1e293b;
+  background: transparent;
+  color: #f8fafc;
+  cursor: pointer;
   font-size: var(--app-font-size-lg);
   font-weight: 700;
+  text-align: left;
+  transition: background-color 150ms ease;
+}
+
+.app-layout__brand:hover {
+  background: #1e293b;
+}
+
+.app-layout__brand.is-collapsed {
+  justify-content: center;
+  gap: 0;
+  padding: 0 14px;
 }
 
 .app-layout__brand-mark {
@@ -436,6 +484,40 @@ onMounted(() => {
   background: var(--app-primary);
   color: var(--app-text-inverse);
   font-size: var(--app-font-size-md);
+}
+
+.app-layout__brand-copy {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 150ms ease;
+}
+
+.app-layout__brand.is-collapsed .app-layout__brand-copy {
+  width: 0;
+  flex: 0 0 0;
+  margin: 0;
+  opacity: 0;
+}
+
+.app-layout__brand-collapse-icon {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 150ms ease, transform 0.2s ease;
+}
+
+.app-layout__brand:hover .app-layout__brand-collapse-icon {
+  opacity: 1;
+}
+
+.app-layout__brand-collapse-icon.is-collapsed {
+  display: none;
 }
 
 .app-layout__nav {
@@ -458,11 +540,17 @@ onMounted(() => {
   min-height: 40px;
   padding: 0 var(--app-space-3);
   border-radius: var(--app-radius-md);
-  color: var(--app-text-secondary);
+  color: #94a3b8;
   font-size: var(--app-font-size-md);
   font-weight: 500;
   text-decoration: none;
   transition: background-color 160ms ease, color 160ms ease;
+}
+
+.app-layout__sidebar.is-collapsed .app-layout__nav-item {
+  justify-content: center;
+  gap: 0;
+  padding: 0;
 }
 
 .app-layout__nav-button {
@@ -479,18 +567,32 @@ onMounted(() => {
 }
 
 .app-layout__nav-item:hover {
-  background: var(--app-bg-muted);
-  color: var(--app-text-primary);
+  background: #1e293b;
+  color: #f1f5f9;
 }
 
 .app-layout__nav-item.is-active {
-  background: var(--app-primary-soft);
-  color: var(--app-primary);
+  background: #3b82f6;
+  color: #fff;
 }
 
 .app-layout__nav-icon {
   width: 18px;
   font-size: 18px;
+}
+
+.app-layout__nav-label {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 150ms ease;
+}
+
+.app-layout__sidebar.is-collapsed .app-layout__nav-label {
+  width: 0;
+  opacity: 0;
 }
 
 .app-layout__nav-children {
@@ -500,13 +602,17 @@ onMounted(() => {
   padding-left: 34px;
 }
 
+.app-layout__sidebar.is-collapsed .app-layout__nav-children {
+  display: none;
+}
+
 .app-layout__nav-child {
   display: inline-flex;
   align-items: center;
   min-height: 34px;
   padding: 0 12px;
   border-radius: var(--app-radius-md);
-  color: var(--app-text-muted);
+  color: #94a3b8;
   font-size: var(--app-font-size-sm);
   line-height: var(--app-line-height-sm);
   text-decoration: none;
@@ -514,19 +620,20 @@ onMounted(() => {
 }
 
 .app-layout__nav-child:hover {
-  background: var(--app-bg-muted);
-  color: var(--app-text-primary);
+  background: #1e293b;
+  color: #f1f5f9;
 }
 
 .app-layout__nav-child.is-active {
-  background: var(--app-primary-soft);
-  color: var(--app-primary);
+  background: #2563eb;
+  color: #fff;
 }
 
 .app-layout__body {
   flex: 1;
   min-width: 0;
-  margin-left: var(--app-sidebar-width);
+  margin-left: var(--app-current-sidebar-width, var(--app-sidebar-width));
+  transition: margin-left 0.2s ease-in-out;
 }
 
 .app-layout__header {
@@ -564,6 +671,46 @@ onMounted(() => {
   width: 1px;
   height: 20px;
   background: var(--app-border);
+}
+
+.app-layout__header-divider--right {
+  height: 16px;
+}
+
+.app-layout__header-icon-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--app-radius-md);
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.app-layout__header-icon-button:hover {
+  background: var(--app-bg-muted);
+  color: var(--app-text-primary);
+}
+
+.app-layout__header-bell-icon {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+.app-layout__header-icon-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #ef4444;
 }
 
 .app-layout__workspace-button {
@@ -637,14 +784,14 @@ onMounted(() => {
   align-items: center;
   gap: var(--app-space-2);
   max-width: 260px;
-  min-height: 40px;
-  padding: 0 var(--app-space-3);
-  border: 1px solid var(--app-border);
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
   border-radius: var(--app-radius-md);
   background: var(--app-bg-panel);
   color: var(--app-text-primary);
   cursor: pointer;
-  transition: border-color 160ms ease, background-color 160ms ease;
+  transition: background-color 150ms ease;
 }
 
 .app-layout__user:disabled {
@@ -653,46 +800,28 @@ onMounted(() => {
 }
 
 .app-layout__user:hover {
-  border-color: var(--app-primary);
-  background: var(--app-primary-soft);
+  background: var(--app-bg-muted);
 }
 
 .app-layout__user-avatar {
-  display: inline-flex;
+  display: grid;
   flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--app-radius-sm);
-  background: var(--app-primary);
-  color: var(--app-text-inverse);
-  font-size: var(--app-font-size-sm);
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6 0%, #9333ea 100%);
+  color: #fff;
+  font-size: 11px;
   font-weight: 700;
-}
-
-.app-layout__user-main {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  line-height: 1.2;
 }
 
 .app-layout__user-name {
   max-width: 150px;
   overflow: hidden;
   font-size: var(--app-font-size-sm);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-layout__user-role {
-  max-width: 150px;
-  overflow: hidden;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-size-xs);
+  font-weight: 500;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -779,8 +908,7 @@ onMounted(() => {
     max-width: 132px;
   }
 
-  .app-layout__user-name,
-  .app-layout__user-role {
+  .app-layout__user-name {
     max-width: 72px;
   }
 }
