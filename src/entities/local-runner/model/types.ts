@@ -32,3 +32,23 @@ export interface RunnerActiveTaskSummary {
 export interface RunnerOfflineScanResult {
   changedTasks: number
 }
+
+export interface LocalRunnerTaskDetailResponse {
+  runId: string
+  taskType: string
+  runnerId: string | null
+  status: string
+  currentStage: string | null
+  progress: {
+    current: number
+    total: number
+    percent: number
+  }
+  statusMessage: string | null
+  errorMessage: string | null
+  assignedAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  lastReportedAt: string | null
+  result: Record<string, unknown>
+}

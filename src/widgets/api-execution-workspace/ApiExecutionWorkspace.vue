@@ -156,6 +156,7 @@ let draftSuiteSeed = 0
 
 const visibleEnvironmentOptions = computed(() => props.environments || [])
 const API_SUITE_RUNNER_TASK_TYPE = 'API_SCENARIO_RUN'
+const API_SUITE_LOCAL_RUNNER_NOTE = '当前会将套件中的场景项下发给 Local Runner；套件级完整本地报告将在后续 API_SUITE_RUN 闭环中接入。'
 
 const executionSuiteTree = computed<ExecutionSuiteNode[]>(() => {
   const workspaceNodes = resolveVisibleWorkspaces()
@@ -1933,6 +1934,7 @@ function showPending(message: string) {
                     </div>
                   </el-option>
                 </el-select>
+                <small class="execution-local-runner-note">{{ API_SUITE_LOCAL_RUNNER_NOTE }}</small>
               </label>
               <div class="execution-config-switch">
                 <div>
@@ -3870,6 +3872,14 @@ function showPending(message: string) {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.execution-local-runner-note {
+  display: block;
+  margin-top: 6px;
+  color: #667085;
+  font-size: 12px;
+  line-height: 18px;
 }
 
 </style>

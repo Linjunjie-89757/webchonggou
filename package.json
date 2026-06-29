@@ -9,6 +9,7 @@
     "runner:test": "node --test tools/web-ui-runner/*.test.mjs",
     "typecheck": "vue-tsc -b",
     "build": "vue-tsc -b && vite build",
+    "quality:large-files": "node tools/quality/scan-large-files.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

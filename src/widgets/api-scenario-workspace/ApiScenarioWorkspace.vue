@@ -28,7 +28,12 @@ import {
 import { ElMessage } from 'element-plus'
 
 import {
+  apiRunnerTaskStatusTone,
   apiAutomationApi,
+  buildApiReportKey,
+  extractRunnerRunId,
+  formatApiRunnerTaskStatus,
+  isApiRunnerTaskTerminal,
   type ApiAutomationEnvironmentItem,
   type ApiAutomationVariableSetItem,
   type ApiDefinitionCaseDetail,
@@ -62,6 +67,7 @@ import {
   runnerOptionLabel,
   runnerStatusText,
   selectDefaultRunnerId,
+  type LocalRunnerTaskDetailResponse,
   type RunnerNodeSummary,
 } from '@/entities/local-runner'
 import type { WorkspaceItem } from '@/entities/workspace'
@@ -182,6 +188,7 @@ interface ScenarioEditorTab {
   lastRunDataIterations: ApiExecutionSuiteDataIteration[]
   lastRunResult: string | null
   lastRunFailureSummary: string | null
+  localRunnerTask: LocalRunnerTaskDetailResponse | null
 }
 
 interface ScenarioSoftPromptOptions {
@@ -254,6 +261,7 @@ const selectedScenarioRunHistoryId = ref<number | null>(null)
 const selectedScenarioRunHistoryDetail = ref<ApiScenarioRunHistoryDetail | null>(null)
 const scenarioRunHistoryLoading = ref(false)
 const scenarioRunHistoryDetailLoading = ref(false)
+let scenarioLocalRunnerTaskTimer: ReturnType<typeof window.setTimeout> | null = null
 const scenarioSoftPromptVisible = ref(false)
 const scenarioSoftPromptTitle = ref('')
 const scenarioSoftPromptMessage = ref('')
@@ -316,6 +324,7 @@ const scenarioEditorTabs = ref<ScenarioEditorTab[]>([
     lastRunDataIterations: [],
     lastRunResult: null,
     lastRunFailureSummary: null,
+    localRunnerTask: null,
   },
 ])
 const activeScenarioEditorKey = ref('scenario-list')
@@ -369,6 +378,8 @@ const activeScenarioRunThreadCount = computed(() => activeScenarioRunHistoryDeta
 const activeScenarioName = computed(() => activeScenarioDetail.value.name?.trim() || '未保存场景')
 const activeScenarioWorkspaceName = computed(() => getWorkspaceName(activeScenarioDetail.value.workspaceCode || props.workspaceCode))
 const activeScenarioUpdatedAt = computed(() => formatScenarioDateTime(activeScenarioDetail.value.updatedAt))
+const activeScenarioLocalRunnerTask = computed(() => activeScenarioEditorTab.value?.localRunnerTask || null)
+const activeScenarioLocalRunnerReportKey = computed(() => buildApiReportKey('SCENARIO', selectedScenarioRunHistoryId.value))
 const activeScenarioModuleLabel = computed(() => {
   if (activeScenarioDetail.value.moduleName) return activeScenarioDetail.value.moduleName
   return activeScenarioDetail.value.moduleId == null ? '根目录' : '未命名模块'
@@ -1499,6 +1510,54 @@ async function loadScenarioRunHistoryDetail(historyId: number) {
   }
 }
 
+function stopScenarioLocalRunnerTaskRefresh() {
+  if (scenarioLocalRunnerTaskTimer) {
+    window.clearTimeout(scenarioLocalRunnerTaskTimer)
+    scenarioLocalRunnerTaskTimer = null
+  }
+}
+
+function scheduleScenarioLocalRunnerTaskRefresh(runId: string) {
+  stopScenarioLocalRunnerTaskRefresh()
+  if (!runId || isApiRunnerTaskTerminal(activeScenarioLocalRunnerTask.value?.status)) {
+    return
+  }
+  scenarioLocalRunnerTaskTimer = window.setTimeout(async () => {
+    scenarioLocalRunnerTaskTimer = null
+    await refreshScenarioLocalRunnerTask(true)
+    if (activeScenarioLocalRunnerTask.value?.runId === runId && !isApiRunnerTaskTerminal(activeScenarioLocalRunnerTask.value.status)) {
+      scheduleScenarioLocalRunnerTaskRefresh(runId)
+    }
+  }, 1500)
+}
+
+async function refreshScenarioLocalRunnerTask(silent = false) {
+  const runId = activeScenarioLocalRunnerTask.value?.runId
+  if (!runId) return
+  try {
+    const task = await localRunnerApi.getTaskDetail(runId)
+    activeScenarioEditorTab.value.localRunnerTask = task
+    if (isApiRunnerTaskTerminal(task.status)) {
+      await loadScenarioRunHistory(true)
+      activeScenarioDetailTab.value = 'reports'
+    }
+    if (!silent) {
+      ElMessage.success('本地执行任务状态已刷新')
+    }
+  } catch (error) {
+    if (!silent) {
+      ElMessage.error(getRequestErrorMessage(error))
+    }
+  }
+}
+
+async function openScenarioLocalRunnerReport() {
+  if (!activeScenarioLocalRunnerReportKey.value) {
+    await loadScenarioRunHistory(true)
+  }
+  activeScenarioDetailTab.value = 'reports'
+}
+
 function cloneScenarioDetail(detail: ApiScenarioDetail): ApiScenarioDetail {
   return JSON.parse(JSON.stringify(detail)) as ApiScenarioDetail
 }
@@ -1799,6 +1858,7 @@ function openNewScenarioTab() {
     lastRunDataIterations: [],
     lastRunResult: null,
     lastRunFailureSummary: null,
+    localRunnerTask: null,
   })
   activeScenarioEditorKey.value = key
   activeScenarioDetailTab.value = 'steps'
@@ -1839,6 +1899,7 @@ async function selectScenario(id: number) {
       lastRunDataIterations: [],
       lastRunResult: detail.lastRunResult,
       lastRunFailureSummary: null,
+      localRunnerTask: null,
     })
     activeScenarioEditorKey.value = key
     resetScenarioRunHistoryState()
@@ -2047,6 +2108,7 @@ async function copyScenario(row: ApiScenarioItem) {
       lastRunDataIterations: [],
       lastRunResult: null,
       lastRunFailureSummary: null,
+      localRunnerTask: null,
     })
     activeScenarioEditorKey.value = key
     activeScenarioDetailTab.value = 'steps'
@@ -2867,8 +2929,30 @@ async function runScenario() {
     activeScenarioEditorTab.value.lastRunFailureSummary = response.failureSummary || null
     detail.lastRunResult = response.result
     if (response.result === 'PENDING') {
+      const runId = extractRunnerRunId(response)
+      activeScenarioEditorTab.value.localRunnerTask = runId
+        ? {
+            runId,
+            taskType: API_SCENARIO_RUNNER_TASK_TYPE,
+            runnerId: runOn === 'LOCAL' ? selectedScenarioRunnerId.value : null,
+            status: 'PENDING',
+            currentStage: null,
+            progress: { current: 0, total: 0, percent: 0 },
+            statusMessage: response.failureSummary || '本地运行任务已创建，等待 Runner 拉取',
+            errorMessage: null,
+            assignedAt: null,
+            startedAt: null,
+            completedAt: null,
+            lastReportedAt: null,
+            result: {},
+          }
+        : null
+      if (runId) {
+        scheduleScenarioLocalRunnerTaskRefresh(runId)
+      }
       ElMessage.success('已创建本地执行任务，等待 Local Runner 拉取')
     } else {
+      activeScenarioEditorTab.value.localRunnerTask = null
       ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
       await loadScenarioRunHistory(true)
       activeScenarioDetailTab.value = 'reports'
@@ -2932,6 +3016,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  stopScenarioLocalRunnerTaskRefresh()
   document.removeEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
   window.removeEventListener('resize', updateScenarioTabOverflow)
 })
@@ -3555,6 +3640,7 @@ watch(activeScenarioDetailTab, (tab) => {
                       <strong>{{ item.scenarioName }}</strong>
                       <small>{{ formatScenarioDateTime(item.createdAt) }} · {{ item.testDatasetName || '未使用测试数据' }}</small>
                     </span>
+                    <el-tag v-if="item.operatorName === 'Local Runner'" size="small" effect="light" type="primary">Local Runner</el-tag>
                     <span class="scenario-run-history-item-meta">
                       {{ item.loopCount || 1 }} 轮 / {{ item.threadCount || 1 }} 线程 / {{ item.durationMs ?? 0 }} ms
                     </span>
@@ -3758,6 +3844,33 @@ watch(activeScenarioDetailTab, (tab) => {
                     </el-button>
                   </div>
                 </div>
+                <section v-if="activeScenarioLocalRunnerTask" class="scenario-local-runner-task">
+                  <div class="scenario-local-runner-task__main">
+                    <el-tag :type="apiRunnerTaskStatusTone(activeScenarioLocalRunnerTask.status)" effect="light">
+                      {{ formatApiRunnerTaskStatus(activeScenarioLocalRunnerTask.status) }}
+                    </el-tag>
+                    <span>{{ activeScenarioLocalRunnerTask.runId }}</span>
+                    <small>{{ activeScenarioLocalRunnerTask.statusMessage || activeScenarioLocalRunnerTask.errorMessage || '本地执行任务已创建，等待 Runner 回传结果' }}</small>
+                  </div>
+                  <el-progress
+                    class="scenario-local-runner-task__progress"
+                    :percentage="activeScenarioLocalRunnerTask.progress.percent"
+                    :status="activeScenarioLocalRunnerTask.status === 'FAILED' ? 'exception' : activeScenarioLocalRunnerTask.status === 'SUCCESS' ? 'success' : undefined"
+                  />
+                  <div class="scenario-local-runner-task__actions">
+                    <span>阶段：{{ activeScenarioLocalRunnerTask.currentStage || '-' }}</span>
+                    <span>步骤：{{ activeScenarioLocalRunnerTask.progress.current }}/{{ activeScenarioLocalRunnerTask.progress.total }}</span>
+                    <el-button size="small" @click="() => refreshScenarioLocalRunnerTask(false)">刷新</el-button>
+                    <el-button
+                      v-if="isApiRunnerTaskTerminal(activeScenarioLocalRunnerTask.status)"
+                      size="small"
+                      type="primary"
+                      @click="openScenarioLocalRunnerReport"
+                    >
+                      查看正式报告
+                    </el-button>
+                  </div>
+                </section>
                 <el-scrollbar class="scenario-property-scrollbar">
                   <div class="scenario-property-body">
                     <label class="scenario-property-field">
@@ -6067,6 +6180,58 @@ watch(activeScenarioDetailTab, (tab) => {
   font-size: 12px;
 }
 
+.scenario-local-runner-task {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 16px 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  padding: 10px 12px;
+}
+
+.scenario-local-runner-task__main {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.scenario-local-runner-task__main > span,
+.scenario-local-runner-task__main > small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-local-runner-task__main > span {
+  color: #111827;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.scenario-local-runner-task__main > small {
+  grid-column: 1 / -1;
+  color: #475569;
+  font-size: 12px;
+}
+
+.scenario-local-runner-task__progress {
+  width: 100%;
+}
+
+.scenario-local-runner-task__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: #475569;
+  font-size: 12px;
+}
+
 .scenario-run-history-list {
   display: flex;
   flex-direction: column;
@@ -6078,7 +6243,7 @@ watch(activeScenarioDetailTab, (tab) => {
 
 .scenario-run-history-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 12px;
   min-height: 48px;

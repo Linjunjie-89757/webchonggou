@@ -1,4 +1,5 @@
 export * from './api/apiAutomationApi'
+export * from './lib/apiRunnerTaskView'
 export * from './lib/format'
 export * from './lib/reportEvidence'
 export * from './model/options'

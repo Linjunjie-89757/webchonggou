@@ -4,28 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
   ArrowRight,
-  ArrowDown,
-  ArrowUp,
   Close,
   Fold,
-  InfoFilled,
-  MagicStick,
   MoreFilled,
   Plus,
   Search,
-  Setting,
 } from '@element-plus/icons-vue'
 import {
   Check as LucideCheck,
   FileJson as LucideFileJson,
   FileText as LucideFileText,
-  Folder as LucideFolder,
-  FolderOpen as LucideFolderOpen,
   Link as LucideLink,
-  MoreHorizontal as LucideMoreHorizontal,
-  Play as LucidePlay,
-  Plus as LucidePlus,
-  Save as LucideSave,
   Upload as LucideUpload,
   X as LucideX,
 } from '@lucide/vue'
@@ -80,15 +69,34 @@ import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCrea
 import { getRequestErrorMessage } from '@/shared/api/error'
 import { ApiExecutionWorkspace } from '@/widgets/api-execution-workspace'
 import { ApiScenarioWorkspace } from '@/widgets/api-scenario-workspace'
+import ApiAiGenerationDrawer from './ApiAiGenerationDrawer.vue'
+import ApiAiGenerationWorkspace from './ApiAiGenerationWorkspace.vue'
+import ApiAssertionPanel from './ApiAssertionPanel.vue'
 import ApiCodeEditor from './ApiCodeEditor.vue'
 import ApiCaseDetailDrawer from './ApiCaseDetailDrawer.vue'
+import ApiCaseListPanel from './ApiCaseListPanel.vue'
+import ApiDefinitionPanel from './ApiDefinitionPanel.vue'
+import ApiDirectoryTree from './ApiDirectoryTree.vue'
+import ApiExtractorPanel from './ApiExtractorPanel.vue'
 import ApiFastExtractionDrawer from './ApiFastExtractionDrawer.vue'
+import ApiKeyValueTable from './ApiKeyValueTable.vue'
+import ApiProcessorPanel from './ApiProcessorPanel.vue'
+import ApiRequestBodyPanel from './ApiRequestBodyPanel.vue'
+import ApiRequestContentTabs from './ApiRequestContentTabs.vue'
+import ApiRequestToolbar from './ApiRequestToolbar.vue'
+import ApiResponsePanel from './ApiResponsePanel.vue'
+import type { AiCaseGenerationTabState, ApiAiCaseResultFilter, ApiAiGeneratedCaseResult, ApiBodyLanguage, ApiRequestContentTabItem, BodyJsonViewMode, BodyType, DefinitionSchemaViewMode, RawBodyType, RequestContentTab, ResponseTab } from './apiInterfaceTypes'
 import type { FastExtractionConfig, FastExtractionMode, FastExtractionResponseFormat } from './fastExtraction'
+import {
+  buildApiDirectoryTree,
+  canLoadDefinitionsForDirectoryNode,
+  collectCollapsedDirectoryKeys,
+  collectExpandableDirectoryKeys,
+  definitionModuleLoadKey,
+  findDirectoryNodeByKey,
+  type DirectoryNode,
+} from './lib/apiDirectoryTree'
 
-type RequestContentTab = 'headers' | 'body' | 'params' | 'cookies' | 'auth' | 'pre' | 'post' | 'extractors' | 'tests' | 'settings' | 'cases' | 'definition'
-type ResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
-type DirectoryNodeType = 'root' | 'workspace' | 'module' | 'request' | 'unassigned' | 'placeholder'
-type BodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT' | 'BINARY'
 type BatchAddTarget = 'query' | 'header' | 'cookie' | 'body-form' | 'assertion' | 'extractor'
 type ApiCaseDialogMode = 'create' | 'edit'
 type ApiCaseDrawerTab = 'detail' | 'history' | 'changes'
@@ -96,16 +104,10 @@ type ApiCaseDetailRequestTab = 'headers' | 'body' | 'params' | 'auth' | 'pre' | 
 type ApiCaseHistoryView = 'list' | 'detail'
 type ApiCaseHistoryResponseTab = Exclude<ResponseTab, 'actualRequest'>
 type ApiAiCaseGenerationStatus = 'idle' | 'running' | 'done' | 'failed'
-type ApiAiGeneratedCaseStatus = 'generating' | 'pending' | 'accepted' | 'discarded' | 'failed'
-type ApiAiCaseResultFilter = 'all' | 'pending' | 'accepted' | 'discarded'
 type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
 type ApiReportArchiveFilter = 'active' | 'archived' | 'all'
-type RawBodyType = Extract<BodyType, 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT'>
-type ApiBodyLanguage = 'json' | 'xml' | 'text'
-type BodyJsonViewMode = 'json' | 'schema'
-type DefinitionSchemaViewMode = 'schema' | 'json'
 type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
 type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
@@ -137,36 +139,8 @@ const DIRECTORY_SEARCH_DEBOUNCE_MS = 260
 const DIRECTORY_SEARCH_RESULT_LIMIT = 150
 const DIRECTORY_MODULE_REQUEST_PAGE_SIZE = 200
 const DIRECTORY_MODULE_LOADING_MIN_MS = 320
-const apiMethodOptions = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD', 'PATCH', 'TRACE'] as const
 const rawBodyTypes: RawBodyType[] = ['RAW_JSON', 'RAW_XML', 'RAW_TEXT']
 const aiCaseGenerationFinishedIcon = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMu b3JnLzIwMDAvc3ZnIj4KICA8ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfMTA2NV8yMTk5MDQpIj4KICAgIDxwYXRoCiAgICAgIGQ9Ik01LjI0MTIxIDMuMDYxNTJDNS40MjgyOCAyLjE0NjI4IDYuNzM1NzggMi4xNDYyOCA2LjkyMjg1IDMuMDYxNTJDNy4zMzYxIDUuMDgyODEgOC45MTYxNyA2LjY2MzAzIDEwLjkzNzUgNy4wNzYxN0MxMS44NTI3IDcuMjYzMjcgMTEuODUyNyA4LjU3MDc1IDEwLjkzNzUgOC43NTc4MUM4LjkxNjI0IDkuMTcxMDMgNy4zMzYwNiAxMC43NTAyIDYuOTIyODUgMTIuNzcxNUM2LjczNTY4IDEzLjY4NjUgNS40MjgzOCAxMy42ODY1IDUuMjQxMjEgMTIuNzcxNUM0LjgyNzk4IDEwLjc1MDQgMy4yNDg2MiA5LjE3MTEgMS4yMjc1NCA4Ljc1NzgxQzAuMzEyMzA1IDguNTcwNzUgMC4zMTIzMzQgNy4yNjMyNyAxLjIyNzU0IDcuMDc2MTdDMy4yNDg2OSA2LjY2Mjk1IDQuODI3OTQgNS4wODI2NSA1LjI0MTIxIDMuMDYxNTJaTTEwLjY2MTEgMS4yMzkyNkMxMC43MzAxIDAuOTAyMDYxIDExLjIxMjMgMC45MDIwNjEgMTEuMjgxMiAxLjIzOTI2QzExLjQzMzYgMS45ODM3MSAxMi4wMTUzIDIuNTY1NDcgMTIuNzU5OCAyLjcxNzc3QzEzLjA5NyAyLjc4NjY5IDEzLjA5NyAzLjI2ODk3IDEyLjc1OTggMy4zMzc4OUMxMi4wMTUzIDMuNDkwMjQgMTEuNDMzNSA0LjA3MTg0IDExLjI4MTIgNC44MTY0MUMxMS4yMTIzIDUuMTUzNiAxMC43MzAxIDUuMTUzNiAxMC42NjExIDQuODE2NDFDMTAuNTA4OSA0LjA3MTggOS45MjcyMSAzLjQ5MDE2IDkuMTgyNjIgMy4zMzc4OUM4Ljg0NTU0IDMuMjY4OTEgOC44NDU1NCAyLjc4Njc1IDkuMTgyNjIgMi43MTc3N0M5LjkyNzE1IDIuNTY1NTQgMTAuNTA4OCAxLjk4Mzc1IDEwLjY2MTEgMS4yMzkyNloiCiAgICAgIGZpbGw9InVybCgjcGFpbnQwX2xpbmVhcl8xMDY1XzIxOTkwNCkiIC8+CiAgPC9nPgogIDxkZWZzPgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJwYWludDBfbGluZWFyXzEwNjVfMjE5OTA0IiB4MT0iMC41NDEwMTYiIHkxPSIzLjUzMTQ2IiB4Mj0iMTMuMTEwNSIgeTI9IjMuNzAxNzUiCiAgICAgIGdyYWRpZW50VW5pdHM9InVzZXJTcGFjZU9uVXNlIj4KICAgICAgPHN0b3Agc3RvcC1jb2xvcj0iI0U5NTZFOSIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIwLjcyIiBzdG9wLWNvbG9yPSIjRkY1ODVFIiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNGRkEzMDAiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGNsaXBQYXRoIGlkPSJjbGlwMF8xMDY1XzIxOTkwNCI+CiAgICAgIDxyZWN0IHdpZHRoPSIxNCIgaGVpZ2h0PSIxNCIgZmlsbD0id2hpdGUiIC8+CiAgICA8L2NsaXBQYXRoPgogIDwvZGVmcz4KPC9zdmc+Cg=='.replace(/\s/g, '')
-
-interface ApiAiGeneratedCaseResult {
-  id: string
-  status: ApiAiGeneratedCaseStatus
-  draft: ApiAiGeneratedCaseDraft
-  message?: string | null
-  runResult?: string | null
-  runMessage?: string | null
-}
-
-interface AiCaseGenerationTabState {
-  definitionId: number
-  workspaceCode: string
-  definitionName: string
-  method: string
-  path: string
-  description: string | null
-  requestConfig: ApiRequestConfigInput
-  assertions: unknown[]
-  preProcessors: unknown[]
-  postProcessors: unknown[]
-  results: ApiAiGeneratedCaseResult[]
-  generating: boolean
-  message: string
-  logs: string[]
-  abortController?: AbortController | null
-}
 
 interface ApiAssertionConfig {
   id?: string
@@ -281,22 +255,6 @@ interface ApiSoftPromptOptions {
   cancelText?: string
 }
 
-interface DirectoryNode {
-  key: string
-  type: DirectoryNodeType
-  label: string
-  count: number
-  directCount?: number
-  moduleId: number | null
-  workspaceCode: string
-  definitionId: number | null
-  fullPath?: string | null
-  method?: string
-  definition?: ApiDefinitionItem
-  loading?: boolean
-  children: DirectoryNode[]
-}
-
 interface EditorTab {
   key: string
   resourceType?: 'definition' | 'ai-case-generation'
@@ -363,7 +321,6 @@ const expandedKeys = ref<string[]>(['definition-root'])
 const directoryExpandedRestored = ref(false)
 const restoringDirectoryExpanded = ref(false)
 const directoryTreeVersion = ref(0)
-const activeDirectoryNodeKey = ref('')
 const tabs = ref<EditorTab[]>([])
 const activeEditorKey = ref('')
 const bodyJsonViewMode = ref<BodyJsonViewMode>('json')
@@ -935,7 +892,7 @@ const processorBodyExtractScopeOptions = [
   { label: '响应体', value: 'BODY' },
 ]
 
-const contentTabs = computed<Array<{ label: string; value: RequestContentTab; count?: number }>>(() => [
+const contentTabs = computed<ApiRequestContentTabItem[]>(() => [
   { label: '请求头', value: 'headers' },
   { label: '请求体', value: 'body' },
   { label: 'Params', value: 'params', count: enabledRows(activeEditor.value?.detail.requestConfig.queryParams).length },
@@ -1201,22 +1158,12 @@ const directorySearchLimited = computed(() =>
     && directorySearchMatchedCount.value > DIRECTORY_SEARCH_RESULT_LIMIT,
 )
 
-function definitionModuleLoadKey(workspaceCode: string, moduleId: number | null, fullPath: string | null) {
-  return moduleId != null ? `${workspaceCode}:module:${moduleId}` : `${workspaceCode}:path:${fullPath || ''}`
-}
-
 function refreshDirectoryTree() {
   directoryTreeVersion.value += 1
 }
 
 function waitForMs(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms))
-}
-
-function canLoadDefinitionsForDirectoryNode(node: DirectoryNode) {
-  if (node.type !== 'module') return false
-  if (node.children.some(child => child.type === 'module')) return false
-  return (node.directCount ?? node.count) > 0
 }
 
 function markDirectoryNodeLoading(key: string, loadingState: boolean) {
@@ -1311,278 +1258,14 @@ function isDirectDefinitionInPath(item: ApiDefinitionItem, fullPath: string | nu
 }
 
 const directoryTree = computed<DirectoryNode[]>(() => {
-  type MutableNode = DirectoryNode & { childMap?: Map<string, MutableNode> }
-  const workspaceCodes: string[] = props.workspaceCode === 'ALL'
-    ? Array.from(new Set([
-        ...(props.workspaces || [])
-          .map(item => item.workspaceCode || item.code || '')
-          .filter((code): code is string => Boolean(code) && code !== 'ALL'),
-        ...modules.value
-          .map(item => item.workspaceCode || '')
-          .filter((code): code is string => Boolean(code)),
-        ...filteredDefinitions.value
-          .map(item => item.workspaceCode || '')
-          .filter((code): code is string => Boolean(code)),
-      ]))
-    : [props.workspaceCode]
-
-  const workspaceNodes: MutableNode[] = workspaceCodes.map((code): MutableNode => {
-    const workspace = (props.workspaces || []).find(item => (item.workspaceCode || item.code) === code)
-    return {
-      key: `workspace:${code}`,
-      type: 'workspace' as const,
-      label: workspace?.workspaceName || workspace?.name || code,
-      count: 0,
-      directCount: 0,
-      moduleId: null,
-      workspaceCode: code,
-      definitionId: null,
-      fullPath: null,
-      children: [],
-      childMap: new Map<string, MutableNode>(),
-    }
-  })
-  const workspaceMap = new Map(workspaceNodes.map(item => [item.workspaceCode, item]))
-  const unassignedRequestMap = new Map<string, MutableNode[]>()
-  const requestNodesByPath = new Map<string, MutableNode[]>()
-
-  const ensureNode = (
-    parentChildren: MutableNode[],
-    parentMap: Map<string, MutableNode>,
-    workspaceCode: string,
-    label: string,
-    fullPath: string,
-    moduleId: number | null,
-    count?: number,
-  ) => {
-    let node = parentMap.get(fullPath)
-    if (!node) {
-      node = {
-        key: moduleId != null ? `module:${workspaceCode}:${moduleId}` : `module:${workspaceCode}:path:${fullPath}`,
-        type: 'module',
-        label,
-        count: 0,
-        directCount: 0,
-        moduleId,
-        workspaceCode,
-        definitionId: null,
-        fullPath,
-        children: [],
-        childMap: new Map<string, MutableNode>(),
-      }
-      parentMap.set(fullPath, node)
-      parentChildren.push(node)
-    }
-    if (moduleId != null) {
-      node.moduleId = moduleId
-      node.key = `module:${workspaceCode}:${moduleId}`
-    }
-    if (count != null) {
-      node.count = count
-      node.directCount = count
-    }
-    return node
-  }
-
-  const flattenModules = (items: ApiDefinitionModuleItem[]) => {
-    const result: ApiDefinitionModuleItem[] = []
-    const walk = (moduleItems: ApiDefinitionModuleItem[]) => {
-      moduleItems.forEach((item) => {
-        result.push(item)
-        walk(item.children || [])
-      })
-    }
-    walk(items)
-    return result
-  }
-
-  flattenModules(modules.value).forEach((item) => {
-    const workspaceNode = workspaceMap.get(item.workspaceCode)
-    if (!workspaceNode) return
-    const path = (item.fullPath || item.name || '').trim()
-    if (!path) return
-    const segments = path.split('/').map(part => part.trim()).filter(Boolean)
-    let currentChildren = workspaceNode.children as MutableNode[]
-    let currentMap = workspaceNode.childMap ?? new Map<string, MutableNode>()
-    let assembled = ''
-    segments.forEach((segment, index) => {
-      assembled = assembled ? `${assembled}/${segment}` : segment
-      const node = ensureNode(
-        currentChildren,
-        currentMap,
-        item.workspaceCode,
-        segment,
-        assembled,
-        index === segments.length - 1 ? item.id : null,
-        index === segments.length - 1 ? item.definitionCount : undefined,
-      )
-      currentChildren = node.children as MutableNode[]
-      currentMap = node.childMap ?? new Map<string, MutableNode>()
-    })
-  })
-
-  filteredDefinitions.value.forEach((item) => {
-    const workspaceNode = workspaceMap.get(item.workspaceCode)
-    if (!workspaceNode) return
-    const path = (item.directoryName || '').trim()
-    const requestNode: MutableNode = {
-      key: `request:${item.id}`,
-      type: 'request',
-      label: item.name,
-      count: 0,
-      directCount: 0,
-      moduleId: null,
-      workspaceCode: item.workspaceCode,
-      definitionId: item.id,
-      fullPath: path || null,
-      method: item.method,
-      definition: item,
-      children: [],
-    }
-
-    if (!path) {
-      const requests = unassignedRequestMap.get(item.workspaceCode) ?? []
-      requests.push(requestNode)
-      unassignedRequestMap.set(item.workspaceCode, requests)
-      return
-    }
-
-    const requestPathKey = `${item.workspaceCode}:${path}`
-    const requestNodes = requestNodesByPath.get(requestPathKey) ?? []
-    requestNodes.push(requestNode)
-    requestNodesByPath.set(requestPathKey, requestNodes)
-  })
-
-  requestNodesByPath.forEach((requestNodes, key) => {
-    const separatorIndex = key.indexOf(':')
-    const workspaceCode = key.slice(0, separatorIndex)
-    const path = key.slice(separatorIndex + 1)
-    const workspaceNode = workspaceMap.get(workspaceCode)
-    if (!workspaceNode) return
-
-    const segments = path.split('/').map(part => part.trim()).filter(Boolean)
-    let currentChildren = workspaceNode.children as MutableNode[]
-    let currentMap = workspaceNode.childMap ?? new Map<string, MutableNode>()
-    let assembled = ''
-    segments.forEach((segment) => {
-      assembled = assembled ? `${assembled}/${segment}` : segment
-      const node = ensureNode(currentChildren, currentMap, workspaceCode, segment, assembled, null)
-      currentChildren = node.children as MutableNode[]
-      currentMap = node.childMap ?? new Map<string, MutableNode>()
-    })
-    currentChildren.push(...requestNodes)
-  })
-
-  const stripChildMap = (nodes: MutableNode[]): DirectoryNode[] => {
-    nodes.sort((left, right) => {
-      const leftOrder = left.type === 'request' ? 1 : 0
-      const rightOrder = right.type === 'request' ? 1 : 0
-      if (leftOrder !== rightOrder) {
-        return leftOrder - rightOrder
-      }
-      return left.label.localeCompare(right.label, 'zh-CN')
-    })
-    return nodes.map((node) => {
-      const children = stripChildMap(node.children as MutableNode[])
-      const hasRequestChild = children.some(child => child.type === 'request')
-      const moduleLoadKey = node.type === 'module'
-        ? definitionModuleLoadKey(node.workspaceCode, node.moduleId, node.fullPath ?? null)
-        : ''
-      const isLoadingModule = node.type === 'module' && loadingDefinitionModuleKeys.value.has(moduleLoadKey)
-      const isLoadedModule = node.type === 'module' && loadedDefinitionModuleKeys.value.has(moduleLoadKey)
-      const shouldLoadDefinitions = canLoadDefinitionsForDirectoryNode({ ...node, children })
-      const shouldAddLazyPlaceholder = shouldLoadDefinitions
-        && !hasRequestChild
-        && !isLoadedModule
-      if (shouldAddLazyPlaceholder || isLoadingModule) {
-        const placeholderNode: DirectoryNode = {
-          key: `${node.key}:${isLoadingModule ? 'loading' : 'lazy'}-placeholder`,
-          type: 'placeholder',
-          label: isLoadingModule ? '加载接口中...' : '',
-          count: 0,
-          directCount: 0,
-          moduleId: null,
-          workspaceCode: node.workspaceCode,
-          definitionId: null,
-          fullPath: node.fullPath,
-          loading: isLoadingModule,
-          children: [],
-        }
-        if (isLoadingModule) {
-          children.unshift(placeholderNode)
-        } else {
-          children.push(placeholderNode)
-        }
-      }
-      const loadedRequestCount = children
-        .filter(child => child.type !== 'placeholder')
-        .reduce((sum, child) => sum + (child.type === 'request' ? 1 : child.count), 0)
-      const displayCount = node.type === 'request'
-        ? 0
-        : node.type === 'module'
-          ? Math.max(node.count, loadedRequestCount)
-          : loadedRequestCount
-      return {
-        key: node.key,
-        type: node.type,
-        label: node.label,
-        count: displayCount,
-        directCount: node.directCount,
-        moduleId: node.moduleId,
-        workspaceCode: node.workspaceCode,
-        definitionId: node.definitionId,
-        fullPath: node.fullPath,
-        method: node.method,
-        definition: node.definition,
-        children,
-      }
-    })
-  }
-  const workspaceTrees = workspaceNodes.map((workspaceNode) => {
-    const children = stripChildMap(workspaceNode.children as MutableNode[])
-    const unassignedRequests = unassignedRequestMap.get(workspaceNode.workspaceCode) ?? []
-    if (unassignedRequests.length) {
-      children.push({
-        key: `definition-unassigned:${workspaceNode.workspaceCode}`,
-        type: 'unassigned',
-        label: '未规划请求',
-        count: unassignedRequests.length,
-        directCount: unassignedRequests.length,
-        moduleId: null,
-        workspaceCode: workspaceNode.workspaceCode,
-        definitionId: null,
-        fullPath: null,
-        children: stripChildMap(unassignedRequests),
-      })
-    }
-    const workspaceCount = children.reduce((sum, child) => sum + child.count, 0)
-    return {
-      key: workspaceNode.key,
-      type: workspaceNode.type,
-      label: workspaceNode.label,
-      count: workspaceCount,
-      directCount: workspaceNode.directCount,
-      moduleId: workspaceNode.moduleId,
-      workspaceCode: workspaceNode.workspaceCode,
-      definitionId: workspaceNode.definitionId,
-      fullPath: workspaceNode.fullPath,
-      children,
-    }
-  })
-
-  const rootCount = workspaceTrees.reduce((sum, workspaceNode) => sum + workspaceNode.count, 0)
-  return [{
-    key: 'definition-root',
-    type: 'root',
-    label: '请求目录',
-    count: rootCount,
-    directCount: rootCount,
-    moduleId: null,
+  return buildApiDirectoryTree({
     workspaceCode: props.workspaceCode,
-    definitionId: null,
-    fullPath: null,
-    children: workspaceTrees,
-  }]
+    workspaces: props.workspaces || [],
+    modules: modules.value,
+    definitions: filteredDefinitions.value,
+    loadedModuleKeys: loadedDefinitionModuleKeys.value,
+    loadingModuleKeys: loadingDefinitionModuleKeys.value,
+  })
 })
 
 const visibleDirectoryTree = computed<DirectoryNode[]>(() => directoryTree.value[0]?.children ?? [])
@@ -1618,31 +1301,6 @@ const importModuleOptions = computed<ImportModuleOption[]>(() => {
   })
   return options
 })
-
-function collectExpandableDirectoryKeys(nodes: DirectoryNode[]) {
-  const keys: string[] = []
-  function walk(node: DirectoryNode) {
-    if (node.children.length) {
-      keys.push(node.key)
-      node.children.forEach(walk)
-    }
-  }
-  nodes.forEach(walk)
-  return keys
-}
-
-function collectCollapsedDirectoryKeys(nodes: DirectoryNode[]) {
-  const keys: string[] = []
-  function walk(node: DirectoryNode) {
-    if (!node.children.length) return
-    if (node.type === 'root' || node.type === 'workspace') {
-      keys.push(node.key)
-      node.children.forEach(walk)
-    }
-  }
-  nodes.forEach(walk)
-  return keys
-}
 
 function collapseDirectoryTree() {
   expandedKeys.value = collectCollapsedDirectoryKeys(directoryTree.value)
@@ -3562,60 +3220,6 @@ function processorTypeLabel(type?: string | null) {
   return type || '处理器'
 }
 
-function processorConfigPlaceholder(type?: string) {
-  if (type === 'SCRIPT') return '请输入 JavaScript 脚本'
-  if (type === 'SQL') return '请输入 SQL 语句'
-  if (type === 'EXTRACT') return '请输入提取配置，例如 token = $.data.token'
-  return '请输入处理器配置'
-}
-
-function normalizeProcessorForType(processor: ApiProcessorConfig, stage: 'pre' | 'post') {
-  const type = processor.processorType || 'SCRIPT'
-  const currentName = processor.name?.trim() || ''
-  const defaultNames = [
-    '前置处理器',
-    '后置处理器',
-    '前置脚本',
-    '后置脚本',
-    'SQL 处理器',
-    '等待处理器',
-    '提取处理器',
-  ]
-  processor.name = !currentName || defaultNames.includes(currentName)
-    ? processorDefaultName(stage, type)
-    : currentName
-  if (type === 'TIME_WAITING') {
-    processor.script = null
-    processor.sql = null
-    processor.expression = null
-    processor.delayMs = processor.delayMs || 1000
-  } else if (type === 'SQL') {
-    processor.sql = processor.sql ?? processor.script ?? ''
-    processor.script = processor.sql
-    processor.delayMs = null
-    processor.dataSourceId = processor.dataSourceId ?? null
-    processor.dataSourceName = processor.dataSourceName ?? ''
-    processor.queryTimeout = processor.queryTimeout || 30000
-    processor.variableNames = processor.variableNames ?? ''
-    processor.resultVariable = processor.resultVariable ?? ''
-    processor.extractParams = normalizeSqlExtractParams(processor.extractParams)
-  } else if (type === 'EXTRACT') {
-    processor.expression = processor.expression ?? processor.script ?? ''
-    processor.script = processor.expression
-    processor.sourceType = processor.sourceType || 'RESPONSE_BODY'
-    processor.extractType = processor.extractType || 'JSON_PATH'
-    processor.variableName = processor.variableName ?? ''
-    processor.extractors = normalizeProcessorExtractItems(processor.extractors, processor)
-    processor.delayMs = null
-  } else {
-    processor.script = processor.script ?? ''
-    processor.delayMs = null
-    processor.sql = null
-    processor.expression = null
-  }
-  markDirty()
-}
-
 function addProcessor(stage: 'pre' | 'post', type = 'SCRIPT') {
   if (!activeEditor.value) return
   const processor = createProcessor(stage, type)
@@ -4727,15 +4331,6 @@ function currentImportDirectoryName() {
     return (definition?.directoryName || '').trim()
   }
   return ''
-}
-
-function findDirectoryNodeByKey(nodes: DirectoryNode[], key: string): DirectoryNode | null {
-  for (const node of nodes) {
-    if (node.key === key) return node
-    const child = findDirectoryNodeByKey(node.children || [], key)
-    if (child) return child
-  }
-  return null
 }
 
 function closeImportDialog() {
@@ -5956,78 +5551,23 @@ onBeforeUnmount(() => {
           <div v-if="moduleErrorMessage || definitionErrorMessage" class="api-directory-error">
             {{ moduleErrorMessage || definitionErrorMessage }}
           </div>
-          <el-tree
+          <ApiDirectoryTree
             ref="directoryTreeRef"
             v-else
-            v-loading="directorySearchLoading"
-            :key="directoryTreeRenderKey"
             :data="visibleDirectoryTree"
-            node-key="key"
-            :default-expanded-keys="expandedKeys"
-            :current-node-key="selectedDirectoryKey"
-            :expand-on-click-node="false"
-            highlight-current
-            class="api-directory-tree"
+            :expanded-keys="expandedKeys"
+            :selected-key="selectedDirectoryKey"
+            :render-key="directoryTreeRenderKey"
+            :loading="directorySearchLoading"
             @node-click="handleDirectorySelect"
             @node-expand="(node: DirectoryNode) => setDirectoryNodeExpanded(node, true)"
             @node-collapse="(node: DirectoryNode) => setDirectoryNodeExpanded(node, false)"
-          >
-            <template #default="{ data }">
-              <div
-                :class="['api-directory-node', { 'is-request': data.type === 'request', 'is-placeholder': data.type === 'placeholder' }]"
-                @mouseenter="activeDirectoryNodeKey = data.key"
-                @mouseleave="activeDirectoryNodeKey = activeDirectoryNodeKey === data.key ? '' : activeDirectoryNodeKey"
-              >
-                <div class="api-directory-node__main">
-                  <template v-if="data.type === 'request'">
-                    <span :class="['api-method', requestMethodClass(data.method)]">{{ data.method }}</span>
-                    <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
-                  </template>
-                  <template v-else-if="data.type === 'placeholder'">
-                    <span :class="['api-directory-node__placeholder-dot', { 'is-loading': data.loading }]"></span>
-                    <span class="api-directory-node__placeholder-text" :title="data.label">{{ data.label }}</span>
-                  </template>
-                  <template v-else>
-                    <span :class="['api-directory-node__folder', { 'is-open': expandedKeys.includes(data.key) }]">
-                      <LucideFolderOpen v-if="expandedKeys.includes(data.key)" class="api-directory-node__icon" />
-                      <LucideFolder v-else class="api-directory-node__icon" />
-                    </span>
-                    <span class="api-directory-node__name" :title="data.label">{{ data.label }}</span>
-                    <span v-if="data.type === 'workspace' || data.type === 'module'" class="api-directory-node__count">{{ data.count || 0 }}</span>
-                  </template>
-                </div>
-
-                <div class="api-directory-node__actions" @click.stop>
-                  <button
-                    v-if="data.type === 'workspace' || data.type === 'module'"
-                    type="button"
-                    class="api-directory-node__action"
-                    title="新建模块"
-                    @click.stop="createModule(data.type === 'module' ? data.moduleId : null)"
-                  >
-                    <LucidePlus class="api-directory-node__lucide-action" />
-                  </button>
-                  <el-dropdown v-if="data.type === 'module' || data.type === 'request'" trigger="click" @click.stop>
-                    <button type="button" class="api-directory-node__action is-more" title="更多操作" @click.stop>
-                      <LucideMoreHorizontal class="api-directory-node__lucide-action" />
-                    </button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <template v-if="data.type === 'module'">
-                          <el-dropdown-item @click="renameModule(data)">重命名模块</el-dropdown-item>
-                          <el-dropdown-item @click="deleteModule(data)">删除模块</el-dropdown-item>
-                        </template>
-                        <template v-else-if="data.type === 'request'">
-                          <el-dropdown-item @click="renameRequest(data)">重命名请求</el-dropdown-item>
-                          <el-dropdown-item divided @click="deleteRequest(data)">删除请求</el-dropdown-item>
-                        </template>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
-                </div>
-              </div>
-            </template>
-          </el-tree>
+            @create-module="createModule"
+            @rename-module="renameModule"
+            @delete-module="deleteModule"
+            @rename-request="renameRequest"
+            @delete-request="deleteRequest"
+          />
         </div>
       </aside>
 
@@ -6104,243 +5644,72 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else-if="isAiCaseGenerationTabActive">
-          <div class="ai-generation-workspace">
-            <div class="ai-generation-page-header">
-              <div>
-                <h3 class="ai-generation-title-line">
-                  <span>AI 生成单接口用例</span>
-                  <span class="ai-generation-title-source">
-                    <span class="ai-generation-source-name">{{ activeAiCaseGenerationState?.definitionName }}</span>
-                    <span :class="['api-method', requestMethodClass(activeAiCaseGenerationState?.method)]">
-                    {{ activeAiCaseGenerationState?.method || 'GET' }}
-                    </span>
-                    <span class="ai-generation-source-path">{{ activeAiCaseGenerationState?.path || '-' }}</span>
-                  </span>
-                </h3>
-              </div>
-              <button
-                type="button"
-                :class="['ai-generation-header-action', { 'is-stop': activeAiCaseGenerationState?.generating }]"
-                @click="activeAiCaseGenerationState?.generating ? stopAiCaseGeneration() : openAiCaseDrawer()"
-              >
-                <MagicStick v-if="!activeAiCaseGenerationState?.generating" />
-                {{ activeAiCaseGenerationState?.generating ? '停止' : '生成新用例' }}
-              </button>
-            </div>
-
-            <div class="ai-generation-detail-workspace">
-              <div class="ai-generation-detail-status-row">
-                <div class="ai-generation-detail-status-tabs">
-                  <button type="button" :class="{ active: aiCaseResultFilter === 'pending' }" @click="aiCaseResultFilter = 'pending'">
-                    待处理 ({{ aiCasePendingResults.length }})
-                  </button>
-                  <button type="button" :class="{ active: aiCaseResultFilter === 'accepted' }" @click="aiCaseResultFilter = 'accepted'">
-                    已采纳 ({{ aiCaseAcceptedResults.length }})
-                  </button>
-                  <button type="button" :class="{ active: aiCaseResultFilter === 'discarded' }" @click="aiCaseResultFilter = 'discarded'">
-                    废弃 ({{ aiCaseDiscardedResults.length }})
-                  </button>
-                </div>
-              </div>
-
-              <div class="ai-generation-detail-toolbar">
-                <div class="ai-generation-detail-search">
-                  <Search />
-                  <input v-model="aiCaseResultKeyword" type="text" placeholder="搜索" />
-                </div>
-                <el-select v-model="aiCaseResultGroup" class="ai-generation-detail-filter" placeholder="分组" clearable>
-                  <el-option v-for="item in aiCaseResultGroupOptions" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-                <el-select v-model="aiCaseResultType" class="ai-generation-detail-filter is-wide" placeholder="类型" clearable>
-                  <el-option v-for="item in aiCaseResultTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                </el-select>
-                <div class="ai-generation-detail-actions">
-                  <button type="button" class="ai-generation-run-selected" :disabled="!selectedPendingAiCaseResults.length" @click="runSelectedAiGeneratedCases">
-                    <LucidePlay />
-                    运行选中
-                  </button>
-                  <button type="button" class="ai-generation-accept-selected" :disabled="!selectedPendingAiCaseResults.length || Boolean(aiCaseSavingId)" @click="batchAcceptAiGeneratedCases">采纳选中</button>
-                  <button type="button" class="ai-generation-discard-selected" :disabled="!aiCasePendingResults.length || Boolean(aiCaseSavingId)" @click="batchDiscardAiGeneratedCases">废弃选中</button>
-                </div>
-              </div>
-
-              <div class="ai-generation-detail-table">
-                <div class="ai-generation-detail-head">
-                  <div class="ai-generation-row-selector">
-                    <el-checkbox
-                      :model-value="aiCaseSelectionAllChecked"
-                      :indeterminate="aiCaseSelectionIndeterminate"
-                      @update:model-value="toggleAllAiGeneratedCaseSelection($event)"
-                    />
-                  </div>
-                  <span>名称</span>
-                  <span>类型</span>
-                  <span>分组</span>
-                  <span>运行结果</span>
-                  <span></span>
-                </div>
-
-                <div class="ai-generation-detail-body">
-                  <div v-if="!aiCaseFilteredResults.length" class="ai-generation-empty-state">
-                    <MagicStick />
-                    <span>{{ aiCaseGenerationEmptyStateText }}</span>
-                  </div>
-                  <div
-                    v-for="(row, index) in aiCaseFilteredResults"
-                    :key="row.id"
-                    class="ai-generation-detail-row"
-                    @click="openAiGeneratedCaseDetail(row)"
-                  >
-                    <div class="ai-generation-row-selector" @click.stop>
-                      <template v-if="row.status === 'generating' || row.runResult === '运行中'">
-                        <svg class="ai-generation-row-loading" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 40 60 16" aria-hidden="true" focusable="false">
-                          <circle fill="currentColor" stroke="none" cx="6" cy="50" r="6">
-                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.1s" />
-                          </circle>
-                          <circle fill="currentColor" stroke="none" cx="26" cy="50" r="6">
-                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.2s" />
-                          </circle>
-                          <circle fill="currentColor" stroke="none" cx="46" cy="50" r="6">
-                            <animate attributeName="opacity" dur="1s" values="0;1;0" repeatCount="indefinite" begin="0.3s" />
-                          </circle>
-                        </svg>
-                      </template>
-                      <template v-else>
-                        <span class="ai-generation-row-index">{{ index + 1 }}</span>
-                        <el-checkbox
-                          v-if="row.status === 'pending'"
-                          class="ai-generation-row-checkbox"
-                          :model-value="aiCaseSelectedResultIds.includes(row.id)"
-                          @update:model-value="toggleAiGeneratedCaseSelection(row.id, $event)"
-                        />
-                      </template>
-                    </div>
-                    <div class="ai-generation-detail-name">
-                      <span>{{ row.draft.name || 'AI 生成接口用例' }}</span>
-                    </div>
-                    <div class="ai-generation-detail-group-cell">
-                      <span class="ai-generation-case-tag">{{ aiGeneratedCaseTypeLabel(row) }}</span>
-                    </div>
-                    <span :class="['ai-generation-detail-group-type', String(row.draft.groupKey || row.draft.group || '').includes('negative') ? 'is-negative' : 'is-positive']">{{ aiGeneratedCaseGroupLabel(row) }}</span>
-                    <span :class="['ai-generation-run-result', { 'is-success': row.runResult === '通过', 'is-failed': row.runResult === '失败' || row.status === 'failed' }]">
-                      {{ row.runResult || '-' }}
-                    </span>
-                    <div class="ai-generation-row-actions">
-                      <button type="button" class="ai-generation-row-run" :disabled="row.status === 'generating' || row.status === 'failed' || row.status !== 'pending' || row.runResult === '运行中'" @click.stop="runAiGeneratedCase(row)">
-                        <LucidePlay />
-                        运行
-                      </button>
-                      <button type="button" class="ai-generation-row-accept" :disabled="row.status === 'generating' || row.status === 'failed' || row.status !== 'pending' || aiCaseSavingId === row.id" @click.stop="saveAiGeneratedCase(row)">
-                        {{ aiCaseSavingId === row.id ? '保存中' : '采纳' }}
-                      </button>
-                      <button type="button" class="ai-generation-row-discard" :disabled="row.status === 'generating' || row.status === 'discarded' || row.runResult === '运行中'" @click.stop="discardAiGeneratedCase(row)">废弃</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <ApiAiGenerationWorkspace
+            v-if="activeAiCaseGenerationState"
+            v-model:result-filter="aiCaseResultFilter"
+            v-model:keyword="aiCaseResultKeyword"
+            v-model:group="aiCaseResultGroup"
+            v-model:type="aiCaseResultType"
+            :state="activeAiCaseGenerationState"
+            :pending-count="aiCasePendingResults.length"
+            :accepted-count="aiCaseAcceptedResults.length"
+            :discarded-count="aiCaseDiscardedResults.length"
+            :group-options="aiCaseResultGroupOptions"
+            :type-options="aiCaseResultTypeOptions"
+            :selected-pending-count="selectedPendingAiCaseResults.length"
+            :saving-id="aiCaseSavingId"
+            :pending-action-count="aiCasePendingResults.length"
+            :filtered-results="aiCaseFilteredResults"
+            :empty-text="aiCaseGenerationEmptyStateText"
+            :selection-all-checked="aiCaseSelectionAllChecked"
+            :selection-indeterminate="aiCaseSelectionIndeterminate"
+            :selected-result-ids="aiCaseSelectedResultIds"
+            :request-method-class="requestMethodClass"
+            :case-type-label="aiGeneratedCaseTypeLabel"
+            :case-group-label="aiGeneratedCaseGroupLabel"
+            @generate-or-stop="activeAiCaseGenerationState.generating ? stopAiCaseGeneration() : openAiCaseDrawer()"
+            @run-selected="runSelectedAiGeneratedCases"
+            @accept-selected="batchAcceptAiGeneratedCases"
+            @discard-selected="batchDiscardAiGeneratedCases"
+            @toggle-all="toggleAllAiGeneratedCaseSelection"
+            @toggle-selection="toggleAiGeneratedCaseSelection"
+            @open-detail="openAiGeneratedCaseDetail"
+            @run-case="runAiGeneratedCase"
+            @save-case="saveAiGeneratedCase"
+            @discard-case="discardAiGeneratedCase"
+          />
         </template>
 
         <template v-else>
-          <div class="api-request-line">
-            <div class="api-url-compose">
-              <el-select
-                v-model="activeEditor.detail.requestConfig.method"
-                :class="['api-method-select', requestMethodClass(activeEditor.detail.requestConfig.method)]"
-                popper-class="api-method-popper"
-                @change="markDirty"
-              >
-                <el-option v-for="method in apiMethodOptions" :key="method" :label="method" :value="method">
-                  <span :class="['api-method-option', requestMethodClass(method)]">{{ method }}</span>
-                </el-option>
-              </el-select>
-              <el-input
-                ref="urlInputRef"
-                v-model="activeEditor.detail.requestConfig.path"
-                placeholder="请输入包含 http/https 的完整 URL 或接口路径"
-                @input="markDirty"
-              />
-              <button type="button" class="api-curl-button" @click="promptImportCurl">Curl</button>
-            </div>
-            <div class="api-run-environment-combo">
-              <el-tooltip
-                :content="selectedEnvironment ? '查看运行环境详情' : '选择运行环境后查看详情'"
-                placement="top"
-              >
-                <button
-                  type="button"
-                  class="api-run-environment-detail-button"
-                  :disabled="!selectedEnvironment"
-                  @click="openRunEnvironmentDrawer"
-                >
-                  <el-icon><InfoFilled /></el-icon>
-                </button>
-              </el-tooltip>
-              <el-select
-                v-model="selectedEnvironmentId"
-                class="api-run-environment-select"
-                clearable
-                filterable
-                :loading="runOptionsLoading"
-                placeholder="运行环境"
-                popper-class="api-run-env-popper"
-                @change="persistRunOptions"
-              >
-                <el-option
-                  v-for="environment in environments"
-                  :key="environment.id"
-                  :label="environment.name"
-                  :value="environment.id"
-                />
-              </el-select>
-            </div>
-            <button
-              type="button"
-              class="api-send-button"
-              :disabled="sending || !activeEditor.detail.requestConfig.path.trim()"
-              @click="sendActiveEditor"
-            >
-              <LucidePlay class="api-send-button__icon" />
-              发送            </button>
-            <el-dropdown
-              split-button
-              class="api-save-dropdown"
-              popper-class="api-save-dropdown-menu"
-              :disabled="!activeEditor.detail.requestConfig.path.trim()"
-              :loading="saving"
-              @click="saveActiveEditor"
-            >
-              <span class="api-save-label">
-                <LucideSave class="api-button-icon" />
-                保存
-              </span>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-if="activeEditor.definitionId" @click="saveAsCase">保存为用例</el-dropdown-item>
-                  <el-dropdown-item @click="duplicateActiveEditor">
-                    复制接口
-                  </el-dropdown-item>
-                  <el-dropdown-item @click="deleteActiveEditor">
-                    {{ activeEditor.definitionId ? '删除接口' : '删除接口' }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
+          <ApiRequestToolbar
+            :method="activeEditor.detail.requestConfig.method"
+            :path="activeEditor.detail.requestConfig.path"
+            :definition-id="activeEditor.definitionId"
+            :environment-id="selectedEnvironmentId"
+            :environments="environments"
+            :environment-selected="Boolean(selectedEnvironment)"
+            :run-options-loading="runOptionsLoading"
+            :sending="sending"
+            :saving="saving"
+            @update:method="activeEditor.detail.requestConfig.method = $event"
+            @update:path="activeEditor.detail.requestConfig.path = $event"
+            @update:environment-id="selectedEnvironmentId = $event"
+            @dirty="markDirty"
+            @import-curl="promptImportCurl"
+            @open-environment="openRunEnvironmentDrawer"
+            @persist-run-options="persistRunOptions"
+            @send="sendActiveEditor"
+            @save="saveActiveEditor"
+            @save-as-case="saveAsCase"
+            @duplicate="duplicateActiveEditor"
+            @delete="deleteActiveEditor"
+          />
 
-          <div class="api-content-tabs">
-            <button
-              v-for="tab in contentTabs"
-              :key="tab.value"
-              :class="['api-content-tab', { 'is-active': activeEditor.activeTab === tab.value }]"
-              type="button"
-              @click="activeEditor.activeTab = tab.value"
-            >
-              {{ tab.label }}
-              <span v-if="tab.count" class="api-tab-badge">{{ tab.count }}</span>
-            </button>
-          </div>
+          <ApiRequestContentTabs
+            :tabs="contentTabs"
+            :active-tab="activeEditor.activeTab"
+            @update:active-tab="activeEditor.activeTab = $event"
+          />
 
           <div class="api-editor-scroll">
             <div v-if="activeEditor.loading" class="api-editor-loading">
@@ -6352,70 +5721,32 @@ onBeforeUnmount(() => {
             <template v-else>
             <div :class="['api-request-body', `is-${activeEditor.activeTab}`]">
               <template v-if="activeEditor.activeTab === 'params'">
-                <div class="api-param-table is-query">
-                  <div class="api-param-header">
-                    <span class="api-drag-cell"></span>
-                    <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.queryParams.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.queryParams, $event)" /></span>
-                    <span class="api-header-title">Query 参数</span>
-                    <span class="api-type-header">类型</span>
-                    <span>参数值</span>
-                    <span class="api-length-header">长度范围</span>
-                    <span>编码</span>
-                    <span>描述</span>
-                    <button type="button" class="api-link-button" @click="openBatchAdd('query')">批量添加</button>
-                  </div>
-                  <div v-for="(row, index) in activeEditor.detail.requestConfig.queryParams" :key="`query-${index}`" class="api-param-row">
-                    <span class="api-drag-cell">
-                      <span class="api-drag-handle" aria-hidden="true">
-                        <span v-for="dotIndex in 6" :key="`query-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
-                      </span>
-                    </span>
-                    <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
-                    <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
-                    <div class="api-type-field">
-                      <button type="button" :class="['api-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markDirty()">*</button>
-                      <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
-                        <el-option v-for="type in paramTypeOptions.filter(item => item !== 'file')" :key="type" :label="type" :value="type" />
-                      </el-select>
-                    </div>
-                    <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markDirty" />
-                    <div class="api-length-range">
-                      <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
-                      <span>-</span>
-                      <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
-                    </div>
-                    <el-switch v-model="row.encode" size="small" @change="markDirty" />
-                    <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
-                    <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.queryParams, index)">删除</button>
-                  </div>
-                  <button type="button" class="api-add-row" @click="addRow(activeEditor.detail.requestConfig.queryParams)">+ 添加一行</button>
-                </div>
+                <ApiKeyValueTable
+                  title="Query 参数"
+                  variant="query"
+                  batch-target="query"
+                  :rows="activeEditor.detail.requestConfig.queryParams"
+                  :param-type-options="paramTypeOptions"
+                  @dirty="markDirty"
+                  @add-row="addRow(activeEditor.detail.requestConfig.queryParams)"
+                  @remove-row="removeRow(activeEditor.detail.requestConfig.queryParams, $event)"
+                  @set-rows-enabled="setRowsEnabled(activeEditor.detail.requestConfig.queryParams, $event)"
+                  @open-batch-add="openBatchAdd"
+                />
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'headers'">
-                <div class="api-param-table is-header">
-                  <div class="api-param-header">
-                    <span class="api-drag-cell"></span>
-                    <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.headers.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.headers, $event)" /></span>
-                    <span class="api-header-title">参数名称</span>
-                    <span>参数值</span>
-                    <span>描述</span>
-                    <button type="button" class="api-link-button" @click="openBatchAdd('header')">批量添加</button>
-                  </div>
-                  <div v-for="(row, index) in activeEditor.detail.requestConfig.headers" :key="`header-${index}`" class="api-param-row">
-                    <span class="api-drag-cell">
-                      <span class="api-drag-handle" aria-hidden="true">
-                        <span v-for="dotIndex in 6" :key="`header-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
-                      </span>
-                    </span>
-                    <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
-                    <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
-                    <el-input v-model="row.value" placeholder="参数值" @input="markDirty" />
-                    <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
-                    <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.headers, index)">删除</button>
-                  </div>
-                  <button type="button" class="api-add-row" @click="addRow(activeEditor.detail.requestConfig.headers)">+ 添加一行</button>
-                </div>
+                <ApiKeyValueTable
+                  title="参数名称"
+                  variant="header"
+                  batch-target="header"
+                  :rows="activeEditor.detail.requestConfig.headers"
+                  @dirty="markDirty"
+                  @add-row="addRow(activeEditor.detail.requestConfig.headers)"
+                  @remove-row="removeRow(activeEditor.detail.requestConfig.headers, $event)"
+                  @set-rows-enabled="setRowsEnabled(activeEditor.detail.requestConfig.headers, $event)"
+                  @open-batch-add="openBatchAdd"
+                />
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'cookies'">
@@ -6440,178 +5771,37 @@ onBeforeUnmount(() => {
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'body'">
-                <div class="api-body-section">
-                  <div class="api-body-modes">
-                    <button
-                      v-for="mode in bodyModes"
-                      :key="mode.value"
-                      :class="['api-body-chip', { 'is-active': activeEditor.detail.requestConfig.body.type === mode.value }]"
-                      type="button"
-                      @click="setBodyMode(mode.value)"
-                    >
-                      {{ mode.label }}
-                    </button>
-                  </div>
-                  <div
-                    :class="[
-                      'api-body-editor',
-                      {
-                        'is-empty': activeEditor.detail.requestConfig.body.type === 'NONE',
-                        'is-code': isRawBodyType(activeEditor.detail.requestConfig.body.type),
-                      },
-                    ]"
-                  >
-                    <div v-if="activeEditor.detail.requestConfig.body.type === 'NONE'" class="api-empty-body">请求没有 Body</div>
-                    <div v-else-if="isRawBodyType(activeEditor.detail.requestConfig.body.type)" class="api-body-code-wrap">
-                      <div v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON'" class="api-body-view-switch">
-                        <button
-                          type="button"
-                          :class="['api-body-view-switch__item', { active: bodyJsonViewMode === 'json' }]"
-                          @click="bodyJsonViewMode = 'json'"
-                        >
-                          JSON
-                        </button>
-                        <button
-                          type="button"
-                          :class="['api-body-view-switch__item', { active: bodyJsonViewMode === 'schema' }]"
-                          @click="bodyJsonViewMode = 'schema'"
-                        >
-                          Schema
-                        </button>
-                      </div>
-                      <div v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON' && bodyJsonViewMode === 'schema'" class="api-schema-panel is-body-schema">
-                        <div class="api-schema-actions">
-                          <button type="button" class="api-schema-action" @click="generateBodySchemaFromJson">从 JSON 生成 Schema</button>
-                        </div>
-                        <div v-if="!bodySchemaFields.length" class="api-empty-body">当前请求体暂无 Schema 定义</div>
-                        <div v-else class="api-schema-table">
-                          <div class="api-schema-header">
-                            <span>字段</span>
-                            <span>类型</span>
-                            <span>必填</span>
-                            <span>描述</span>
-                            <span>示例</span>
-                            <span>默认值</span>
-                            <span>枚举/限制</span>
-                          </div>
-                          <div v-for="field in bodySchemaFields" :key="`body-schema-${field.fieldPath || field.name}`" class="api-schema-row">
-                            <span class="api-schema-field" :style="{ paddingLeft: `${schemaFieldDepth(field) * 16}px` }">{{ schemaFieldName(field) }}</span>
-                            <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                            <span><el-switch :model-value="Boolean(field.required)" size="small" @change="updateSchemaRequired(field, $event)" /></span>
-                            <span><el-input :model-value="field.description || ''" size="small" placeholder="描述" @input="updateSchemaFieldValue(field, 'description', String($event))" /></span>
-                            <span><el-input :model-value="schemaEditableValue(field.example)" size="small" placeholder="示例值" @input="updateSchemaFieldValue(field, 'example', String($event))" /></span>
-                            <span><el-input :model-value="schemaEditableValue(field.defaultValue)" size="small" placeholder="默认值" @input="updateSchemaFieldValue(field, 'defaultValue', String($event))" /></span>
-                            <span class="api-schema-muted">{{ schemaFieldEnum(field) !== '-' ? schemaFieldEnum(field) : schemaFieldLimit(field) }}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <ApiCodeEditor
-                        v-else
-                        v-model="activeBodyRawText"
-                        :language="activeBodyLanguage"
-                        height="300px"
-                        fit-content
-                        :min-fit-content-height="300"
-                        :max-fit-content-height="1000"
-                        placeholder="请输入请求体"
-                        @change="markDirty"
-                      >
-                        <template v-if="activeEditor.detail.requestConfig.body.type === 'RAW_JSON' && bodyJsonViewMode === 'json'" #toolbar>
-                          <button
-                            type="button"
-                            class="api-body-editor-action"
-                            :disabled="!bodySchemaFields.length"
-                            :title="bodySchemaFields.length ? '根据 Schema 自动生成示例 JSON' : '当前请求体暂无 Schema 字段'"
-                            @click="generateJsonFromBodySchema"
-                          >
-                            <el-icon><MagicStick /></el-icon>
-                            <span>自动生成</span>
-                          </button>
-                        </template>
-                      </ApiCodeEditor>
-                    </div>
-                    <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeEditor.detail.requestConfig.body.type)" class="api-param-table is-body-form">
-                      <div class="api-param-header">
-                        <span class="api-drag-cell"></span>
-                        <span class="api-checkbox-cell"><el-checkbox :model-value="activeEditor.detail.requestConfig.body.formItems.every(row => row.enabled)" @change="setRowsEnabled(activeEditor.detail.requestConfig.body.formItems, $event)" /></span>
-                        <span class="api-header-title">参数名称</span>
-                        <span class="api-type-header">类型</span>
-                        <span>参数值</span>
-                        <span class="api-length-header">长度范围</span>
-                        <span>描述</span>
-                        <button type="button" class="api-link-button" @click="openBatchAdd('body-form')">批量添加</button>
-                      </div>
-                      <div v-for="(row, index) in activeEditor.detail.requestConfig.body.formItems" :key="`body-${index}`" class="api-param-row">
-                        <span class="api-drag-cell">
-                          <span class="api-drag-handle" aria-hidden="true">
-                            <span v-for="dotIndex in 6" :key="`body-dot-${index}-${dotIndex}`" class="api-drag-dot"></span>
-                          </span>
-                        </span>
-                        <span class="api-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markDirty" /></span>
-                        <el-input v-model="row.key" placeholder="参数名称" @input="markDirty" />
-                        <div class="api-type-field">
-                          <button type="button" :class="['api-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markDirty()">*</button>
-                          <el-select v-model="row.paramType" placeholder="类型" @change="markDirty">
-                            <el-option
-                              v-for="type in (activeEditor.detail.requestConfig.body.type === 'FORM_DATA' ? paramTypeOptions : paramTypeOptions.filter(item => item !== 'file'))"
-                              :key="type"
-                              :label="type"
-                              :value="type"
-                            />
-                          </el-select>
-                        </div>
-                        <div v-if="row.paramType === 'file'" class="api-file-picker">
-                          <label class="api-file-picker__button">
-                            选择文件
-                            <input type="file" @change="handleFormFileChange(row, $event)" />
-                          </label>
-                          <span :title="row.fileName || ''">{{ row.fileName || '未选择文件' }}</span>
-                          <small>{{ formatFileSize(row.fileSize) }}</small>
-                          <button v-if="row.fileName" type="button" class="api-row-remove" @click="clearFormFile(row)">清除</button>
-                        </div>
-                        <el-input v-else v-model="row.value" placeholder="参数值" @input="markDirty" />
-                        <div class="api-length-range">
-                          <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="markDirty" />
-                          <span>-</span>
-                          <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="markDirty" />
-                        </div>
-                        <el-input v-model="row.description" placeholder="描述" @input="markDirty" />
-                        <button type="button" class="api-row-remove" @click="removeRow(activeEditor.detail.requestConfig.body.formItems, index)">删除</button>
-                      </div>
-                      <button type="button" class="api-add-row" @click="addRow(activeEditor.detail.requestConfig.body.formItems)">+ 添加一行</button>
-                    </div>
-                    <div v-else class="api-binary-panel">
-                      <div class="api-binary-row">
-                        <div class="api-binary-label">File</div>
-                        <div class="api-binary-actions">
-                          <label class="api-binary-pick">
-                            {{ activeEditor.detail.requestConfig.body.fileName ? '重新选择' : '选择文件' }}
-                            <input type="file" @change="handleBinaryFileChange" />
-                          </label>
-                          <button
-                            type="button"
-                            class="api-binary-clear"
-                            :disabled="!activeEditor.detail.requestConfig.body.binaryBase64"
-                            @click="clearBinaryFile"
-                          >
-                            清空
-                          </button>
-                        </div>
-                      </div>
-                      <div class="api-binary-row">
-                        <div class="api-binary-label">已选文件</div>
-                        <div class="api-binary-selected">
-                          <template v-if="activeEditor.detail.requestConfig.body.fileName">
-                            <span class="api-binary-file-name">{{ activeEditor.detail.requestConfig.body.fileName }}</span>
-                            <span v-if="activeEditor.detail.requestConfig.body.fileSize" class="api-binary-file-size">{{ formatFileSize(activeEditor.detail.requestConfig.body.fileSize) }}</span>
-                          </template>
-                          <template v-else>
-                            尚未选择二进制文件                          </template>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <ApiRequestBodyPanel
+                  v-model:raw-text="activeBodyRawText"
+                  v-model:body-json-view-mode="bodyJsonViewMode"
+                  :body="activeEditor.detail.requestConfig.body"
+                  :body-modes="bodyModes"
+                  :raw-language="activeBodyLanguage"
+                  :body-schema-fields="bodySchemaFields"
+                  :param-type-options="paramTypeOptions"
+                  :schema-field-depth="schemaFieldDepth"
+                  :schema-field-name="schemaFieldName"
+                  :schema-field-type-class="schemaFieldTypeClass"
+                  :schema-field-type="schemaFieldType"
+                  :schema-editable-value="schemaEditableValue"
+                  :schema-field-enum="schemaFieldEnum"
+                  :schema-field-limit="schemaFieldLimit"
+                  :format-file-size="formatFileSize"
+                  @dirty="markDirty"
+                  @set-body-mode="setBodyMode"
+                  @generate-body-schema-from-json="generateBodySchemaFromJson"
+                  @generate-json-from-body-schema="generateJsonFromBodySchema"
+                  @update-schema-required="updateSchemaRequired"
+                  @update-schema-field-value="updateSchemaFieldValue"
+                  @set-rows-enabled="setRowsEnabled(activeEditor.detail.requestConfig.body.formItems, $event)"
+                  @open-batch-add="openBatchAdd"
+                  @handle-form-file-change="handleFormFileChange"
+                  @clear-form-file="clearFormFile"
+                  @remove-row="removeRow(activeEditor.detail.requestConfig.body.formItems, $event)"
+                  @add-row="addRow(activeEditor.detail.requestConfig.body.formItems)"
+                  @handle-binary-file-change="handleBinaryFileChange"
+                  @clear-binary-file="clearBinaryFile"
+                />
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'auth'">
@@ -6666,978 +5856,157 @@ onBeforeUnmount(() => {
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'cases'">
-                <div class="ms-like-request-body case-list-request-body">
-                  <div class="request-section case-list-panel">
-                    <div class="editor-actions left">
-                      <el-button
-                        type="primary"
-                        :title="activeEditor.definitionId ? '新建用例' : '请先保存接口，再创建用例'"
-                        :disabled="!activeEditor.definitionId"
-                        @click="openCreateCaseDialog"
-                      >
-                        新建用例
-                      </el-button>
-                      <button
-                        type="button"
-                        class="case-ai-generate-button"
-                        :disabled="!activeEditor.definitionId"
-                        :title="activeEditor.definitionId ? 'AI 生成接口用例' : '请先保存接口，再使用 AI 生成用例'"
-                        @click="openAiCaseDrawer"
-                      >
-                        <el-icon><MagicStick /></el-icon>
-                        <span>AI生成用例</span>
-                      </button>
-                    </div>
-
-                    <div v-if="!activeDefinitionCases.length" class="empty-hint">当前接口下还没有用例</div>
-                    <div v-else class="case-list-table-wrap">
-                      <el-table :data="pagedDefinitionCases" size="small" class="case-list-table">
-                        <el-table-column prop="id" label="ID" width="92" />
-                        <el-table-column prop="name" label="用例名称" min-width="200" show-overflow-tooltip />
-                        <el-table-column label="协议" width="90">
-                          <template #default>
-                            {{ caseProtocolLabel() }}
-                          </template>
-                        </el-table-column>
-                        <el-table-column label="用例等级" width="100">
-                          <template #default="{ row }">
-                            {{ casePriorityLabel(row) }}
-                          </template>
-                        </el-table-column>
-                        <el-table-column label="状态" width="110">
-                          <template #default="{ row }">
-                            {{ caseStatusLabel(row) }}
-                          </template>
-                        </el-table-column>
-                        <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
-                        <el-table-column label="标签" min-width="160" show-overflow-tooltip>
-                          <template #default="{ row }">
-                            {{ formatCaseTags(row.tags) }}
-                          </template>
-                        </el-table-column>
-                        <el-table-column label="创建人" width="110">
-                          <template #default>-</template>
-                        </el-table-column>
-                        <el-table-column width="148" fixed="right" align="center" header-align="center">
-                          <template #header>
-                            <div class="case-list-operation-header">
-                              <span>操作</span>
-                              <el-button text class="table-settings-trigger case-list-settings-trigger" title="表格设置">
-                                <el-icon><Setting /></el-icon>
-                              </el-button>
-                            </div>
-                          </template>
-                          <template #default="{ row }">
-                            <div class="case-list-actions">
-                              <el-button text type="primary" size="small" class="case-list-action-button" @click="openEditCaseDialog(row)">编辑</el-button>
-                              <el-button text size="small" type="primary" :loading="caseRunningId === row.id" @click="runCase(row)">执行</el-button>
-                              <el-dropdown trigger="click" placement="bottom-end">
-                                <el-button text type="primary" size="small" class="case-list-more-button">
-                                  <el-icon><MoreFilled /></el-icon>
-                                </el-button>
-                                <template #dropdown>
-                                  <el-dropdown-menu class="case-list-more-menu">
-                                    <el-dropdown-item class="case-list-menu-item" @click="openCaseDetailDrawer(row)">查看详情</el-dropdown-item>
-                                    <el-dropdown-item class="case-list-menu-item" @click="duplicateCase(row)">复制</el-dropdown-item>
-                                    <el-dropdown-item class="case-list-menu-item is-danger" @click="deleteCase(row)">删除</el-dropdown-item>
-                                  </el-dropdown-menu>
-                                </template>
-                              </el-dropdown>
-                            </div>
-                          </template>
-                        </el-table-column>
-                      </el-table>
-                      <div class="case-list-pagination">
-                        <div class="case-list-pagination-summary">共 {{ activeDefinitionCases.length }} 条 / {{ caseListTotalPages }} 页</div>
-                        <el-pagination
-                          v-model:current-page="caseListCurrentPage"
-                          v-model:page-size="caseListPageSize"
-                          :page-sizes="[10, 20, 30, 40, 50]"
-                          size="small"
-                          layout="sizes, prev, pager, next"
-                          :total="activeDefinitionCases.length"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <ApiCaseListPanel
+                  v-model:current-page="caseListCurrentPage"
+                  v-model:page-size="caseListPageSize"
+                  :definition-id="activeEditor.definitionId"
+                  :cases="activeDefinitionCases"
+                  :paged-cases="pagedDefinitionCases"
+                  :total-pages="caseListTotalPages"
+                  :page-sizes="[10, 20, 30, 40, 50]"
+                  :running-id="caseRunningId"
+                  :case-protocol-label="caseProtocolLabel"
+                  :case-priority-label="casePriorityLabel"
+                  :case-status-label="caseStatusLabel"
+                  :format-case-tags="formatCaseTags"
+                  @create="openCreateCaseDialog"
+                  @ai-generate="openAiCaseDrawer"
+                  @edit="openEditCaseDialog"
+                  @run="runCase"
+                  @detail="openCaseDetailDrawer"
+                  @duplicate="duplicateCase"
+                  @delete="deleteCase"
+                />
               </template>
 
               <template v-else-if="activeEditor.activeTab === 'definition'">
-                <div class="api-definition-doc">
-                  <section class="api-definition-summary">
-                    <div>
-                      <div class="api-definition-title-row">
-                        <span :class="['api-method-badge', requestMethodClass(activeEditor.detail.requestConfig.method)]">
-                          {{ activeEditor.detail.requestConfig.method || 'GET' }}
-                        </span>
-                        <strong>{{ activeEditor.detail.name || '未命名接口' }}</strong>
-                      </div>
-                      <p>{{ activeEditor.detail.description || '暂无接口描述' }}</p>
-                    </div>
-                    <div class="api-definition-path">{{ activeEditor.detail.requestConfig.path || '-' }}</div>
-                  </section>
-
-                  <div class="api-definition-main">
-                    <section
-                      v-if="definitionRequestSchemaGroups.length || bodySchemaFields.length"
-                      class="api-definition-section"
-                    >
-                      <div class="api-definition-section__title">
-                        <div>
-                          <strong>请求参数</strong>
-                        </div>
-                      </div>
-                      <div class="api-definition-group-list">
-                        <div v-for="group in definitionRequestSchemaGroups" :key="group.key" class="api-definition-group">
-                          <div class="api-definition-group__head">
-                            <div>
-                              <strong>{{ group.title }}</strong>
-                              <span>{{ group.description }}</span>
-                            </div>
-                          </div>
-                          <div class="api-doc-schema-table">
-                            <div class="api-doc-schema-head">
-                              <span>参数名</span>
-                              <span>类型</span>
-                              <span>必填</span>
-                              <span>说明</span>
-                              <span>示例/规则</span>
-                            </div>
-                            <div v-for="field in group.fields" :key="`${group.key}-schema-${field.fieldPath || field.name}`" class="api-doc-schema-row">
-                              <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
-                                <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
-                                <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
-                              </span>
-                              <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                              <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
-                              <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
-                              <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div v-if="bodySchemaFields.length" class="api-definition-group">
-                          <div class="api-definition-group__head">
-                            <div>
-                              <strong>Body 参数</strong>
-                            </div>
-                            <div class="api-definition-head-actions">
-                              <div class="api-definition-view-switch" aria-label="Body 参数展示方式">
-                                <button
-                                  type="button"
-                                  :class="{ 'is-active': definitionBodyViewMode === 'schema' }"
-                                  @click="definitionBodyViewMode = 'schema'"
-                                >
-                                  Schema
-                                </button>
-                                <span></span>
-                                <button
-                                  type="button"
-                                  :class="{ 'is-active': definitionBodyViewMode === 'json' }"
-                                  @click="definitionBodyViewMode = 'json'"
-                                >
-                                  JSON
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                          <div v-if="definitionBodyViewMode === 'schema'" class="api-doc-schema-table">
-                            <div class="api-doc-schema-head">
-                              <span>参数名</span>
-                              <span>类型</span>
-                              <span>必填</span>
-                              <span>说明</span>
-                              <span>示例/规则</span>
-                            </div>
-                            <div v-for="field in bodySchemaFields" :key="`body-schema-${field.fieldPath || field.name}`" class="api-doc-schema-row">
-                              <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
-                                <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
-                                <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
-                              </span>
-                              <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                              <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
-                              <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
-                              <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
-                            </div>
-                          </div>
-                          <div v-else class="api-definition-example-panel is-full">
-                            <pre>{{ definitionRequestExampleJson }}</pre>
-                          </div>
-                        </div>
-                      </div>
-                    </section>
-
-                    <section v-if="responseSchemaFields.length" class="api-definition-section">
-                      <div class="api-definition-section__title">
-                        <div>
-                          <strong>返回响应</strong>
-                        </div>
-                        <div v-if="responseSchemaGroups.length" class="api-definition-status-tabs">
-                          <button
-                            v-for="group in responseSchemaGroups"
-                            :key="group.code"
-                            type="button"
-                            :class="{ 'is-active': activeResponseSchemaGroup?.code === group.code }"
-                            @click="activeDefinitionResponseCode = group.code"
-                          >
-                            {{ group.code }}
-                          </button>
-                        </div>
-                      </div>
-                      <div class="api-definition-group">
-                        <div class="api-definition-group__head">
-                          <div>
-                            <strong>响应 Body</strong>
-                          </div>
-                          <div class="api-definition-head-actions">
-                            <div class="api-definition-view-switch" aria-label="响应 Body 展示方式">
-                              <button
-                                type="button"
-                                :class="{ 'is-active': definitionResponseViewMode === 'schema' }"
-                                @click="definitionResponseViewMode = 'schema'"
-                              >
-                                Schema
-                              </button>
-                              <span></span>
-                              <button
-                                type="button"
-                                :class="{ 'is-active': definitionResponseViewMode === 'json' }"
-                                @click="definitionResponseViewMode = 'json'"
-                              >
-                                JSON
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        <div v-if="definitionResponseViewMode === 'schema'" class="api-doc-schema-table">
-                          <div class="api-doc-schema-head">
-                            <span>字段名</span>
-                            <span>类型</span>
-                            <span>必填</span>
-                            <span>说明</span>
-                            <span>示例/规则</span>
-                          </div>
-                          <div v-for="field in activeResponseSchemaFields" :key="`response-schema-${activeResponseSchemaGroup?.code || 'default'}-${field.fieldPath || field.name}`" class="api-doc-schema-row">
-                            <span class="api-doc-field-cell" :style="{ paddingLeft: `${schemaFieldDepth(field) * 14}px` }">
-                              <span class="api-doc-field-name">{{ schemaFieldDisplayName(field) }}</span>
-                              <small v-if="schemaFieldName(field) !== schemaFieldDisplayName(field)">{{ schemaFieldName(field) }}</small>
-                            </span>
-                            <span :class="['api-schema-type', schemaFieldTypeClass(field)]">{{ schemaFieldType(field) }}</span>
-                            <span :class="['api-doc-required', Boolean(field.required) ? 'is-required' : '']">{{ field.required ? '必需' : '可选' }}</span>
-                            <span class="api-doc-muted">{{ schemaFieldDescription(field) }}</span>
-                            <span class="api-doc-muted">{{ schemaFieldExampleText(field) !== '-' ? schemaFieldExampleText(field) : schemaFieldRuleText(field) }}</span>
-                          </div>
-                        </div>
-                        <div v-else class="api-definition-example-panel is-full">
-                          <pre>{{ definitionResponseExampleJson }}</pre>
-                        </div>
-                      </div>
-                    </section>
-
-                    <div
-                      v-if="!definitionRequestSchemaGroups.length && !bodySchemaFields.length && !responseSchemaFields.length"
-                      class="api-definition-empty is-panel"
-                    >
-                      暂无接口定义字段。导入 OpenAPI 后，如果文档包含参数或响应 Schema，会显示在这里。
-                    </div>
-                  </div>
-                </div>
+                <ApiDefinitionPanel
+                  v-model:definition-body-view-mode="definitionBodyViewMode"
+                  v-model:definition-response-view-mode="definitionResponseViewMode"
+                  :detail="activeEditor.detail"
+                  :request-schema-groups="definitionRequestSchemaGroups"
+                  :body-schema-fields="bodySchemaFields"
+                  :response-schema-fields="responseSchemaFields"
+                  :response-schema-groups="responseSchemaGroups"
+                  :active-response-schema-group="activeResponseSchemaGroup"
+                  :active-response-schema-fields="activeResponseSchemaFields"
+                  :definition-request-example-json="definitionRequestExampleJson"
+                  :definition-response-example-json="definitionResponseExampleJson"
+                  :request-method-class="requestMethodClass"
+                  :schema-field-depth="schemaFieldDepth"
+                  :schema-field-name="schemaFieldName"
+                  :schema-field-display-name="schemaFieldDisplayName"
+                  :schema-field-type-class="schemaFieldTypeClass"
+                  :schema-field-type="schemaFieldType"
+                  :schema-field-description="schemaFieldDescription"
+                  :schema-field-example-text="schemaFieldExampleText"
+                  :schema-field-rule-text="schemaFieldRuleText"
+                  @update:active-definition-response-code="activeDefinitionResponseCode = $event"
+                />
               </template>
 
               <template v-else>
-                <div v-if="activeEditor.activeTab === 'extractors'" class="api-extractor-panel">
-                  <div class="api-advanced-toolbar">
-                    <div>
-                      <strong>提取器</strong>
-                      <span>从响应中提取变量，供后续步骤或用例复用</span>
-                    </div>
-                    <div class="api-advanced-actions">
-                      <button type="button" @click="openBatchAdd('extractor')">批量添加</button>
-                      <button type="button" class="api-sidebar-primary" @click="addExtractor">添加提取器</button>
-                    </div>
-                  </div>
-                  <div class="api-extractor-table">
-                    <div class="api-extractor-header">
-                      <span>启用</span><span>名称</span><span>来源</span><span>表达式类型</span><span>表达式</span><span>变量名</span><span>默认值</span><span>必填</span><span>失败中断</span><span>说明</span><span></span>
-                    </div>
-                    <div v-for="(extractor, index) in extractorRowsFor(activeEditor.detail)" :key="extractor.id || index" class="api-extractor-row">
-                      <el-switch v-model="extractor.enabled" size="small" @change="markDirty" />
-                      <el-input v-model="extractor.name" placeholder="提取器名称" @input="markDirty" />
-                      <el-select v-model="extractor.source" @change="extractor.sourceType = extractor.source; markDirty()">
-                        <el-option v-for="item in extractorSourceOptions" :key="item.value" :label="item.label" :value="item.value" />
-                      </el-select>
-                      <el-select v-model="extractor.extractType" @change="extractor.expressionType = extractor.extractType; markDirty()">
-                        <el-option v-for="item in extractorExpressionTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                      </el-select>
-                      <el-input v-model="extractor.expression" placeholder="$.data.id / token / 正则" @input="markDirty" />
-                      <el-input v-model="extractor.variableName" placeholder="变量名" @input="markDirty" />
-                      <el-input v-model="extractor.defaultValue" placeholder="默认值" @input="markDirty" />
-                      <el-switch v-model="extractor.required" size="small" @change="markDirty" />
-                      <el-switch v-model="extractor.failOnMissing" size="small" @change="markDirty" />
-                      <el-input v-model="extractor.description" placeholder="说明" @input="markDirty" />
-                      <button type="button" class="api-row-remove" @click="removeExtractor(index)">删除</button>
-                    </div>
-                    <div v-if="!extractorRowsFor(activeEditor.detail).length" class="api-empty-body">当前请求未配置提取器</div>
-                  </div>
-                </div>
+                <ApiExtractorPanel
+                  v-if="activeEditor.activeTab === 'extractors'"
+                  :rows="extractorRowsFor(activeEditor.detail)"
+                  :source-options="extractorSourceOptions"
+                  :expression-type-options="extractorExpressionTypeOptions"
+                  @batch-add="openBatchAdd('extractor')"
+                  @add="addExtractor"
+                  @remove="removeExtractor"
+                  @dirty="markDirty"
+                />
 
-                <div v-else-if="activeEditor.activeTab === 'tests'" class="api-assertion-panel">
-                  <div class="api-advanced-toolbar">
-                    <div>
-                      <strong>断言</strong>
-                      <span>发送时随请求一起执行</span>
-                    </div>
-                    <div class="api-advanced-actions">
-                      <button type="button" @click="openBatchAdd('assertion')">批量添加</button>
-                      <el-dropdown trigger="click" @command="addAssertionFromLatestResponseCommand">
-                        <button type="button">从响应提取</button>
-                        <template #dropdown>
-                          <el-dropdown-menu>
-                            <el-dropdown-item command="code">响应码断言</el-dropdown-item>
-                            <el-dropdown-item command="header">响应头断言</el-dropdown-item>
-                            <el-dropdown-item command="body">响应体 JSONPath 断言</el-dropdown-item>
-                          </el-dropdown-menu>
-                        </template>
-                      </el-dropdown>
-                      <el-dropdown trigger="click" @command="addAssertionFromCommand">
-                        <button type="button" class="api-sidebar-primary">添加断言</button>
-                        <template #dropdown>
-                          <el-dropdown-menu>
-                            <el-dropdown-item v-for="item in assertionTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
-                          </el-dropdown-menu>
-                        </template>
-                      </el-dropdown>
-                    </div>
-                  </div>
-                  <div class="api-assertion-editor">
-                    <aside class="api-assertion-list">
-                      <div class="api-assertion-toolbar">
-                        <el-dropdown trigger="click" @command="addAssertionFromCommand">
-                          <button type="button" class="api-legacy-primary">添加断言</button>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item v-for="item in assertionTypeOptions" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
-                        <button type="button" class="api-assertion-batch-link" @click="openBatchAdd('assertion')">批量添加</button>
-                      </div>
-                      <button
-                        v-for="(assertion, index) in assertionRowsFor(activeEditor.detail)"
-                        :key="assertion.id || index"
-                        type="button"
-                        :class="['api-assertion-list-item', { 'is-active': activeAssertion?.id === assertion.id }]"
-                        @click="selectAssertion(assertion)"
-                      >
-                        <span class="api-assertion-list-item__main">
-                          <el-switch v-model="assertion.enabled" size="small" @click.stop @change="markDirty" />
-                          <span class="api-assertion-list-copy">
-                            <span class="api-assertion-list-title">{{ assertion.name || `断言 ${index + 1}` }}</span>
-                            <span class="api-assertion-list-meta">{{ assertionTypeLabel(assertion.assertionType || assertion.type) }}</span>
-                          </span>
-                        </span>
-                        <span class="api-assertion-list-actions">
-                          <button type="button" class="api-assertion-ghost-action" :disabled="index === 0" @click.stop="moveAssertion(index, -1)">上移</button>
-                          <button type="button" class="api-assertion-ghost-action" :disabled="index === assertionRowsFor(activeEditor.detail).length - 1" @click.stop="moveAssertion(index, 1)">下移</button>
-                        </span>
-                      </button>
-                      <div v-if="!assertionRowsFor(activeEditor.detail).length" class="api-assertion-empty">暂无断言</div>
-                    </aside>
-                    <section v-if="activeAssertion" class="api-assertion-detail">
-                      <div class="api-assertion-detail-header">
-                        <div class="api-assertion-detail-fields">
-                          <el-input v-model="activeAssertion.name" placeholder="断言名称" @input="markDirty" />
-                          <el-tag size="small" effect="plain">{{ assertionTypeLabel(activeAssertion.assertionType || activeAssertion.type) }}</el-tag>
-                        </div>
-                        <div class="api-assertion-detail-actions">
-                          <button type="button" @click="copyAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">复制</button>
-                          <button type="button" class="api-row-remove" @click="removeAssertion(assertionRowsFor(activeEditor.detail).indexOf(activeAssertion))">删除</button>
-                        </div>
-                      </div>
+                <ApiAssertionPanel
+                  v-else-if="activeEditor.activeTab === 'tests'"
+                  :rows="assertionRowsFor(activeEditor.detail)"
+                  :active-assertion="activeAssertion"
+                  :assertion-type-options="assertionTypeOptions"
+                  :assertion-condition-options="assertionConditionOptions"
+                  :has-latest-response-body="hasLatestResponseBody"
+                  :fast-extraction-title="fastExtractionTitle"
+                  :assertion-type-label="assertionTypeLabel"
+                  :active-assertion-body-group="activeAssertionBodyGroup"
+                  :default-assertion-expression="defaultAssertionExpression"
+                  @batch-add="openBatchAdd('assertion')"
+                  @add-from-latest-response="addAssertionFromLatestResponseCommand"
+                  @add-from-command="addAssertionFromCommand"
+                  @select="selectAssertion"
+                  @move="moveAssertion"
+                  @copy="copyAssertion"
+                  @remove="removeAssertion"
+                  @add-item="addAssertionItem"
+                  @copy-item="copyAssertionItem"
+                  @remove-item="removeAssertionItem"
+                  @update-response-time="updateAssertionResponseTime"
+                  @test-expression="testAssertionExpression"
+                  @open-fast-extraction="openAssertionFastExtraction"
+                  @dirty="markDirty"
+                />
 
-                      <div v-if="activeAssertion.assertionType === 'RESPONSE_CODE'" class="api-assertion-type-panel">
-                        <div class="api-assertion-form-grid">
-                          <label>
-                            <span>条件</span>
-                            <el-select v-model="activeAssertion.condition" @change="activeAssertion.operator = activeAssertion.condition; markDirty()">
-                              <el-option v-for="item in assertionConditionOptions" :key="item.value" :label="item.label" :value="item.value" />
-                            </el-select>
-                          </label>
-                          <label>
-                            <span>期望值</span>
-                            <el-input v-model="activeAssertion.expectedValue" placeholder="200" @input="markDirty" />
-                          </label>
-                        </div>
-                      </div>
-
-                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_HEADER'" class="api-assertion-type-panel">
-                        <div class="api-assertion-item-list">
-                          <div v-for="(item, index) in activeAssertion.assertions" :key="`${activeAssertion.id}-header-${index}`" class="api-assertion-item-row is-header">
-                            <el-checkbox v-model="item.enabled" @change="markDirty" />
-                            <el-input v-model="item.header" placeholder="响应头名称" @input="activeAssertion.expression = item.header || ''; markDirty()" />
-                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
-                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
-                            <button type="button" @click="copyAssertionItem(activeAssertion.assertions || [], index)">复制</button>
-                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.assertions || [], index, { header: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
-                          </div>
-                          <button type="button" class="api-assertion-add-row" @click="addAssertionItem(activeAssertion.assertions || (activeAssertion.assertions = []), { header: '' })">+ 添加响应头断言</button>
-                        </div>
-                      </div>
-
-                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_BODY'" class="api-assertion-type-panel">
-                        <div class="api-assertion-subtitle">
-                          <span>响应体断言</span>
-                          <button type="button" @click="addAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType) })">+ 添加表达式</button>
-                        </div>
-                        <div class="api-assertion-mode-row">
-                          <el-radio-group v-model="activeAssertion.assertionBodyType" @change="activeAssertion.expressionType = activeAssertion.assertionBodyType; markDirty()">
-                            <el-radio-button value="JSON_PATH">JSONPath</el-radio-button>
-                            <el-radio-button value="X_PATH">XPath</el-radio-button>
-                            <el-radio-button value="REGEX">Regex</el-radio-button>
-                          </el-radio-group>
-                          <el-select v-if="activeAssertion.assertionBodyType === 'X_PATH'" v-model="activeAssertionBodyGroup(activeAssertion).responseFormat" class="api-assertion-format-select" @change="markDirty">
-                            <el-option label="XML" value="XML" />
-                            <el-option label="HTML" value="HTML" />
-                          </el-select>
-                        </div>
-                        <div class="api-assertion-item-list">
-                          <div v-for="(item, index) in activeAssertionBodyGroup(activeAssertion).assertions" :key="`${activeAssertion.id}-body-${activeAssertion.assertionBodyType}-${index}`" class="api-assertion-item-row is-body">
-                            <el-checkbox v-model="item.enabled" @change="markDirty" />
-                            <el-input v-model="item.expression" placeholder="$.data.id / /root/id / 正则" @input="activeAssertion.expression = item.expression || ''; markDirty()">
-                              <template #suffix>
-                                <button
-                                  type="button"
-                                  :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
-                                  :disabled="!hasLatestResponseBody"
-                                  :title="fastExtractionTitle"
-                                  @click.stop="openAssertionFastExtraction(activeAssertion, item)"
-                                >
-                                  <el-icon><MagicStick /></el-icon>
-                                </button>
-                              </template>
-                            </el-input>
-                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
-                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
-                            <button type="button" @click="testAssertionExpression(activeAssertion, item)">测试</button>
-                            <button type="button" @click="copyAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index)">复制</button>
-                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertionBodyGroup(activeAssertion).assertions, index, { expression: defaultAssertionExpression(activeAssertion.assertionBodyType), condition: 'EQUALS', expectedValue: '' })">删除</button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div v-else-if="activeAssertion.assertionType === 'RESPONSE_TIME'" class="api-assertion-type-panel">
-                        <div class="api-assertion-form-row">
-                          <span class="api-assertion-form-label">最大耗时(ms)</span>
-                          <el-input-number
-                            :model-value="Number(activeAssertion.expectedValue || 1000)"
-                            :min="1"
-                            :step="100"
-                            @update:model-value="updateAssertionResponseTime(activeAssertion, $event)"
-                          />
-                        </div>
-                      </div>
-
-                      <div v-else-if="activeAssertion.assertionType === 'VARIABLE'" class="api-assertion-type-panel">
-                        <div class="api-assertion-hint">可校验后置 SQL 写入的变量，例如 firstToken / id_1 / sqlRows。</div>
-                        <div class="api-assertion-item-list">
-                          <div v-for="(item, index) in activeAssertion.variableAssertionItems" :key="`${activeAssertion.id}-variable-${index}`" class="api-assertion-item-row is-variable">
-                            <el-checkbox v-model="item.enabled" @change="markDirty" />
-                            <el-input v-model="item.variableName" placeholder="变量名" @input="activeAssertion.expression = item.variableName || ''; markDirty()" />
-                            <el-select v-model="item.condition" @change="item.operator = item.condition; markDirty()">
-                              <el-option v-for="option in assertionConditionOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-input v-model="item.expectedValue" placeholder="期望值:" @input="activeAssertion.expectedValue = item.expectedValue || ''; markDirty()" />
-                            <button type="button" @click="copyAssertionItem(activeAssertion.variableAssertionItems || [], index)">复制</button>
-                            <button type="button" class="api-row-remove" @click="removeAssertionItem(activeAssertion.variableAssertionItems || [], index, { variableName: '', condition: 'EQUALS', expectedValue: '' })">删除</button>
-                          </div>
-                          <button type="button" class="api-assertion-add-row" @click="addAssertionItem(activeAssertion.variableAssertionItems || (activeAssertion.variableAssertionItems = []), { variableName: '' })">+ 添加变量断言</button>
-                        </div>
-                      </div>
-
-                      <div v-else class="api-assertion-type-panel">
-                        <div class="api-assertion-editor-actions">
-                          <span class="api-processor-language-tag">JavaScript</span>
-                          <button type="button" @click="activeAssertion.script = ''; markDirty()">清空</button>
-                          <button type="button" @click="activeAssertion.script = (activeAssertion.script || '').trim(); markDirty()">格式化</button>
-                        </div>
-                        <ApiCodeEditor
-                          v-model="activeAssertion.script"
-                          height="360px"
-                          language="javascript"
-                          placeholder="if (response.statusCode !== 200) { throw new Error('状态码不正确') }"
-                          @change="markDirty"
-                        />
-                        <small class="api-assertion-hint">发送时由后端执行脚本断言；当前只保存真实脚本内容，不做前端伪执行。</small>
-                      </div>
-                    </section>
-                    <section v-else class="api-assertion-detail api-assertion-empty api-assertion-empty--inline">请选择一个断言进行编辑</section>
-                  </div>
-                </div>
-
-                <div v-else class="api-processor-panel">
-                  <div class="api-advanced-toolbar">
-                    <div>
-                      <strong>{{ activeEditor.activeTab === 'pre' ? '前置处理' : '后置处理' }}</strong>
-                      <span>{{ activeEditor.activeTab === 'pre' ? '请求发送前执行' : '响应返回后执行' }}</span>
-                    </div>
-                    <el-dropdown trigger="click" @command="(command: string | number | object) => addProcessorFromCommand(activeEditor?.activeTab === 'pre' ? 'pre' : 'post', command)">
-                      <button type="button" class="api-sidebar-primary">添加处理器</button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item v-for="item in processorTypeOptionsFor(activeEditor?.activeTab === 'pre' ? 'pre' : 'post')" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
-                  </div>
-                  <div class="api-processor-editor">
-                    <aside class="api-processor-sidebar">
-                      <div class="api-processor-toolbar">
-                        <el-dropdown trigger="click" @command="(command: string | number | object) => addProcessorFromCommand(activeEditor?.activeTab === 'pre' ? 'pre' : 'post', command)">
-                          <button type="button" class="api-legacy-primary">添加</button>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item v-for="item in processorTypeOptionsFor(activeEditor?.activeTab === 'pre' ? 'pre' : 'post')" :key="item.value" :command="item.value">{{ item.label }}</el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
-                      </div>
-                      <div v-if="activeProcessorRows().length" class="api-processor-sidebar-list">
-                        <button
-                          v-for="(processor, index) in activeProcessorRows()"
-                          :key="processor.id || index"
-                          type="button"
-                          :class="['api-processor-list-item', { 'is-active': activeProcessor?.id === processor.id }]"
-                          @click="selectProcessor(processor)"
-                        >
-                          <span class="api-processor-list-item__main">
-                            <el-switch v-model="processor.enabled" size="small" @click.stop @change="markDirty" />
-                            <span class="api-processor-list-copy">
-                              <span class="api-processor-list-title">{{ processor.name || processorDefaultName(activeProcessorStage(), processor.processorType) }}</span>
-                              <span class="api-processor-list-meta">{{ processorTypeLabel(processor.processorType) }}</span>
-                            </span>
-                          </span>
-                          <span class="api-processor-list-actions">
-                            <el-button text :icon="ArrowUp" :disabled="index === 0" @click.stop="moveProcessor(activeProcessorStage(), index, -1)" />
-                            <el-button text :icon="ArrowDown" :disabled="index === activeProcessorRows().length - 1" @click.stop="moveProcessor(activeProcessorStage(), index, 1)" />
-                          </span>
-                        </button>
-                      </div>
-                      <div v-else class="api-processor-empty">暂无处理器</div>
-                    </aside>
-
-                    <section class="api-processor-detail">
-                      <template v-if="activeProcessor">
-                        <div class="api-processor-detail-header">
-                          <div class="api-processor-detail-fields">
-                            <el-input v-model="activeProcessor.name" placeholder="处理器名称" @input="markDirty" />
-                            <el-tag size="small" effect="plain">{{ processorTypeLabel(activeProcessor.processorType) }}</el-tag>
-                          </div>
-                          <div class="api-processor-detail-actions">
-                            <button type="button" @click="copyProcessor(activeProcessorStage(), activeProcessorRows().indexOf(activeProcessor))">复制</button>
-                            <button type="button" class="api-row-remove" @click="removeProcessor(activeProcessorStage(), activeProcessorRows().indexOf(activeProcessor))">删除</button>
-                          </div>
-                        </div>
-
-                        <template v-if="activeProcessor.processorType === 'SCRIPT'">
-                          <div class="api-processor-editor-actions">
-                            <span class="api-processor-language-tag">JavaScript</span>
-                            <button type="button" @click="activeProcessor.script = ''; markDirty()">清空</button>
-                            <button type="button" @click="activeProcessor.script = (activeProcessor.script || '').trim(); markDirty()">格式化</button>
-                          </div>
-                          <ApiCodeEditor
-                            v-model="activeProcessor.script"
-                            height="360px"
-                            language="javascript"
-                            placeholder="请输入 JavaScript 脚本"
-                            @change="markDirty"
-                          />
-                          <div class="api-processor-hint">可使用 setVar / getVar / removeVar / log / fail / request / response。</div>
-                        </template>
-
-                        <template v-else-if="activeProcessor.processorType === 'SQL'">
-                          <div class="api-processor-form-grid">
-                            <label>
-                              <span>数据库连接</span>
-                              <el-select
-                                v-model="activeProcessor.dataSourceName"
-                                filterable
-                                clearable
-                                allow-create
-                                default-first-option
-                                placeholder="选择数据库连接"
-                                @change="markDirty"
-                              />
-                            </label>
-                            <label>
-                              <span>查询超时(ms)</span>
-                              <el-input-number
-                                v-model="activeProcessor.queryTimeout"
-                                :min="1000"
-                                :step="1000"
-                                @change="markDirty"
-                              />
-                            </label>
-                            <label>
-                              <span>按列存储变量</span>
-                              <el-input v-model="activeProcessor.variableNames" placeholder="id,email" @input="markDirty" />
-                            </label>
-                            <label>
-                              <span>完整结果变量</span>
-                              <el-input v-model="activeProcessor.resultVariable" placeholder="resultJson" @input="markDirty" />
-                            </label>
-                          </div>
-                          <ApiCodeEditor
-                            v-model="activeProcessor.sql"
-                            height="260px"
-                            language="sql"
-                            placeholder="请输入 SQL 语句"
-                            @change="syncProcessorScript(activeProcessor)"
-                          />
-                          <div class="api-sql-extract-table">
-                            <div class="api-sql-extract-table__header">
-                              <span>变量名</span>
-                              <span>列名</span>
-                              <span></span>
-                            </div>
-                            <div
-                              v-for="(param, sqlParamIndex) in normalizeSqlExtractParams(activeProcessor.extractParams)"
-                              :key="`${activeProcessor.id}-sql-${sqlParamIndex}`"
-                              class="api-sql-extract-table__row"
-                            >
-                              <el-input v-model="param.key" placeholder="变量名" @input="markDirty" />
-                              <el-input v-model="param.value" placeholder="列名" @input="markDirty" />
-                              <button type="button" class="api-row-remove" @click="removeSqlExtractParam(activeProcessor, sqlParamIndex)">删除</button>
-                            </div>
-                            <button type="button" class="api-sql-extract-table__add" @click="addSqlExtractParam(activeProcessor)">+ 添加提取参数</button>
-                          </div>
-                        </template>
-
-                        <template v-else-if="activeProcessor.processorType === 'EXTRACT'">
-                          <div class="api-processor-extract-panel">
-                            <div class="api-processor-extract-toolbar">
-                              <span>提取参数</span>
-                              <button type="button" @click="addProcessorExtractItem(activeProcessor)">+ 添加提取项</button>
-                            </div>
-                            <div class="api-processor-extract-scroll">
-                              <div class="api-processor-extract-grid">
-                                <div class="api-processor-extract-header">
-                                  <span>变量名</span>
-                                  <span>描述</span>
-                                  <span>变量类型</span>
-                                  <span>提取方式</span>
-                                  <span>提取范围</span>
-                                  <span>表达式</span>
-                                  <span>操作</span>
-                                </div>
-                                <div
-                                  v-for="(item, extractIndex) in normalizeProcessorExtractItems(activeProcessor.extractors, activeProcessor)"
-                                  :key="item.id || extractIndex"
-                                  class="api-processor-extract-row"
-                                >
-                                <el-input v-model="item.variableName" placeholder="例如 token" @input="syncProcessorScript(activeProcessor)" />
-                                <el-input v-model="item.description" placeholder="可选" @input="syncProcessorScript(activeProcessor)" />
-                                <el-select v-model="item.variableType" @change="syncProcessorScript(activeProcessor)">
-                                  <el-option v-for="option in processorExtractVariableTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-                                </el-select>
-                                <el-select v-model="item.extractType" @change="handleProcessorExtractTypeChange(activeProcessor, item)">
-                                  <el-option v-for="option in processorExtractTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-                                </el-select>
-                                <el-select
-                                  v-model="item.extractScope"
-                                  :disabled="item.extractType !== 'REGEX'"
-                                  @change="handleProcessorExtractScopeChange(activeProcessor, item)"
-                                >
-                                  <el-option v-for="option in processorExtractScopeOptions(item)" :key="option.value" :label="option.label" :value="option.value" />
-                                </el-select>
-                                <el-input v-model="item.expression" :placeholder="processorExtractExpressionPlaceholder(item)" @input="syncProcessorScript(activeProcessor)">
-                                  <template #suffix>
-                                    <button
-                                      type="button"
-                                      :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
-                                      :disabled="!hasLatestResponseBody"
-                                      :title="fastExtractionTitle"
-                                      @click.stop="openProcessorFastExtraction(activeProcessor, item)"
-                                    >
-                                      <el-icon><MagicStick /></el-icon>
-                                    </button>
-                                  </template>
-                                </el-input>
-                                <span class="api-processor-extract-actions">
-                                  <el-popover
-                                    placement="bottom-end"
-                                    :width="340"
-                                    trigger="click"
-                                    :visible="processorExtractMoreSettingsVisibleKey === `${activeProcessor?.id || ''}-${extractIndex}`"
-                                    @update:visible="(value: boolean) => setProcessorExtractMoreSettingsVisible(activeProcessor?.id, extractIndex, value)"
-                                  >
-                                    <template #reference>
-                                      <button type="button" class="api-processor-extract-more" aria-label="更多设置">
-                                        <el-icon><MoreFilled /></el-icon>
-                                      </button>
-                                    </template>
-                                    <div class="api-processor-extract-more-panel">
-                                      <button type="button" class="api-processor-extract-copy" @click="copyProcessorExtractItem(activeProcessor, extractIndex)">复制当前提取项</button>
-                                      <div class="api-processor-extract-more-divider"></div>
-                                      <div class="api-processor-extract-more-title">高级设置</div>
-                                      <div class="api-processor-extract-more-group">
-                                        <div class="api-processor-extract-more-label">结果匹配规则</div>
-                                        <el-radio-group v-model="item.resultMatchingRule" size="small" @change="syncProcessorScript(activeProcessor)">
-                                          <el-radio value="RANDOM">随机</el-radio>
-                                          <el-radio value="SPECIFIC">指定</el-radio>
-                                          <el-radio value="ALL">全部</el-radio>
-                                        </el-radio-group>
-                                      </div>
-                                      <div v-if="showProcessorExtractSpecificIndex(item)" class="api-processor-extract-more-group">
-                                        <div class="api-processor-extract-more-label">指定序号</div>
-                                        <el-input-number v-model="item.resultMatchingRuleNum" :min="1" :step="1" size="small" @change="syncProcessorScript(activeProcessor)" />
-                                      </div>
-                                      <div v-if="showProcessorExtractRegexSettings(item)" class="api-processor-extract-more-group">
-                                        <div class="api-processor-extract-more-label">正则匹配规则</div>
-                                        <el-radio-group v-model="item.expressionMatchingRule" size="small" @change="syncProcessorScript(activeProcessor)">
-                                          <el-radio value="EXPRESSION">整段匹配</el-radio>
-                                          <el-radio value="GROUP">分组 1</el-radio>
-                                        </el-radio-group>
-                                      </div>
-                                      <div v-if="showProcessorExtractXPathSettings(item)" class="api-processor-extract-more-group">
-                                        <div class="api-processor-extract-more-label">内容格式</div>
-                                        <el-radio-group v-model="item.responseFormat" size="small" @change="syncProcessorScript(activeProcessor)">
-                                          <el-radio value="XML">XML</el-radio>
-                                          <el-radio value="HTML">HTML</el-radio>
-                                        </el-radio-group>
-                                      </div>
-                                    </div>
-                                  </el-popover>
-                                  <button type="button" class="api-row-remove api-processor-extract-delete" aria-label="删除提取项" @click="removeProcessorExtractItem(activeProcessor, extractIndex)">删除</button>
-                                </span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </template>
-
-                        <template v-else>
-                          <div class="api-processor-form-row">
-                            <span class="api-processor-form-label">等待时长(ms)</span>
-                            <el-input-number v-model="activeProcessor.delayMs" :min="1" :max="600000" :step="100" @change="markDirty" />
-                          </div>
-                        </template>
-
-                        <el-input v-model="activeProcessor.description" placeholder="说明" @input="markDirty" />
-                      </template>
-                      <div v-else class="api-processor-empty api-processor-empty--inline">请选择一个处理器进行编辑</div>
-                    </section>
-                  </div>
-
-                  <div v-if="false && activeEditor" class="api-processor-list">
-                    <div
-                      v-for="(processor, index) in activeProcessorRows()"
-                      :key="processor.id || index"
-                      class="api-processor-card"
-                    >
-                      <div class="api-processor-card__head">
-                        <el-switch v-model="processor.enabled" size="small" @change="markDirty" />
-                        <el-input v-model="processor.name" placeholder="处理器名称" @input="markDirty" />
-                        <el-select
-                          v-model="processor.processorType"
-                          @change="normalizeProcessorForType(processor, activeProcessorStage())"
-                        >
-                          <el-option v-for="item in processorTypeOptions" :key="item.value" :label="item.label" :value="item.value" />
-                        </el-select>
-                        <div class="api-processor-card__actions">
-                          <button type="button" @click="copyProcessor(activeProcessorStage(), index)">复制</button>
-                          <button type="button" @click="moveProcessor(activeProcessorStage(), index, -1)">上移</button>
-                          <button type="button" @click="moveProcessor(activeProcessorStage(), index, 1)">下移</button>
-                          <button type="button" class="api-row-remove" @click="removeProcessor(activeProcessorStage(), index)">删除</button>
-                        </div>
-                      </div>
-                      <el-input
-                        v-if="processor.processorType === 'SCRIPT'"
-                        v-model="processor.script"
-                        type="textarea"
-                        :rows="5"
-                        resize="none"
-                        :placeholder="processorConfigPlaceholder(processor.processorType)"
-                        @input="markDirty"
-                      />
-                      <div v-else-if="processor.processorType === 'SQL'" class="api-processor-config-grid">
-                        <label>数据源/说明</label>
-                        <el-input v-model="processor.dataSourceName" placeholder="后端无数据源契约时可留空" @input="markDirty" />
-                        <label>SQL</label>
-                        <el-input
-                          v-model="processor.sql"
-                          type="textarea"
-                          :rows="5"
-                          resize="none"
-                          placeholder="请输入 SQL 语句"
-                          @input="syncProcessorScript(processor)"
-                        />
-                      </div>
-                      <div v-else-if="processor.processorType === 'EXTRACT'" class="api-processor-extract-panel">
-                        <div class="api-processor-extract-toolbar">
-                          <span>提取项</span>
-                          <button type="button" @click="addProcessorExtractItem(processor)">+ 添加提取项</button>
-                        </div>
-                        <div class="api-processor-extract-list">
-                          <div
-                            v-for="(item, extractIndex) in normalizeProcessorExtractItems(processor.extractors, processor)"
-                            :key="item.id || extractIndex"
-                            class="api-processor-extract-row"
-                          >
-                            <el-switch v-model="item.enabled" size="small" @change="syncProcessorScript(processor)" />
-                            <el-input v-model="item.name" placeholder="名称" @input="syncProcessorScript(processor)" />
-                            <el-input v-model="item.variableName" placeholder="变量名" @input="syncProcessorScript(processor)" />
-                            <el-select v-model="item.variableType" @change="syncProcessorScript(processor)">
-                              <el-option v-for="option in processorExtractVariableTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-select v-model="item.sourceType" @change="syncProcessorScript(processor)">
-                              <el-option v-for="option in extractorSourceOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-select v-model="item.extractType" @change="syncProcessorScript(processor)">
-                              <el-option v-for="option in extractorExpressionTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-                            </el-select>
-                            <el-input v-model="item.expression" placeholder="$.data.token / Header name / Regex" @input="syncProcessorScript(processor)">
-                              <template #suffix>
-                                <button
-                                  type="button"
-                                  :class="['api-fast-extraction-suffix-button', { 'is-disabled': !hasLatestResponseBody }]"
-                                  :disabled="!hasLatestResponseBody"
-                                  :title="fastExtractionTitle"
-                                  @click.stop="openProcessorFastExtraction(processor, item)"
-                                >
-                                  <el-icon><MagicStick /></el-icon>
-                                </button>
-                              </template>
-                            </el-input>
-                            <el-input v-model="item.description" placeholder="说明" @input="syncProcessorScript(processor)" />
-                            <button type="button" @click="copyProcessorExtractItem(processor, extractIndex)">复制</button>
-                            <button type="button" class="api-row-remove" @click="removeProcessorExtractItem(processor, extractIndex)">删除</button>
-                          </div>
-                        </div>
-                      </div>
-                      <div v-else class="api-wait-row">
-                        <span>等待时长 ms</span>
-                        <el-input-number v-model="processor.delayMs" :min="1" :max="600000" :step="100" @change="markDirty" />
-                      </div>
-                      <el-input v-model="processor.description" placeholder="说明" @input="markDirty" />
-                    </div>
-                    <div v-if="!activeProcessorRows().length" class="api-empty-body">
-                      暂无{{ activeProcessorStage() === 'pre' ? '前置' : '后置' }}处理器                    </div>
-                  </div>
-                </div>
+                <ApiProcessorPanel
+                  v-else
+                  :stage="activeProcessorStage()"
+                  :rows="activeProcessorRows()"
+                  :active-processor="activeProcessor"
+                  :type-options="processorTypeOptionsFor(activeProcessorStage())"
+                  :extract-variable-type-options="processorExtractVariableTypeOptions"
+                  :extract-type-options="processorExtractTypeOptions"
+                  :has-latest-response-body="hasLatestResponseBody"
+                  :fast-extraction-title="fastExtractionTitle"
+                  :more-settings-visible-key="processorExtractMoreSettingsVisibleKey"
+                  :processor-default-name="processorDefaultName"
+                  :processor-type-label="processorTypeLabel"
+                  :normalize-sql-extract-params="normalizeSqlExtractParams"
+                  :normalize-processor-extract-items="normalizeProcessorExtractItems"
+                  :processor-extract-scope-options="processorExtractScopeOptions"
+                  :processor-extract-expression-placeholder="processorExtractExpressionPlaceholder"
+                  :show-processor-extract-specific-index="showProcessorExtractSpecificIndex"
+                  :show-processor-extract-regex-settings="showProcessorExtractRegexSettings"
+                  :show-processor-extract-xpath-settings="showProcessorExtractXPathSettings"
+                  @add-from-command="addProcessorFromCommand"
+                  @select="selectProcessor"
+                  @move="moveProcessor"
+                  @copy="copyProcessor"
+                  @remove="removeProcessor"
+                  @sync-script="syncProcessorScript"
+                  @add-sql-extract-param="addSqlExtractParam"
+                  @remove-sql-extract-param="removeSqlExtractParam"
+                  @add-extract-item="addProcessorExtractItem"
+                  @copy-extract-item="copyProcessorExtractItem"
+                  @remove-extract-item="removeProcessorExtractItem"
+                  @extract-type-change="handleProcessorExtractTypeChange"
+                  @extract-scope-change="handleProcessorExtractScopeChange"
+                  @set-more-settings-visible="setProcessorExtractMoreSettingsVisible"
+                  @open-fast-extraction="openProcessorFastExtraction"
+                  @dirty="markDirty"
+                />
               </template>
             </div>
 
-            <div v-if="shouldShowResponsePanel" class="api-response-shell" :style="{ minHeight: `${responsePanelHeight}px` }">
-              <div class="api-response-resizer" title="拖拽调整响应区高度" @pointerdown="startResponseResize"></div>
-              <div class="api-response-header">
-                <strong>响应内容</strong>
-                <div class="api-response-header__right">
-                  <div v-if="!showResponseEmpty" class="api-response-metrics">
-                    <span
-                      v-if="responseAssertionPresentation.visible"
-                      :class="['api-response-result-pill', `is-${responseAssertionPresentation.tone}`]"
-                    >
-                      {{ responseAssertionPresentation.label }}
-                    </span>
-                    <span :class="['api-response-pill', `is-${statusTone(responseStatus)}`]">状态 {{ responseStatus ?? '-' }}</span>
-                    <span>耗时 {{ responseDuration ?? '-' }}<template v-if="responseDuration !== null"> ms</template></span>
-                    <span>大小 {{ responseSize }}</span>
-                  </div>
-                </div>
-              </div>
-              <div class="api-response-content">
-                <div v-if="showResponseEmpty" class="api-response-empty">
-                  <div class="api-response-empty__window"><span></span><span></span><span></span></div>
-                  <p>点击 <b>发送</b> 获取响应内容</p>
-                </div>
-                <template v-else>
-                  <div class="api-response-tabs">
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'body' }" @click="activeEditor.responseTab = 'body'">Body</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'header' }" @click="activeEditor.responseTab = 'header'">Header</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'console' }" @click="activeEditor.responseTab = 'console'">控制台</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'actualRequest' }" @click="activeEditor.responseTab = 'actualRequest'">实际请求</button>
-                    <button :class="{ 'is-active': activeEditor.responseTab === 'assertions' }" @click="activeEditor.responseTab = 'assertions'">断言</button>
-                  </div>
-                  <div v-if="activeEditor.responseTab === 'body'" class="api-response-code">
-                    <ApiCodeEditor
-                      :model-value="responseBodyPretty"
-                      :language="responseBodyLanguage"
-                      read-only
-                      :show-format-button="false"
-                      fit-content
-                      :max-fit-content-height="1000"
-                      height="100%"
-                    />
-                  </div>
-                  <div v-else-if="activeEditor.responseTab === 'header'" class="api-response-code">
-                    <ApiCodeEditor
-                      :model-value="responseHeaders"
-                      language="json"
-                      read-only
-                      :show-format-button="false"
-                      fit-content
-                      :max-fit-content-height="1000"
-                      height="100%"
-                    />
-                  </div>
-                  <div v-else-if="activeEditor.responseTab === 'console'" class="api-response-code is-text">
-                    <ApiCodeEditor
-                      :model-value="responseConsole"
-                      language="api-console"
-                      read-only
-                      :show-format-button="false"
-                      fit-content
-                      :max-fit-content-height="1000"
-                      height="100%"
-                    />
-                  </div>
-                  <div v-else-if="activeEditor.responseTab === 'actualRequest'" class="api-response-code">
-                    <ApiCodeEditor
-                      :model-value="actualRequest"
-                      language="json"
-                      read-only
-                      :show-format-button="false"
-                      fit-content
-                      :max-fit-content-height="1000"
-                      height="100%"
-                    />
-                  </div>
-                  <el-table v-else-if="assertionRows.length" :data="assertionRows" size="small">
-                    <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
-                      <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
-                    </el-table-column>
-                    <el-table-column label="断言对象" width="96">
-                      <template #default="{ row }">{{ assertionTypeLabel(row.type) }}</template>
-                    </el-table-column>
-                    <el-table-column label="条件" width="100">
-                      <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
-                    </el-table-column>
-                    <el-table-column label="期望值:" min-width="120" show-overflow-tooltip>
-                      <template #default="{ row }">{{ row.expectedValue ?? '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="实际值:" min-width="120" show-overflow-tooltip>
-                      <template #default="{ row }">{{ row.actualValue ?? '-' }}</template>
-                    </el-table-column>
-                    <el-table-column label="结果" width="90">
-                      <template #default="{ row }">
-                        <span :class="['api-assertion-result-pill', assertionResultClass(row.success)]">
-                          {{ assertionResultLabel(row.success) }}
-                        </span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
-                      <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
-                    </el-table-column>
-                  </el-table>
-                  <div v-else class="api-empty-body">当前请求未配置断言</div>
-                </template>
-              </div>
-            </div>
+            <ApiResponsePanel
+              v-if="shouldShowResponsePanel"
+              :min-height="responsePanelHeight"
+              :show-empty="showResponseEmpty"
+              :active-tab="activeEditor.responseTab"
+              :assertion-presentation="responseAssertionPresentation"
+              :status="responseStatus"
+              :status-tone="statusTone(responseStatus)"
+              :duration="responseDuration"
+              :size="responseSize"
+              :body="responseBodyPretty"
+              :body-language="responseBodyLanguage"
+              :headers="responseHeaders"
+              :console-text="responseConsole"
+              :actual-request="actualRequest"
+              :assertion-rows="assertionRows"
+              :assertion-type-label="assertionTypeLabel"
+              :assertion-condition-label="assertionConditionLabel"
+              :assertion-result-class="assertionResultClass"
+              :assertion-result-label="assertionResultLabel"
+              @resize-start="startResponseResize"
+              @update:active-tab="activeEditor.responseTab = $event"
+            />
             </template>
           </div>
         </template>
@@ -8658,102 +7027,23 @@ onBeforeUnmount(() => {
           </div>
     </ApiCaseDetailDrawer>
 
-    <el-drawer
+    <ApiAiGenerationDrawer
       v-model="aiCaseDrawerVisible"
-      size="640px"
-      class="api-ai-case-drawer"
-      append-to-body
-      :show-close="false"
-      destroy-on-close
-    >
-      <template #header>
-        <div class="ai-case-drawer-header">
-          <div>
-            <div class="ai-case-drawer-title">
-              <MagicStick />
-              <span>AI 生成接口用例</span>
-            </div>
-          </div>
-          <button type="button" class="definition-import-close" @click="aiCaseDrawerVisible = false">
-            <LucideX />
-          </button>
-        </div>
-      </template>
-
-      <div class="ai-case-drawer-body">
-        <section class="ai-case-section">
-          <div class="ai-case-section-title">
-            <span>选择生成的用例类型</span>
-            <small>已选 {{ aiCaseGenerateSelectedCount }} 项</small>
-          </div>
-          <div class="ai-case-option-groups">
-            <div v-for="group in aiCaseGenerateGroups" :key="group.key" class="ai-case-option-group">
-              <div class="ai-case-option-group-title">
-                <strong>{{ group.label }}</strong>
-                <button type="button" class="ai-case-select-all-link" @click="toggleAiCaseGroup(group.key, !isAiCaseGroupAllSelected(group.key))">
-                  全选
-                </button>
-              </div>
-              <el-checkbox-group v-model="aiCaseSelectedOptionKeys" class="ai-case-option-list">
-                <el-checkbox v-for="option in group.options" :key="option.key" :value="option.key">
-                  {{ option.label }}
-                </el-checkbox>
-              </el-checkbox-group>
-            </div>
-          </div>
-        </section>
-
-        <section class="ai-case-section ai-case-form-section">
-          <label class="ai-case-form-field">
-            <span>用例数</span>
-            <el-select v-model="aiCaseCount" class="ai-case-form-control">
-              <el-option label="自动" value="AUTO" />
-              <el-option label="10 条" value="10" />
-              <el-option label="20 条" value="20" />
-              <el-option label="40 条" value="40" />
-              <el-option label="80 条" value="80" />
-            </el-select>
-          </label>
-          <label class="ai-case-form-field">
-            <span>AI模型</span>
-            <el-select
-              v-model="aiCaseSelectedProviderId"
-              class="ai-case-form-control"
-              :loading="aiCaseProvidersLoading"
-              placeholder="选择 AI 连接池配置的模型"
-              empty-text="暂无可用 AI 模型"
-            >
-              <el-option
-                v-for="item in aiCaseAvailableProviders"
-                :key="item.id"
-                :label="`${item.connectionName} / ${item.modelName || '-'}`"
-                :value="item.id"
-              />
-            </el-select>
-          </label>
-          <div class="ai-case-form-switch">
-            <el-switch v-model="aiCaseNoDuplicate" />
-            <span>
-              <strong>不重复生成用例</strong>
-              <small>不生成与已有用例同用例类型的用例。关闭后，生成不受已有用例的影响</small>
-            </span>
-          </div>
-          <label class="ai-case-form-field">
-            <el-input
-              v-model="aiCasePrompt"
-              type="textarea"
-              :autosize="{ minRows: 3, maxRows: 5 }"
-              placeholder="输入更多要求"
-              class="ai-case-form-control"
-            />
-          </label>
-          <button type="button" class="ai-case-generate-submit" :disabled="!aiCaseCanGenerate" @click="submitAiCaseGeneration">
-            <MagicStick />
-            {{ aiCaseGenerationStatus === 'running' ? '生成中...' : '生成' }}
-          </button>
-        </section>
-      </div>
-    </el-drawer>
+      v-model:selected-option-keys="aiCaseSelectedOptionKeys"
+      v-model:case-count="aiCaseCount"
+      v-model:provider-id="aiCaseSelectedProviderId"
+      v-model:no-duplicate="aiCaseNoDuplicate"
+      v-model:prompt="aiCasePrompt"
+      :groups="aiCaseGenerateGroups"
+      :selected-count="aiCaseGenerateSelectedCount"
+      :providers="aiCaseAvailableProviders"
+      :providers-loading="aiCaseProvidersLoading"
+      :can-generate="aiCaseCanGenerate"
+      :generation-status="aiCaseGenerationStatus"
+      :is-group-all-selected="isAiCaseGroupAllSelected"
+      @toggle-group="toggleAiCaseGroup"
+      @submit="submitAiCaseGeneration"
+    />
 
     <ApiCaseCreateEditDialog
       v-model="caseDialogVisible"
@@ -10186,212 +8476,6 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
-.api-directory-tree {
-  background: transparent;
-}
-
-.api-directory-tree :deep(.el-tree-node__content) {
-  min-height: 32px;
-  height: auto;
-  border-radius: var(--app-radius-md);
-  transition: background-color 0.15s ease;
-}
-
-.api-directory-tree :deep(.el-tree-node__content:hover) {
-  background: var(--app-bg-muted);
-}
-
-.api-directory-tree :deep(.el-tree-node__expand-icon.is-leaf) {
-  color: transparent;
-}
-
-.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-  background: var(--app-primary-soft);
-}
-
-.api-directory-node {
-  position: relative;
-  display: flex;
-  min-height: 30px;
-  min-width: 0;
-  width: 100%;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 8px;
-  font-size: 14px;
-  line-height: 21px;
-}
-
-.api-directory-tree :deep(.el-tree-node__content:has(.api-directory-node.is-placeholder)) {
-  min-height: 32px;
-  height: 32px;
-}
-
-.api-directory-node.is-placeholder {
-  min-height: 32px;
-  height: 32px;
-  align-items: center;
-  overflow: visible;
-}
-
-.api-directory-node__main {
-  display: flex;
-  min-width: 0;
-  width: 100%;
-  align-items: center;
-  gap: 7px;
-}
-
-.api-directory-node__actions {
-  position: absolute;
-  right: 0;
-  display: flex;
-  width: 0;
-  height: 30px;
-  align-items: center;
-  gap: 2px;
-  overflow: hidden;
-  padding-left: 4px;
-  border-radius: var(--app-radius-md);
-  background: var(--app-bg-muted);
-  opacity: 0;
-  pointer-events: none;
-  transition: width 0.15s ease, opacity 0.15s ease;
-}
-
-.api-directory-node__action {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: var(--app-radius-sm);
-  background: transparent;
-  color: var(--app-text-subtle);
-  cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.api-directory-node__actions .api-directory-node__action {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.api-directory-node:hover .api-directory-node__actions,
-.api-directory-node:focus-within .api-directory-node__actions,
-.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__actions {
-  width: auto;
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.api-directory-node:hover .api-directory-node__count,
-.api-directory-node:focus-within .api-directory-node__count,
-.api-directory-tree :deep(.el-tree-node.is-current > .el-tree-node__content) .api-directory-node__count {
-  visibility: hidden;
-}
-
-.api-directory-node__action:hover {
-  background: #fff;
-  color: var(--app-primary);
-}
-
-.api-directory-node__action.is-more {
-  border-radius: 4px;
-}
-
-.api-directory-node__lucide-action {
-  width: 15px;
-  height: 15px;
-  stroke-width: 2;
-}
-
-.api-directory-node__name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #374151;
-  font-size: 14px;
-  line-height: 21px;
-}
-
-.api-directory-node__folder {
-  display: inline-flex;
-  width: 17px;
-  height: 17px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-}
-
-.api-directory-node__icon {
-  width: 16px;
-  height: 16px;
-  color: #60a5fa;
-}
-
-.api-directory-node__folder.is-open .api-directory-node__icon {
-  color: #3b82f6;
-}
-
-.api-directory-node__count {
-  flex: 0 0 auto;
-  margin-left: 2px;
-  color: var(--app-text-subtle);
-  font-size: var(--app-font-size-xs);
-  line-height: 16px;
-}
-
-.api-directory-node__placeholder-dot {
-  width: 5px;
-  height: 5px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #cbd5e1;
-}
-
-.api-directory-node__placeholder-dot.is-loading {
-  width: 10px;
-  height: 10px;
-  border: 1px solid rgba(37, 99, 235, 0.22);
-  border-top-color: var(--app-primary);
-  background: transparent;
-  animation: api-directory-loading-spin 0.8s linear infinite;
-}
-
-@keyframes api-directory-loading-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.api-directory-node__placeholder-text {
-  color: var(--app-text-subtle);
-  font-size: 12px;
-}
-
-.api-method {
-  display: inline-flex;
-  height: 18px;
-  align-items: center;
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.method-get { color: #15803d; }
-.method-post { color: #ea580c; }
-.method-put { color: #2563eb; }
-.method-patch { color: #7c3aed; }
-.method-delete { color: #dc2626; }
-.method-head,
-.method-options { color: #64748b; }
-
 .api-interface-main {
   display: flex;
   min-width: 0;
@@ -10503,6 +8587,24 @@ onBeforeUnmount(() => {
   background: var(--app-primary);
 }
 
+.api-method {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.method-get { color: #15803d; }
+.method-post { color: #ea580c; }
+.method-put { color: #2563eb; }
+.method-patch { color: #7c3aed; }
+.method-delete { color: #dc2626; }
+.method-head,
+.method-options { color: #64748b; }
+
 .api-editor-tab__close {
   display: inline-flex;
   width: 20px;
@@ -10549,81 +8651,6 @@ onBeforeUnmount(() => {
   border-radius: var(--app-radius-md);
   background: var(--app-primary);
   color: #fff;
-}
-
-.api-request-line {
-  display: grid;
-  grid-template-columns: minmax(320px, 1fr) 204px 96px auto;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--app-border);
-  background: #fff;
-}
-
-.api-url-compose {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 104px minmax(0, 1fr) 68px;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
-  background: #fff;
-}
-
-.api-run-environment-combo {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 34px minmax(0, 1fr);
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--app-border-strong);
-  border-radius: var(--app-radius-md);
-  background: #fff;
-}
-
-.api-run-environment-select {
-  width: 100%;
-  min-width: 0;
-}
-
-.api-run-environment-select :deep(.el-select__wrapper) {
-  height: 38px;
-  min-height: 38px;
-  padding-left: 10px;
-  border-radius: 0;
-  background: #fff;
-  box-shadow: none;
-}
-
-.api-run-environment-select :deep(.el-select__selected-item),
-.api-run-environment-select :deep(.el-select__placeholder) {
-  font-size: 13px;
-}
-
-.api-run-environment-detail-button {
-  display: inline-flex;
-  width: 32px;
-  height: 38px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-right: 1px solid var(--app-border);
-  border-radius: 0;
-  background: #f9fafb;
-  color: var(--app-text-muted);
-  cursor: pointer;
-}
-
-.api-run-environment-detail-button:hover:not(:disabled) {
-  background: #eff6ff;
-  color: var(--app-primary);
-}
-
-.api-run-environment-detail-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 
 :global(.api-run-env-popper .el-select-dropdown__item) {
@@ -10825,240 +8852,6 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.api-method-select :deep(.el-select__wrapper),
-.api-url-compose :deep(.el-input__wrapper),
-.api-curl-button {
-  height: 38px;
-  min-height: 38px;
-  border-radius: 0;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.api-method-select :deep(.el-select__wrapper) {
-  min-height: 38px;
-  padding: 0 10px;
-  border-color: var(--app-border);
-  border-style: solid;
-  border-width: 0 1px 0 0;
-  border-radius: var(--app-radius-md);
-  background: #f9fafb;
-  box-shadow: none;
-  color: var(--app-text-primary);
-}
-
-.api-method-select :deep(.el-select__wrapper:hover),
-.api-method-select :deep(.el-select__wrapper.is-focused),
-.api-method-select.is-focus :deep(.el-select__wrapper) {
-  border-color: var(--app-border);
-  border-style: solid;
-  border-width: 0 1px 0 0;
-  background: #f9fafb;
-  box-shadow: none;
-  color: var(--app-text-primary);
-}
-
-.api-method-select {
-  width: 104px;
-  min-width: 104px;
-  line-height: 21px;
-}
-
-.api-method-select :deep(.el-select__selected-item) {
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-}
-
-.api-method-option {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-}
-
-.api-method-select.method-get :deep(.el-select__selected-item),
-.api-method-select.method-get :deep(.el-select__placeholder) {
-  color: #15803d;
-}
-
-.api-method-select.method-post :deep(.el-select__selected-item),
-.api-method-select.method-post :deep(.el-select__placeholder) {
-  color: #ea580c;
-}
-
-.api-method-select.method-put :deep(.el-select__selected-item),
-.api-method-select.method-put :deep(.el-select__placeholder) {
-  color: #2563eb;
-}
-
-.api-method-select.method-patch :deep(.el-select__selected-item),
-.api-method-select.method-patch :deep(.el-select__placeholder),
-.api-method-select.method-options :deep(.el-select__selected-item),
-.api-method-select.method-options :deep(.el-select__placeholder) {
-  color: #7c3aed;
-}
-
-.api-method-select.method-trace :deep(.el-select__selected-item),
-.api-method-select.method-trace :deep(.el-select__placeholder) {
-  color: #6b7280;
-}
-
-.api-method-select.method-head :deep(.el-select__selected-item),
-.api-method-select.method-head :deep(.el-select__placeholder) {
-  color: #15803d;
-}
-
-.api-method-select.method-delete :deep(.el-select__selected-item),
-.api-method-select.method-delete :deep(.el-select__placeholder) {
-  color: #dc2626;
-}
-
-:global(.api-method-popper .el-select-dropdown__item) {
-  height: 34px;
-  font-weight: 600;
-  line-height: 34px;
-}
-
-:global(.api-method-popper .method-get) {
-  color: #15803d;
-}
-
-:global(.api-method-popper .method-post) {
-  color: #ea580c;
-}
-
-:global(.api-method-popper .method-put) {
-  color: #2563eb;
-}
-
-:global(.api-method-popper .method-patch),
-:global(.api-method-popper .method-options) {
-  color: #7c3aed;
-}
-
-:global(.api-method-popper .method-trace) {
-  color: #6b7280;
-}
-
-:global(.api-method-popper .method-head) {
-  color: #15803d;
-}
-
-:global(.api-method-popper .method-delete) {
-  color: #dc2626;
-}
-
-:global(.api-method-popper.el-select-dropdown) {
-  border-radius: 4px;
-}
-
-.api-url-compose :deep(.el-input__wrapper) {
-  padding-inline: 14px;
-  box-shadow: none;
-}
-
-.api-url-compose :deep(.el-input__inner) {
-  color: #111827;
-}
-
-.api-url-compose :deep(.el-input__inner::placeholder) {
-  color: #9ca3af;
-}
-
-.api-curl-button {
-  border-width: 0 0 0 1px;
-  border-color: var(--app-border);
-  color: var(--app-primary);
-  font-size: 12px;
-}
-
-.api-send-button {
-  width: 96px;
-  min-width: 96px;
-  height: 38px;
-  padding: 0 16px;
-}
-
-.api-save-dropdown {
-  width: 113px;
-}
-
-.api-save-dropdown :deep(.el-button),
-.api-save-dropdown :deep(.el-button-group > .el-button) {
-  height: 38px;
-  border-color: var(--app-border-strong);
-  background: #fff;
-  color: #374151;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 20px;
-}
-
-.api-save-dropdown :deep(.el-button-group > .el-button:first-child) {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  padding: 0 14px;
-}
-
-.api-save-dropdown :deep(.el-button-group > .el-button:last-child) {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  padding: 0 9px;
-}
-
-.api-save-dropdown :deep(.el-button:hover:not(.is-disabled)) {
-  border-color: var(--app-text-subtle);
-  background: var(--app-bg-page);
-  color: var(--app-text-primary);
-}
-
-.api-save-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.api-button-icon {
-  width: 16px;
-  height: 16px;
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu__item) {
-  gap: 6px;
-  min-height: 32px;
-  padding: 5px 16px;
-  color: #606266;
-  font-size: 14px;
-  line-height: 22px;
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu) {
-  min-width: 88px;
-  padding: 5px 0;
-  border-radius: 4px;
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu__item:hover) {
-  background: var(--app-bg-page);
-  color: var(--app-text-primary);
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu__item .el-icon) {
-  width: 16px;
-  height: 16px;
-  font-size: 16px;
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu__item.is-danger) {
-  color: var(--app-danger);
-}
-
-:global(.api-save-dropdown-menu .el-dropdown-menu__item.is-danger:hover) {
-  background: var(--app-danger-soft);
-  color: var(--app-danger);
-}
-
 .api-editor-scroll {
   display: flex;
   min-height: 0;
@@ -11112,7 +8905,6 @@ onBeforeUnmount(() => {
   }
 }
 
-.api-content-tabs,
 .api-response-tabs {
   display: flex;
   height: 46px;
@@ -11125,7 +8917,6 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-.api-content-tab,
 .api-response-tabs button {
   position: relative;
   display: inline-flex;
@@ -11145,19 +8936,16 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.api-content-tab.is-active,
 .api-response-tabs button.is-active {
   border-bottom-color: var(--app-primary);
   color: var(--app-primary);
   font-weight: 500;
 }
 
-.api-content-tab:not(.is-active):hover,
 .api-response-tabs button:not(.is-active):hover {
   color: var(--app-text-secondary);
 }
 
-.api-content-tab.is-active::after,
 .api-response-tabs button.is-active::after {
   content: none;
 }
@@ -11169,20 +8957,6 @@ onBeforeUnmount(() => {
 
 .api-response-tabs button {
   height: 41px;
-}
-
-.api-tab-badge {
-  display: inline-flex;
-  min-width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  background: var(--app-bg-muted);
-  color: var(--app-text-muted);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 0 5px;
 }
 
 .api-request-body {
@@ -12972,149 +10746,12 @@ onBeforeUnmount(() => {
   font-size: var(--app-font-size-sm);
 }
 
-.case-list-request-body {
-  display: flex;
-  min-height: 0;
-  padding: 0;
-}
-
-.case-list-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-
-.case-list-panel .editor-actions.left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.case-ai-generate-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  background: #fff;
-  color: #374151;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 30px;
-}
-
-.case-ai-generate-button:hover:not(:disabled) {
-  border-color: #2563eb;
-  color: #2563eb;
-}
-
-.case-ai-generate-button:disabled {
-  border-color: #e5e7eb;
-  background: #f9fafb;
-  color: #9ca3af;
-  cursor: not-allowed;
-}
-
-.case-ai-generate-button .el-icon {
-  width: 14px;
-  height: 14px;
-  font-size: 14px;
-}
-
-.case-list-panel .empty-hint {
-  display: flex;
-  min-height: 58px;
-  align-items: center;
-  justify-content: center;
-  margin-top: 14px;
-  border: 1px dashed #d1d5db;
-  border-radius: 8px;
-  background: #fff;
-  color: #9ca3af;
-  font-size: 13px;
-}
-
-.case-list-table-wrap {
-  overflow: hidden;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #fff;
-}
-
-.case-list-table :deep(.el-table__header th) {
-  height: 38px;
-  background: #f9fafb;
-  color: #4b5563;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.case-list-table :deep(.el-table__row td) {
-  height: 42px;
-  color: #374151;
-  font-size: 13px;
-}
-
-.case-list-operation-header,
-.case-list-actions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.case-list-settings-trigger {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  color: #6b7280;
-}
-
-.case-list-action-button,
-.case-list-more-button,
 .case-drawer-history-detail-button {
   min-width: 0;
   height: 28px;
   padding: 0 6px;
   font-size: 12px;
   font-weight: 500;
-}
-
-.case-list-more-button {
-  width: 26px;
-  padding: 0;
-}
-
-.case-list-menu-item {
-  height: 32px;
-  font-size: 13px;
-}
-
-.case-list-menu-item.is-danger {
-  color: #dc2626;
-}
-
-.case-list-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-top: 1px solid #f3f4f6;
-  background: #fff;
-}
-
-.case-list-pagination-summary {
-  color: #6b7280;
-  font-size: 12px;
 }
 
 :global(.api-case-drawer-modal) {
