@@ -43,7 +43,7 @@ export function validateApiDefinitionSaveDraft(draft: ApiDefinitionSaveDraft): A
     return { valid: false, message: '请输入接口名称' }
   }
   if (!normalizeText(draft.directoryName)) {
-    return { valid: false, message: '请选择保存目录' }
+    return { valid: false, message: '请选择保存模块' }
   }
   return { valid: true }
 }

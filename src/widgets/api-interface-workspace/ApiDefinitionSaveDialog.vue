@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Search } from '@element-plus/icons-vue'
-import { Folder as LucideFolder, FolderOpen as LucideFolderOpen } from '@lucide/vue'
+import { ArrowDown } from '@element-plus/icons-vue'
+import { Folder as LucideFolder, FolderOpen as LucideFolderOpen, FolderPlus as LucideFolderPlus } from '@lucide/vue'
 import { ElMessage } from 'element-plus'
 
 import type { DirectoryNode } from './lib/apiDirectoryTree'
@@ -19,18 +19,25 @@ const props = defineProps<{
   selectedDirectoryName?: string | null
   directoryTree: DirectoryNode[]
   submitting?: boolean
+  moduleCreating?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   confirm: [draft: ApiDefinitionSaveDraft]
+  createModule: [payload: { name: string; parentId: number | null }]
 }>()
 
 const form = reactive<ApiDefinitionSaveDraft>({
   name: '',
   directoryName: '',
 })
-const keyword = ref('')
+const moduleSelectOpen = ref(false)
+const createModuleVisible = ref(false)
+const createModuleForm = reactive({
+  name: '',
+  parentId: null as number | null,
+})
 
 const visible = computed({
   get: () => props.modelValue,
@@ -38,29 +45,43 @@ const visible = computed({
 })
 
 const selectableDirectoryTree = computed(() => {
-  const filterText = keyword.value.trim().toLowerCase()
-  const normalize = (value?: string | null) => (value || '').toLowerCase()
-
   const walk = (nodes: DirectoryNode[]): DirectoryNode[] => {
-    return nodes
-      .filter(node => node.type === 'workspace' || node.type === 'module')
-      .map((node) => {
-        const children = walk(node.children || [])
-        const matched = !filterText
-          || normalize(node.label).includes(filterText)
-          || normalize(node.fullPath).includes(filterText)
-        if (!matched && !children.length) {
-          return null
-        }
-        return {
-          ...node,
-          children,
-        }
-      })
-      .filter((node): node is DirectoryNode => Boolean(node))
+    return nodes.flatMap((node) => {
+      const children = walk(node.children || [])
+      if (node.type === 'root') {
+        return children
+      }
+      if (node.type !== 'workspace' && node.type !== 'module') {
+        return []
+      }
+      return [{
+        ...node,
+        children,
+      }]
+    })
   }
 
   return walk(props.directoryTree || [])
+})
+
+const moduleOptions = computed(() => {
+  const options: Array<{ label: string; value: number | null; fullPath: string }> = [
+    { label: '根模块', value: null, fullPath: '' },
+  ]
+  const walk = (nodes: DirectoryNode[]) => {
+    nodes.forEach((node) => {
+      if (node.type === 'module') {
+        options.push({
+          label: node.fullPath || node.label,
+          value: node.moduleId,
+          fullPath: node.fullPath || node.label,
+        })
+      }
+      walk(node.children || [])
+    })
+  }
+  walk(props.directoryTree || [])
+  return options
 })
 
 watch(
@@ -75,7 +96,19 @@ watch(
     })
     form.name = draft.name
     form.directoryName = draft.directoryName
-    keyword.value = ''
+    moduleSelectOpen.value = false
+    createModuleVisible.value = false
+  },
+)
+
+watch(
+  () => props.currentDirectoryName,
+  (value) => {
+    if (!props.modelValue) return
+    if (!value) return
+    form.directoryName = value.trim()
+    createModuleVisible.value = false
+    moduleSelectOpen.value = false
   },
 )
 
@@ -87,6 +120,7 @@ function closeDialog() {
 function selectDirectory(node: DirectoryNode) {
   if (node.type !== 'module') return
   form.directoryName = (node.fullPath || '').trim()
+  moduleSelectOpen.value = false
 }
 
 function confirmSave() {
@@ -101,6 +135,25 @@ function confirmSave() {
   }
   emit('confirm', draft)
 }
+
+function openCreateModuleDialog() {
+  createModuleForm.name = ''
+  const matched = moduleOptions.value.find(item => item.fullPath === form.directoryName)
+  createModuleForm.parentId = matched?.value ?? null
+  createModuleVisible.value = true
+}
+
+function confirmCreateModule() {
+  const name = createModuleForm.name.trim()
+  if (!name) {
+    ElMessage.warning('请输入模块名称')
+    return
+  }
+  emit('createModule', {
+    name,
+    parentId: createModuleForm.parentId,
+  })
+}
 </script>
 
 <template>
@@ -114,7 +167,7 @@ function confirmSave() {
     @close="closeDialog"
   >
     <div class="api-definition-save-dialog__form">
-      <label class="api-definition-save-dialog__label">名称 <span>*</span></label>
+      <label class="api-definition-save-dialog__label">请求名称 <span>*</span></label>
       <el-input
         v-model="form.name"
         placeholder="请输入接口名称"
@@ -123,43 +176,54 @@ function confirmSave() {
         show-word-limit
       />
 
-      <label class="api-definition-save-dialog__label">目录 <span>*</span></label>
-      <el-input
-        v-model="keyword"
-        placeholder="搜索目录"
-        :prefix-icon="Search"
-        :disabled="props.submitting"
-      />
-      <div class="api-definition-save-dialog__tree">
-        <el-tree
-          :data="selectableDirectoryTree"
-          node-key="key"
-          :default-expand-all="Boolean(keyword)"
-          :expand-on-click-node="false"
-          empty-text="暂无可选目录，请先在左侧新建模块"
-          @node-click="selectDirectory"
+      <label class="api-definition-save-dialog__label">保存模块 <span>*</span></label>
+      <div class="api-definition-save-dialog__module-select">
+        <button
+          type="button"
+          class="api-definition-save-dialog__module-trigger"
+          :class="{ 'is-open': moduleSelectOpen }"
+          :disabled="props.submitting"
+          @click="moduleSelectOpen = !moduleSelectOpen"
         >
-          <template #default="{ data }">
-            <div
-              :class="[
-                'api-definition-save-dialog__node',
-                { 'is-selected': data.type === 'module' && data.fullPath === form.directoryName },
-                { 'is-workspace': data.type === 'workspace' },
-              ]"
+          <span>{{ form.directoryName || '请选择保存模块' }}</span>
+          <el-icon>
+            <ArrowDown />
+          </el-icon>
+        </button>
+        <div v-if="moduleSelectOpen" class="api-definition-save-dialog__module-dropdown">
+          <div class="api-definition-save-dialog__tree">
+            <el-tree
+              :data="selectableDirectoryTree"
+              node-key="key"
+              default-expand-all
+              :expand-on-click-node="false"
+              empty-text="暂无可选模块"
+              @node-click="selectDirectory"
             >
-              <span class="api-definition-save-dialog__folder">
-                <LucideFolderOpen v-if="data.children?.length" class="api-definition-save-dialog__icon" />
-                <LucideFolder v-else class="api-definition-save-dialog__icon" />
-              </span>
-              <span class="api-definition-save-dialog__node-name" :title="data.fullPath || data.label">
-                {{ data.label }}
-              </span>
-            </div>
-          </template>
-        </el-tree>
-      </div>
-      <div class="api-definition-save-dialog__selected">
-        保存到：<strong>{{ form.directoryName || '请选择目录' }}</strong>
+              <template #default="{ data }">
+                <div
+                  :class="[
+                    'api-definition-save-dialog__node',
+                    { 'is-selected': data.type === 'module' && data.fullPath === form.directoryName },
+                    { 'is-workspace': data.type === 'workspace' },
+                  ]"
+                >
+                  <span class="api-definition-save-dialog__folder">
+                    <LucideFolderOpen v-if="data.children?.length" class="api-definition-save-dialog__icon" />
+                    <LucideFolder v-else class="api-definition-save-dialog__icon" />
+                  </span>
+                  <span class="api-definition-save-dialog__node-name" :title="data.fullPath || data.label">
+                    {{ data.label }}
+                  </span>
+                </div>
+              </template>
+            </el-tree>
+          </div>
+          <button type="button" class="api-definition-save-dialog__create-module" @click="openCreateModuleDialog">
+            <LucideFolderPlus class="api-definition-save-dialog__create-icon" />
+            <span>新建模块</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -169,6 +233,49 @@ function confirmSave() {
       </button>
       <button type="button" class="api-definition-save-dialog__primary" :disabled="props.submitting" @click="confirmSave">
         {{ props.submitting ? '保存中' : '保存' }}
+      </button>
+    </template>
+  </el-dialog>
+
+  <el-dialog
+    v-model="createModuleVisible"
+    title="新建模块"
+    width="420px"
+    append-to-body
+    :close-on-click-modal="!props.moduleCreating"
+    :close-on-press-escape="!props.moduleCreating"
+  >
+    <div class="api-definition-save-dialog__create-form">
+      <label class="api-definition-save-dialog__label">模块名称 <span>*</span></label>
+      <el-input
+        v-model="createModuleForm.name"
+        placeholder="请输入模块名称"
+        :disabled="props.moduleCreating"
+        maxlength="80"
+        show-word-limit
+      />
+      <label class="api-definition-save-dialog__label">父级模块</label>
+      <el-select
+        v-model="createModuleForm.parentId"
+        class="api-definition-save-dialog__parent-select"
+        filterable
+        :disabled="props.moduleCreating"
+        placeholder="根模块"
+      >
+        <el-option
+          v-for="item in moduleOptions"
+          :key="item.value ?? 'root'"
+          :label="item.label"
+          :value="item.value"
+        />
+      </el-select>
+    </div>
+    <template #footer>
+      <button type="button" class="api-definition-save-dialog__plain" :disabled="props.moduleCreating" @click="createModuleVisible = false">
+        取消
+      </button>
+      <button type="button" class="api-definition-save-dialog__primary" :disabled="props.moduleCreating" @click="confirmCreateModule">
+        {{ props.moduleCreating ? '创建中' : '创建' }}
       </button>
     </template>
   </el-dialog>
@@ -191,11 +298,56 @@ function confirmSave() {
   color: var(--app-danger);
 }
 
-.api-definition-save-dialog__tree {
-  height: 280px;
-  overflow: auto;
+.api-definition-save-dialog__module-select {
+  position: relative;
+}
+
+.api-definition-save-dialog__module-trigger {
+  display: inline-flex;
+  width: 100%;
+  height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  padding: 0 10px;
+  color: var(--app-text-primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--app-font-size-sm);
+}
+
+.api-definition-save-dialog__module-trigger span {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-definition-save-dialog__module-trigger:hover,
+.api-definition-save-dialog__module-trigger.is-open {
+  border-color: var(--app-primary);
+}
+
+.api-definition-save-dialog__module-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.api-definition-save-dialog__module-dropdown {
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 0.12);
+}
+
+.api-definition-save-dialog__tree {
+  max-height: 260px;
+  overflow: auto;
   padding: 6px;
 }
 
@@ -248,15 +400,40 @@ function confirmSave() {
   white-space: nowrap;
 }
 
-.api-definition-save-dialog__selected {
-  min-height: 24px;
-  color: var(--app-text-muted);
+.api-definition-save-dialog__create-module {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-top: 1px solid var(--app-border-soft);
+  background: var(--app-bg-panel);
+  padding: 0 12px;
+  color: var(--app-primary);
+  cursor: pointer;
+  font: inherit;
   font-size: var(--app-font-size-sm);
+  font-weight: 500;
 }
 
-.api-definition-save-dialog__selected strong {
-  color: var(--app-text-primary);
-  font-weight: 600;
+.api-definition-save-dialog__create-module:hover {
+  background: var(--app-primary-soft);
+}
+
+.api-definition-save-dialog__create-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.api-definition-save-dialog__create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.api-definition-save-dialog__parent-select {
+  width: 100%;
 }
 
 .api-definition-save-dialog__plain,

@@ -36,7 +36,7 @@ test('api definition save dialog requires name and directory before create', () 
   )
   assert.deepEqual(
     validateApiDefinitionSaveDraft({ name: '保存订单', directoryName: '' }),
-    { valid: false, message: '请选择保存目录' },
+    { valid: false, message: '请选择保存模块' },
   )
   assert.deepEqual(
     validateApiDefinitionSaveDraft({ name: '保存订单', directoryName: 'order-admin/订单' }),

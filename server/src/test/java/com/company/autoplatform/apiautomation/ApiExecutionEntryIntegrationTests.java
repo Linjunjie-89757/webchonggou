@@ -2,7 +2,9 @@ package com.company.autoplatform.apiautomation;
 
 import com.company.autoplatform.IntegrationTestSupport;
 import com.company.autoplatform.settings.CreateEnvConfigRequest;
+import com.company.autoplatform.settings.CreateParamSetRequest;
 import com.company.autoplatform.settings.EnvConfigItem;
+import com.company.autoplatform.settings.ParamSetItem;
 import com.company.autoplatform.settings.SettingsService;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +40,12 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
         server.createContext("/ok", exchange -> writeResponse(exchange, 200, "application/json", """
                 {"ok":true,"source":"entry-smoke"}
                 """));
+        server.createContext("/echo", exchange -> writeResponse(exchange, 200, "application/json", """
+                {"query":"%s","header":"%s"}
+                """.formatted(
+                URLDecoder.decode(exchange.getRequestURI().getRawQuery() == null ? "" : exchange.getRequestURI().getRawQuery(), StandardCharsets.UTF_8),
+                exchange.getRequestHeaders().getFirst("X-Dynamic-Sign")
+        )));
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
     }
@@ -107,6 +116,50 @@ class ApiExecutionEntryIntegrationTests extends IntegrationTestSupport {
         );
 
         assertSuccessfulRun(run);
+    }
+
+    @Test
+    void debugRunDefinitionResolvesDynamicFunctionsFromVariableSetIntoRequestAndSnapshot() {
+        ParamSetItem variableSet = settingsService.createParam(WORKSPACE_CODE, new CreateParamSetRequest(
+                WORKSPACE_CODE,
+                "API_VARIABLE_SET",
+                "dynamic functions " + System.nanoTime(),
+                """
+                        [{"name":"sign_str","value":"abc","sensitive":false},{"name":"uniqueName","value":"测试商品_{{$randomInt(1000, 9999)}}","sensitive":false},{"name":"signature","value":"{{$md5({{sign_str}})}}","sensitive":false}]
+                        """
+        ));
+        ApiRequestConfigInput config = new ApiRequestConfigInput(
+                "GET",
+                baseUrl + "/echo",
+                5000,
+                List.of(new ApiKeyValueInput("name", "{{uniqueName}}", null, true, null, null, false, null, null, null, null, null),
+                        new ApiKeyValueInput("sign", "{{signature}}", null, true, null, null, false, null, null, null, null, null)),
+                List.of(new ApiKeyValueInput("X-Dynamic-Sign", "{{signature}}", null, true, null, null, false, null, null, null, null, null)),
+                List.of(),
+                new ApiRequestBodyInput("NONE", null, List.of(), null, null, null),
+                new ApiAuthConfigInput("NONE", null, null)
+        );
+
+        ApiRunResponse run = apiAutomationService.debugRunDefinitionDraft(WORKSPACE_CODE, new ApiDebugDefinitionRequest(
+                WORKSPACE_CODE,
+                null,
+                "dynamic functions draft " + System.nanoTime(),
+                config,
+                List.of(statusCodeAssertion()),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                variableSet.id(),
+                null,
+                null
+        ));
+
+        assertSuccessfulRun(run);
+        ApiRunStepResultResponse step = run.stepResults().getFirst();
+        assertThat(step.response().body()).containsPattern("name=测试商品_\\d{4}");
+        assertThat(step.response().body()).contains("sign=900150983cd24fb0d6963f7d28e17f72");
+        assertThat(step.response().body()).doesNotContain("{{$");
     }
 
     @Test

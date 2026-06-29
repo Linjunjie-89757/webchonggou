@@ -347,6 +347,7 @@ const urlInputRef = ref<{ focus: () => void } | null>(null)
 const saving = ref(false)
 const definitionSaveDialogVisible = ref(false)
 const pendingCreateEditorKey = ref('')
+const definitionSaveModuleCreating = ref(false)
 const sending = ref(false)
 const batchAddVisible = ref(false)
 const batchAddTarget = ref<BatchAddTarget>('query')
@@ -4108,6 +4109,28 @@ async function createModule(parentId: number | null = null) {
   ElMessage.success('模块已创建')
 }
 
+async function createModuleFromSaveDialog(payload: { name: string; parentId: number | null }) {
+  if (definitionSaveModuleCreating.value) return
+  definitionSaveModuleCreating.value = true
+  try {
+    const module = await apiAutomationApi.createDefinitionModule(props.workspaceCode, {
+      workspaceCode: props.workspaceCode === 'ALL' ? undefined : props.workspaceCode,
+      parentId: payload.parentId,
+      name: payload.name,
+    })
+    await loadWorkspaceData()
+    const editor = activeEditor.value
+    if (editor && !editor.definitionId) {
+      editor.detail.directoryName = module.fullPath || module.name
+    }
+    ElMessage.success('模块已创建')
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    definitionSaveModuleCreating.value = false
+  }
+}
+
 async function renameModule(node: DirectoryNode) {
   if (!node.moduleId) return
   const value = await openApiSoftPrompt({
@@ -6515,7 +6538,9 @@ onBeforeUnmount(() => {
       :selected-directory-name="currentImportDirectoryName()"
       :directory-tree="directoryTree"
       :submitting="saving"
+      :module-creating="definitionSaveModuleCreating"
       @confirm="confirmCreateDefinition"
+      @create-module="createModuleFromSaveDialog"
     />
 
     <el-dialog

@@ -42,6 +42,7 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 type ParamCategoryFilter = '' | 'global' | 'business' | 'api' | 'webUi' | 'appUi'
+type ParamPageTab = 'variables' | 'functions'
 
 const props = withDefaults(
   defineProps<{
@@ -53,6 +54,7 @@ const props = withDefaults(
 )
 
 const params = ref<ParamSetItem[]>([])
+const activePageTab = ref<ParamPageTab>('variables')
 const activeCategory = ref<ParamCategoryFilter>('')
 const loading = ref(false)
 const saving = ref(false)
@@ -102,6 +104,42 @@ const categoryTabs: Array<{ label: string; value: ParamCategoryFilter }> = [
   { label: 'Web UI', value: 'webUi' },
   { label: 'APP UI', value: 'appUi' },
   { label: '全局公共', value: 'global' },
+]
+
+const builtInFunctionGroups = [
+  {
+    title: '时间日期',
+    items: [
+      { name: 'timestamp', syntax: '{{$timestamp()}}', description: '当前毫秒时间戳，适合商品名、订单号等不重复参数', example: '测试商品_{{$timestamp()}}' },
+      { name: 'date', syntax: "{{$date('YYYY-MM-DD HH:mm:ss')}}", description: '按指定格式输出当前时间', example: "{{$date('YYYYMMdd')}}" },
+      { name: 'dateAdd', syntax: "{{$dateAdd(1, 'day', 'YYYY-MM-DD')}}", description: '当前时间向后偏移，支持 year/month/day/hour/minute/second', example: "{{$dateAdd(7, 'day', 'YYYY-MM-DD')}}" },
+      { name: 'dateSub', syntax: "{{$dateSub(30, 'day', 'YYYY-MM-DD')}}", description: '当前时间向前偏移，适合查询起始时间', example: "{{$dateSub(1, 'month', 'YYYY-MM-DD')}}" },
+    ],
+  },
+  {
+    title: '随机数据',
+    items: [
+      { name: 'randomInt', syntax: '{{$randomInt(1000, 9999)}}', description: '指定范围随机整数', example: '测试商品_{{$randomInt(1000, 9999)}}' },
+      { name: 'randomStr', syntax: "{{$randomStr(8)}}", description: '随机字母数字字符串，也支持 number / letter', example: "{{$randomStr(6, 'number')}}" },
+      { name: 'randomFloat', syntax: '{{$randomFloat(2, 0.01, 999.99)}}', description: '指定小数位和范围的随机金额', example: '{{$randomFloat(2, 1, 99)}}' },
+      { name: 'uuid', syntax: '{{$uuid()}}', description: '随机 UUID', example: '{{$uuid()}}' },
+      { name: 'randomMobile', syntax: '{{$randomMobile()}}', description: '随机手机号', example: '{{$randomMobile()}}' },
+      { name: 'randomEmail', syntax: '{{$randomEmail()}}', description: '随机邮箱', example: '{{$randomEmail()}}' },
+      { name: 'randomName', syntax: '{{$randomName()}}', description: '随机中文姓名', example: '{{$randomName()}}' },
+      { name: 'randomIdCard', syntax: "{{$randomIdCard('1990-01-01')}}", description: '随机身份证号，可指定生日', example: '{{$randomIdCard()}}' },
+      { name: 'randomBoolean', syntax: '{{$randomBoolean()}}', description: '随机 true / false', example: '{{$randomBoolean()}}' },
+    ],
+  },
+  {
+    title: '加密编码',
+    items: [
+      { name: 'md5', syntax: "{{$md5({{sign_str}})}}", description: 'MD5 摘要，支持嵌套普通变量', example: "{{$md5('abc')}}" },
+      { name: 'sha256', syntax: "{{$sha256('abc')}}", description: 'SHA256 摘要', example: "{{$sha256({{sign_str}})}}" },
+      { name: 'base64Encode', syntax: "{{$base64Encode('abc')}}", description: 'Base64 编码', example: "{{$base64Encode({{payload}})}}" },
+      { name: 'base64Decode', syntax: "{{$base64Decode('YWJj')}}", description: 'Base64 解码', example: "{{$base64Decode('YWJj')}}" },
+      { name: 'urlEncode', syntax: "{{$urlEncode('a b')}}", description: 'URL 参数编码', example: "{{$urlEncode({{callback_url}})}}" },
+    ],
+  },
 ]
 
 const paramQuery = computed(() => ({
@@ -238,6 +276,15 @@ async function saveDetail() {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
     saving.value = false
+  }
+}
+
+async function copyBuiltInFunctionSyntax(syntax: string) {
+  try {
+    await navigator.clipboard.writeText(syntax)
+    ElMessage.success('函数语法已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制函数语法')
   }
 }
 
@@ -417,6 +464,24 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
       <ConfigStatCard v-for="stat in stats" :key="stat.label" :stat="stat" />
     </div>
 
+    <div class="config-param-page-tabs">
+      <button
+        type="button"
+        :class="{ 'is-active': activePageTab === 'variables' }"
+        @click="activePageTab = 'variables'"
+      >
+        变量集
+      </button>
+      <button
+        type="button"
+        :class="{ 'is-active': activePageTab === 'functions' }"
+        @click="activePageTab = 'functions'"
+      >
+        内置函数
+      </button>
+    </div>
+
+    <template v-if="activePageTab === 'variables'">
     <div v-if="!errorMessage" class="config-filter-toolbar">
       <el-input
         v-model="filterKeyword"
@@ -553,9 +618,35 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
         description="当前筛选条件下没有变量集或参数。"
       >
         <template #actions>
-          <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集</AppButton>
-        </template>
-      </AppEmptyState>
+        <AppButton type="primary" :icon="Plus" @click="openCreateDialog">新增变量集</AppButton>
+      </template>
+    </AppEmptyState>
+    </div>
+    </template>
+
+    <div v-else class="config-builtin-functions">
+      <section
+        v-for="group in builtInFunctionGroups"
+        :key="group.title"
+        class="config-builtin-functions__group"
+      >
+        <h3>{{ group.title }}</h3>
+        <div class="config-builtin-functions__grid">
+          <article
+            v-for="item in group.items"
+            :key="item.name"
+            class="config-builtin-functions__card"
+          >
+            <div class="config-builtin-functions__card-main">
+              <strong>{{ item.name }}</strong>
+              <code>{{ item.syntax }}</code>
+              <span>{{ item.description }}</span>
+              <em>示例：{{ item.example }}</em>
+            </div>
+            <AppButton size="small" @click="copyBuiltInFunctionSyntax(item.syntax)">复制</AppButton>
+          </article>
+        </div>
+      </section>
     </div>
 
     <el-drawer
@@ -790,12 +881,108 @@ watch([filterKeyword, filterStatus, activeCategory], () => {
   color: var(--app-text-inverse);
 }
 
+.config-param-page-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-bg-panel);
+}
+
+.config-param-page-tabs button {
+  min-width: 88px;
+  height: 34px;
+  padding: 0 var(--app-space-4);
+  border: 0;
+  border-right: 1px solid var(--app-border);
+  background: transparent;
+  color: var(--app-text-secondary);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.config-param-page-tabs button:last-child {
+  border-right: 0;
+}
+
+.config-param-page-tabs button:hover {
+  background: var(--app-bg-page);
+}
+
+.config-param-page-tabs button.is-active {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
 .config-param-table-card {
   overflow: hidden;
   min-height: 120px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-bg-panel);
+}
+
+.config-builtin-functions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-5);
+}
+
+.config-builtin-functions__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--app-space-3);
+}
+
+.config-builtin-functions__group h3 {
+  margin: 0;
+  color: var(--app-text-primary);
+  font-size: var(--app-font-size-md);
+}
+
+.config-builtin-functions__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--app-space-3);
+}
+
+.config-builtin-functions__card {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--app-space-3);
+  padding: var(--app-space-4);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-bg-panel);
+}
+
+.config-builtin-functions__card-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.config-builtin-functions__card strong {
+  color: var(--app-text-primary);
+}
+
+.config-builtin-functions__card code {
+  color: var(--app-primary);
+  font-family: Consolas, Monaco, monospace;
+  font-size: var(--app-font-size-xs);
+  word-break: break-all;
+}
+
+.config-builtin-functions__card span,
+.config-builtin-functions__card em {
+  color: var(--app-text-subtle);
+  font-size: var(--app-font-size-xs);
+  font-style: normal;
+  line-height: 1.5;
 }
 
 .config-param-detail {

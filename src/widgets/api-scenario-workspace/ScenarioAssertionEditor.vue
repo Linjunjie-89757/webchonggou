@@ -414,9 +414,9 @@ function ensureAssertionShape(assertion: ScenarioAssertion) {
     assertion.assertions = assertion.assertions?.length ? assertion.assertions : [{ enabled: true, header: '', condition: 'EQUALS', expectedValue: '' }]
   } else if (type === 'RESPONSE_BODY') {
     assertion.assertionBodyType = normalizeBodyType(assertion.assertionBodyType)
-    assertion.jsonPathAssertion = ensureGroup(assertion.jsonPathAssertion, 'JSON_PATH')
-    assertion.xpathAssertion = ensureGroup(assertion.xpathAssertion, 'X_PATH')
-    assertion.regexAssertion = ensureGroup(assertion.regexAssertion, 'REGEX')
+    ensureAssertionGroupShape(assertion, 'jsonPathAssertion', 'JSON_PATH')
+    ensureAssertionGroupShape(assertion, 'xpathAssertion', 'X_PATH')
+    ensureAssertionGroupShape(assertion, 'regexAssertion', 'REGEX')
   } else if (type === 'RESPONSE_TIME') {
     assertion.condition = 'LT_OR_EQUALS'
     assertion.expectedValue = assertion.expectedValue ?? '1000'
@@ -448,6 +448,24 @@ function ensureGroup(group: AssertionGroup | undefined, type: AssertionExpressio
     assertions: group?.assertions?.length
       ? group.assertions
       : [{ expression: type === 'JSON_PATH' ? '$.data' : type === 'X_PATH' ? '/root' : '.+', condition: 'EQUALS', expectedValue: '' }],
+  }
+}
+
+function ensureAssertionGroupShape(
+  assertion: ScenarioAssertion,
+  key: 'jsonPathAssertion' | 'xpathAssertion' | 'regexAssertion',
+  type: AssertionExpressionType,
+) {
+  const group = assertion[key]
+  if (!group) {
+    assertion[key] = ensureGroup(undefined, type)
+    return
+  }
+  if (!group.responseFormat) {
+    group.responseFormat = 'XML'
+  }
+  if (!group.assertions?.length) {
+    group.assertions = ensureGroup(undefined, type).assertions
   }
 }
 

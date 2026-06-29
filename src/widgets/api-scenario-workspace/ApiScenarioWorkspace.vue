@@ -116,6 +116,9 @@ type ScenarioAddStepCommand =
   | 'SCRIPT'
   | 'CONSTANT_TIMER'
 
+const scenarioQueryParamTypeOptions = ['string', 'integer', 'number', 'boolean', 'array'] as const
+const scenarioBodyParamTypeOptionValues = ['string', 'integer', 'number', 'boolean', 'array', 'json', 'file'] as const
+
 const scenarioAddStepGroups: Array<{
   title: string
   items: Array<{
@@ -742,6 +745,9 @@ const scenarioStepSystemDebugMessage = computed(() => runStepDebugError(
 ))
 const scenarioStepSystemShowResponseEmptyState = computed(() => !scenarioStepSystemResponseStep.value && !scenarioStepSystemDebugMessage.value)
 const scenarioStepSystemResponseBody = computed(() => scenarioStepSystemResponseStep.value?.response?.body || '')
+const scenarioStepSystemResponseBodyPretty = computed(() => (
+  scenarioStepSystemResponseBody.value ? toPrettyJson(scenarioStepSystemResponseBody.value) : ''
+))
 const scenarioStepSystemResponseHeaders = computed(() => toPrettyJson(scenarioStepSystemResponseStep.value?.response?.headers || {}))
 const scenarioStepSystemResponseBodyLanguage = computed<ScenarioCodeLanguage>(() => inferScenarioResponseLanguage(
   scenarioStepSystemResponseStep.value?.response,
@@ -751,6 +757,10 @@ const scenarioStepSystemResponseStatusCode = computed(() => scenarioStepSystemRe
 const scenarioStepSystemResponseDuration = computed(() => scenarioStepSystemResponseStep.value?.durationMs ?? null)
 const scenarioStepSystemResponseSize = computed(() => formatScenarioResponseSize(scenarioStepSystemResponseStep.value?.response?.body))
 const scenarioStepSystemAssertionResults = computed(() => scenarioStepSystemResponseStep.value?.assertionResults || [])
+const scenarioStepSystemResponseStatusTone = computed(() => getScenarioResponseStatusTone(scenarioStepSystemResponseStatusCode.value))
+const scenarioStepSystemAssertionResultPresentation = computed(() =>
+  getScenarioAssertionRunResultPresentation(scenarioStepSystemAssertionResults.value, scenarioStepSystemDebugMessage.value),
+)
 const scenarioStepSystemActualRequest = computed(() => toPrettyJson(actualScenarioRequestPreview(
   scenarioStepSystemResponseStep.value?.request || null,
   scenarioStepSystemConfig.value,
@@ -777,6 +787,9 @@ const scenarioStepCustomDebugMessage = computed(() => runStepDebugError(
 ))
 const scenarioStepCustomShowResponseEmptyState = computed(() => !scenarioStepCustomResponseStep.value && !scenarioStepCustomDebugMessage.value)
 const scenarioStepCustomResponseBody = computed(() => scenarioStepCustomResponseStep.value?.response?.body || '')
+const scenarioStepCustomResponseBodyPretty = computed(() => (
+  scenarioStepCustomResponseBody.value ? toPrettyJson(scenarioStepCustomResponseBody.value) : ''
+))
 const scenarioStepCustomResponseHeaders = computed(() => toPrettyJson(scenarioStepCustomResponseStep.value?.response?.headers || {}))
 const scenarioStepCustomResponseBodyLanguage = computed<ScenarioCodeLanguage>(() => inferScenarioResponseLanguage(
   scenarioStepCustomResponseStep.value?.response,
@@ -786,6 +799,10 @@ const scenarioStepCustomResponseStatusCode = computed(() => scenarioStepCustomRe
 const scenarioStepCustomResponseDuration = computed(() => scenarioStepCustomResponseStep.value?.durationMs ?? null)
 const scenarioStepCustomResponseSize = computed(() => formatScenarioResponseSize(scenarioStepCustomResponseStep.value?.response?.body))
 const scenarioStepCustomAssertionResults = computed(() => scenarioStepCustomResponseStep.value?.assertionResults || [])
+const scenarioStepCustomResponseStatusTone = computed(() => getScenarioResponseStatusTone(scenarioStepCustomResponseStatusCode.value))
+const scenarioStepCustomAssertionResultPresentation = computed(() =>
+  getScenarioAssertionRunResultPresentation(scenarioStepCustomAssertionResults.value, scenarioStepCustomDebugMessage.value),
+)
 const scenarioStepCustomActualRequest = computed(() => toPrettyJson(actualScenarioRequestPreview(
   scenarioStepCustomResponseStep.value?.request || null,
   activeScenarioStepRequestConfig.value,
@@ -802,6 +819,18 @@ const scenarioStepCustomLatestResponseBody = computed(() => scenarioStepCustomRe
 const scenarioStepCustomCanDebug = computed(() => {
   const config = activeScenarioStepRequestConfig.value
   return Boolean(isScenarioStepEditableRequest(activeScenarioStep.value) && config.method && config.path?.trim() && activeScenarioDetail.value.workspaceCode && activeScenarioDetail.value.workspaceCode !== 'ALL')
+})
+const scenarioStepHeaderSelectionModel = computed({
+  get: () => scenarioTableSelectionState(activeScenarioStepRequestConfig.value.headers).checked,
+  set: (enabled: boolean) => toggleScenarioTableSelection(activeScenarioStepRequestConfig.value.headers, enabled),
+})
+const scenarioStepQuerySelectionModel = computed({
+  get: () => scenarioTableSelectionState(activeScenarioStepRequestConfig.value.queryParams).checked,
+  set: (enabled: boolean) => toggleScenarioTableSelection(activeScenarioStepRequestConfig.value.queryParams, enabled),
+})
+const scenarioStepBodyFormSelectionModel = computed({
+  get: () => scenarioTableSelectionState(activeScenarioStepRequestConfig.value.body.formItems).checked,
+  set: (enabled: boolean) => toggleScenarioTableSelection(activeScenarioStepRequestConfig.value.body.formItems, enabled),
 })
 const scenarioStepScriptAssertionEnabledCount = computed(() => enabledScenarioUnknownRows(activeScenarioStep.value?.assertions || []).length)
 const scenarioStepScriptResponseStep = computed(() => {
@@ -868,6 +897,26 @@ function formatScenarioResponseSize(body?: string | null) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
+function getScenarioResponseStatusTone(statusCode?: number | null) {
+  if (statusCode == null) return 'muted'
+  if (statusCode >= 200 && statusCode < 300) return 'success'
+  if (statusCode >= 300 && statusCode < 400) return 'warning'
+  return 'danger'
+}
+
+function getScenarioAssertionRunResultPresentation(assertions: ApiRunStepResult['assertionResults'], errorMessage?: string | null) {
+  if (errorMessage) {
+    return { visible: true, tone: 'failed', label: '执行失败' }
+  }
+  if (!assertions.length) {
+    return { visible: true, tone: 'no-assertion', label: '无断言' }
+  }
+  const failed = assertions.some(item => item.success === false)
+  return failed
+    ? { visible: true, tone: 'not-passed', label: '断言不通过' }
+    : { visible: true, tone: 'passed', label: '断言通过' }
+}
+
 function inferScenarioResponseLanguage(response?: ApiResponseSnapshot | null, bodyText = ''): ScenarioCodeLanguage {
   const contentType = String(response?.contentType || '').toLowerCase()
   const text = bodyText.trim()
@@ -897,6 +946,16 @@ function scenarioRequestBodyPreview(config: ApiRequestConfigInput) {
   const rows = enabledScenarioRows(body.formItems)
   if (!rows.length) return null
   return Object.fromEntries(rows.map(row => [row.key, row.fileName || row.value || '']))
+}
+
+function resolveScenarioStepInitialTab(step: ApiScenarioStep): ScenarioStepConfigTab {
+  if (!isScenarioStepEditableRequest(step)) {
+    return (step.stepType === 'API' || step.stepType === 'API_CASE') ? 'headers' : 'params'
+  }
+  const requestConfig = normalizeScenarioRequestConfig(step.requestConfig)
+  if (scenarioRequestBodyPreview(requestConfig)) return 'body'
+  if (enabledScenarioRows(requestConfig.queryParams).length) return 'params'
+  return 'headers'
 }
 
 function actualScenarioRequestPreview(
@@ -1010,11 +1069,11 @@ function assertionConditionLabel(value?: string | null) {
 }
 
 function assertionResultLabel(success?: boolean | null) {
-  return success ? '通过' : '失败'
+  return success ? '通过' : '不通过'
 }
 
-function assertionResultTone(row: { success?: boolean | null }) {
-  return row.success ? 'passed' : 'failed'
+function assertionResultClass(success?: boolean | null) {
+  return success ? 'is-passed' : 'is-failed'
 }
 
 function flattenScenarioModules(items: ApiScenarioModuleItem[], level = 0): Array<ApiScenarioModuleItem & { level: number }> {
@@ -1673,10 +1732,113 @@ function createEmptyKeyValue(extra: Partial<ApiKeyValueInput> = {}): ApiKeyValue
     enabled: true,
     required: false,
     paramType: 'string',
+    encode: false,
     minLength: null,
     maxLength: null,
+    fileName: '',
+    fileSize: null,
+    contentType: '',
+    fileBase64: '',
     ...extra,
   }
+}
+
+function scenarioQueryParamDefaults() {
+  return { paramType: 'string', required: false, encode: false }
+}
+
+function scenarioHeaderParamDefaults() {
+  return { paramType: '', required: false, encode: false }
+}
+
+function scenarioBodyFormParamDefaults() {
+  return { paramType: 'string', required: false, encode: false }
+}
+
+function scenarioBodyParamTypeOptions() {
+  if (activeScenarioStepRequestConfig.value.body.type === 'FORM_DATA') {
+    return scenarioBodyParamTypeOptionValues
+  }
+  return scenarioBodyParamTypeOptionValues.filter(option => option !== 'file' && option !== 'json')
+}
+
+function isScenarioKeyValueRowEmpty(row?: ApiKeyValueInput | null) {
+  if (!row) return true
+  return !row.key?.trim()
+    && !row.value?.trim()
+    && !row.description?.trim()
+    && !row.fileName?.trim()
+}
+
+function ensureScenarioTrailingKeyValueRow(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  if (!rows.length || !isScenarioKeyValueRowEmpty(rows[rows.length - 1])) {
+    rows.push(createEmptyKeyValue(defaults))
+  }
+}
+
+function handleScenarioKeyValueRowInput(rows: ApiKeyValueInput[], defaults: Partial<ApiKeyValueInput> = {}) {
+  ensureScenarioTrailingKeyValueRow(rows, defaults)
+  markScenarioDirty()
+}
+
+function scenarioTableSelectionState(rows: ApiKeyValueInput[]) {
+  const total = rows.length
+  const enabled = rows.filter(item => item.enabled !== false).length
+  return {
+    checked: total > 0 && enabled === total,
+    indeterminate: enabled > 0 && enabled < total,
+  }
+}
+
+function toggleScenarioTableSelection(rows: ApiKeyValueInput[], enabled: boolean) {
+  rows.forEach((item) => {
+    item.enabled = enabled
+  })
+  markScenarioDirty()
+}
+
+function readScenarioFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '')
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function pickScenarioBodyFormRowFile(row: ApiKeyValueInput, rows: ApiKeyValueInput[]) {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '*/*'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    row.paramType = 'file'
+    row.value = file.name
+    row.fileName = file.name
+    row.fileSize = file.size
+    row.contentType = file.type || 'application/octet-stream'
+    row.fileBase64 = await readScenarioFileAsBase64(file)
+    handleScenarioKeyValueRowInput(rows, scenarioBodyFormParamDefaults())
+  }
+  input.click()
+}
+
+function clearScenarioBodyFormRowFile(row: ApiKeyValueInput) {
+  row.value = ''
+  row.fileName = ''
+  row.fileSize = null
+  row.contentType = ''
+  row.fileBase64 = ''
+  markScenarioDirty()
+}
+
+function formatScenarioBodyFormFileSize(row: ApiKeyValueInput) {
+  const size = row.fileSize
+  if (size == null) return ''
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${size} B`
 }
 
 function createEmptyRequestConfig(): ApiRequestConfigInput {
@@ -1710,6 +1872,8 @@ function createEmptyRequestConfig(): ApiRequestConfigInput {
 function normalizeScenarioRequestConfig(config?: ApiRequestConfigInput | null): ApiRequestConfigInput {
   const next = config || createEmptyRequestConfig()
   const body = next.body || createEmptyRequestConfig().body
+  const bodyType = normalizeScenarioBodyType(body.type)
+  const rawText = body.rawText ?? ''
   return {
     method: String(next.method || 'GET').toUpperCase(),
     path: next.path || '',
@@ -1718,11 +1882,11 @@ function normalizeScenarioRequestConfig(config?: ApiRequestConfigInput | null): 
     headers: Array.isArray(next.headers) ? next.headers : [],
     cookies: Array.isArray(next.cookies) ? next.cookies : [],
     body: {
-      type: normalizeScenarioBodyType(body.type),
-      rawText: body.rawText || '',
-      jsonText: body.jsonText || '',
-      xmlText: body.xmlText || '',
-      plainText: body.plainText || '',
+      type: bodyType,
+      rawText,
+      jsonText: bodyType === 'RAW_JSON' && !body.jsonText ? rawText : (body.jsonText || ''),
+      xmlText: bodyType === 'RAW_XML' && !body.xmlText ? rawText : (body.xmlText || ''),
+      plainText: bodyType === 'RAW_TEXT' && !body.plainText ? rawText : (body.plainText || ''),
       formItems: Array.isArray(body.formItems) ? body.formItems : [],
       contentType: body.contentType || null,
       fileName: body.fileName || null,
@@ -2141,10 +2305,14 @@ async function removeScenarioFromList(row: ApiScenarioItem) {
   }
 }
 
-function scenarioStepTypeBadgeLabel(type?: ApiScenarioStepType | null) {
+function scenarioStepTypeBadgeLabel(stepOrType?: ApiScenarioStep | ApiScenarioStepType | null) {
+  const type = typeof stepOrType === 'string' ? stepOrType : stepOrType?.stepType
+  const refType = typeof stepOrType === 'string' ? null : normalizeScenarioStepRefType(stepOrType)
+  if (type === 'API') return refType === 'COPY' ? '复制 API' : '引用 API'
+  if (type === 'API_CASE') return refType === 'COPY' ? '复制用例' : '引用用例'
   const labels: Record<ApiScenarioStepType, string> = {
     API: '引用 API',
-    API_CASE: '引用 API',
+    API_CASE: '引用用例',
     CUSTOM_REQUEST: '自定义请求',
     API_SCENARIO: '引用场景',
     IF_CONTROLLER: '条件控制器',
@@ -2412,7 +2580,6 @@ function openScenarioStepConfig(path: number[], mode: 'create' | 'edit' = 'edit'
   if (!step) return
   scenarioStepConfigPath.value = [...path]
   scenarioStepConfigMode.value = mode
-  scenarioStepConfigActiveTab.value = (step.stepType === 'API' || step.stepType === 'API_CASE' || step.stepType === 'CUSTOM_REQUEST') ? 'headers' : 'params'
   scenarioStepScriptActiveTab.value = 'script'
   scenarioStepCustomActivePreProcessorId.value = null
   scenarioStepCustomActivePostProcessorId.value = null
@@ -2426,6 +2593,7 @@ function openScenarioStepConfig(path: number[], mode: 'create' | 'edit' = 'edit'
     if (!Array.isArray(step.postProcessors)) step.postProcessors = []
     if (!Array.isArray(step.assertions)) step.assertions = []
   }
+  scenarioStepConfigActiveTab.value = resolveScenarioStepInitialTab(step)
   if (step.stepType === 'SCRIPT') {
     if (!Array.isArray(step.assertions)) step.assertions = []
   }
@@ -2520,7 +2688,7 @@ async function debugScenarioStepSystemRequest() {
 
 async function debugScenarioStepCustomRequest() {
   const step = activeScenarioStep.value
-  if (!step || step.stepType !== 'CUSTOM_REQUEST') return
+  if (!step || !isScenarioStepEditableRequest(step)) return
   if (!activeScenarioDetail.value.workspaceCode || activeScenarioDetail.value.workspaceCode === 'ALL') {
     ElMessage.warning('请先切换到具体工作空间后再发送请求')
     return
@@ -2693,7 +2861,7 @@ function prepareNextScriptStep() {
   scenarioStepScriptActiveTab.value = 'script'
 }
 
-function saveScenarioStepConfig(keepOpen = false) {
+async function saveScenarioStepConfig(keepOpen = false) {
   const step = activeScenarioStep.value
   if (!step) return
   if (isScenarioStepEditableRequest(step)) {
@@ -2713,6 +2881,8 @@ function saveScenarioStepConfig(keepOpen = false) {
     step.delayMs = Number(step.delayMs || 1000)
   }
   markScenarioDirty()
+  const saved = await saveScenario()
+  if (!saved) return
   if (keepOpen && step.stepType === 'CUSTOM_REQUEST' && scenarioStepConfigMode.value === 'create') {
     prepareNextCustomRequestStep()
     return
@@ -2854,8 +3024,8 @@ function validateScenarioBeforeSave() {
   return true
 }
 
-async function saveScenario() {
-  if (!validateScenarioBeforeSave()) return
+async function saveScenario(): Promise<boolean> {
+  if (!validateScenarioBeforeSave()) return false
   scenarioSaving.value = true
   try {
     const detail = activeScenarioDetail.value
@@ -2880,8 +3050,10 @@ async function saveScenario() {
     activeScenarioEditorKey.value = nextKey
     await loadScenarioRunDatasets()
     await loadScenarioWorkspace()
+    return true
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
+    return false
   } finally {
     scenarioSaving.value = false
   }
@@ -3501,7 +3673,7 @@ watch(activeScenarioDetailTab, (tab) => {
                         <el-icon><CaretRight /></el-icon>
                       </button>
                       <span :class="['scenario-step-type-badge', scenarioStepTypeClass(item.step.stepType)]">
-                        {{ scenarioStepTypeBadgeLabel(item.step.stepType) }}
+                        {{ scenarioStepTypeBadgeLabel(item.step) }}
                       </span>
                     </div>
                     <div class="scenario-step-node-main">
@@ -4128,11 +4300,29 @@ watch(activeScenarioDetailTab, (tab) => {
     >
       <template #header>
         <div v-if="activeScenarioStep" class="scenario-drawer-title-row">
-        <span class="scenario-drawer-step-order">{{ scenarioStepConfigOrder || '-' }}</span>
+          <span class="scenario-drawer-step-order">{{ scenarioStepConfigOrder || '-' }}</span>
           <span :class="['scenario-step-type-badge', scenarioStepTypeClass(activeScenarioStep.stepType)]">
-            {{ scenarioStepTypeBadgeLabel(activeScenarioStep.stepType) }}
+            {{ scenarioStepTypeBadgeLabel(activeScenarioStep) }}
           </span>
-          <span class="scenario-drawer-step-title">{{ scenarioStepConfigTitle }}</span>
+          <el-input
+            v-if="scenarioStepNameEditingId && scenarioStepNameEditingId === activeScenarioStep.id"
+            v-model="scenarioStepNameDraft"
+            class="scenario-drawer-title-input scenario-step-name-inline-input"
+            maxlength="255"
+            placeholder="请输入步骤名称"
+            @blur="finishScenarioStepNameEdit(activeScenarioStep)"
+            @keyup.enter="finishScenarioStepNameEdit(activeScenarioStep)"
+          />
+          <span v-else class="scenario-drawer-step-title">{{ scenarioStepConfigTitle }}</span>
+          <button
+            v-if="!scenarioStepNameEditingId || scenarioStepNameEditingId !== activeScenarioStep.id"
+            type="button"
+            class="scenario-custom-title-edit scenario-step-name-edit-button"
+            title="编辑名称"
+            @click="startScenarioStepNameEdit(activeScenarioStep)"
+          >
+            <el-icon><EditPen /></el-icon>
+          </button>
         </div>
       </template>
 
@@ -4144,8 +4334,8 @@ watch(activeScenarioDetailTab, (tab) => {
                 <el-select model-value="HTTP" class="scenario-step-protocol-select" disabled>
                   <el-option label="HTTP" value="HTTP" />
                 </el-select>
-                <span :class="['scenario-step-method', requestMethodClass(scenarioStepSystemConfig.method)]">{{ scenarioStepSystemConfig.method }}</span>
-                <el-input :model-value="scenarioStepSystemConfig.path" class="scenario-step-url-input" readonly />
+                <span :class="['scenario-step-method scenario-system-request-method', requestMethodClass(scenarioStepSystemConfig.method)]">{{ scenarioStepSystemConfig.method }}</span>
+                <el-input :model-value="scenarioStepSystemConfig.path" class="scenario-step-url-input request-url-input" readonly />
                 <el-button type="primary" :loading="scenarioStepSystemDebugLoading" :disabled="!scenarioStepSystemCanDebug" @click="debugScenarioStepSystemRequest">发送</el-button>
               </div>
               <div class="ms-like-top-tabs scenario-step-config-tabs">
@@ -4183,7 +4373,7 @@ watch(activeScenarioDetailTab, (tab) => {
                 </el-table>
                 <template v-else-if="scenarioStepConfigActiveTab === 'body'">
                   <div class="scenario-system-body-type">Body Type: {{ scenarioStepSystemConfig.body.type }}</div>
-                  <ApiCodeEditor v-if="scenarioStepSystemBodyText" :model-value="scenarioStepSystemBodyText" :language="scenarioStepSystemBodyLanguage" :read-only="true" height="320px" />
+                  <ApiCodeEditor v-if="scenarioStepSystemBodyText" :model-value="scenarioStepSystemBodyText" :language="scenarioStepSystemBodyLanguage" :read-only="true" :show-format-button="false" height="360px" />
                   <el-table v-else-if="enabledScenarioRows(scenarioStepSystemConfig.body.formItems).length" :data="enabledScenarioRows(scenarioStepSystemConfig.body.formItems)" size="small">
                     <el-table-column prop="key" label="参数名称" min-width="180" />
                     <el-table-column prop="value" label="参数值" min-width="220" show-overflow-tooltip />
@@ -4227,47 +4417,66 @@ watch(activeScenarioDetailTab, (tab) => {
                 </div>
               </div>
               <div class="ms-like-response-shell scenario-step-response-shell">
-                <div class="ms-like-response-header">
+                <div class="api-response-header">
                   <strong>响应内容</strong>
-                  <div v-if="!scenarioStepSystemShowResponseEmptyState" class="ms-like-response-metrics">
-                    <span>状态 {{ scenarioStepSystemResponseStatusCode ?? '-' }}</span>
-                    <span>耗时 {{ scenarioStepSystemResponseDuration ?? '-' }}<template v-if="scenarioStepSystemResponseDuration !== null"> ms</template></span>
-                    <span>大小 {{ scenarioStepSystemResponseSize }}</span>
+                  <div class="api-response-header__right">
+                    <div v-if="!scenarioStepSystemShowResponseEmptyState" class="api-response-metrics">
+                      <span v-if="scenarioStepSystemAssertionResultPresentation.visible" :class="['api-response-result-pill', `is-${scenarioStepSystemAssertionResultPresentation.tone}`]">
+                        {{ scenarioStepSystemAssertionResultPresentation.label }}
+                      </span>
+                      <span :class="['api-response-pill', `is-${scenarioStepSystemResponseStatusTone}`]">状态 {{ scenarioStepSystemResponseStatusCode ?? '-' }}</span>
+                      <span>耗时 {{ scenarioStepSystemResponseDuration ?? '-' }}<template v-if="scenarioStepSystemResponseDuration !== null"> ms</template></span>
+                      <span>大小 {{ scenarioStepSystemResponseSize }}</span>
+                    </div>
                   </div>
+                </div>
+                <div v-if="scenarioStepSystemDebugMessage" class="response-error-banner">
+                  {{ scenarioStepSystemDebugMessage }}
                 </div>
                 <div v-if="scenarioStepSystemShowResponseEmptyState" class="ms-like-response-empty">
                   <div class="ms-like-response-empty-card">
-                    <div class="ms-like-response-empty-window"><span></span><span></span><span></span></div>
-                    <div>点击 <span>发送</span> 获取响应内容</div>
+                    <div class="ms-like-response-empty-visual">
+                      <div class="ms-like-response-empty-window"><span></span><span></span><span></span></div>
+                    </div>
+                    <div class="ms-like-response-empty-text">点击 <span>发送</span> 获取响应内容</div>
                   </div>
                 </div>
                 <template v-else>
-                  <div class="ms-like-response-tabs">
-                    <button :class="['ms-like-top-tab', { active: scenarioStepSystemResponseTab === 'body' }]" @click="scenarioStepSystemResponseTab = 'body'">Body</button>
-                    <button :class="['ms-like-top-tab', { active: scenarioStepSystemResponseTab === 'header' }]" @click="scenarioStepSystemResponseTab = 'header'">Header</button>
-                    <button :class="['ms-like-top-tab', { active: scenarioStepSystemResponseTab === 'console' }]" @click="scenarioStepSystemResponseTab = 'console'">控制台</button>
-                    <button :class="['ms-like-top-tab', { active: scenarioStepSystemResponseTab === 'actualRequest' }]" @click="scenarioStepSystemResponseTab = 'actualRequest'">实际请求</button>
-                    <button :class="['ms-like-top-tab', { active: scenarioStepSystemResponseTab === 'assertions' }]" @click="scenarioStepSystemResponseTab = 'assertions'">断言</button>
+                  <div class="api-response-tabs">
+                    <button :class="{ 'is-active': scenarioStepSystemResponseTab === 'body' }" @click="scenarioStepSystemResponseTab = 'body'">Body</button>
+                    <button :class="{ 'is-active': scenarioStepSystemResponseTab === 'header' }" @click="scenarioStepSystemResponseTab = 'header'">Header</button>
+                    <button :class="{ 'is-active': scenarioStepSystemResponseTab === 'console' }" @click="scenarioStepSystemResponseTab = 'console'">控制台</button>
+                    <button :class="{ 'is-active': scenarioStepSystemResponseTab === 'actualRequest' }" @click="scenarioStepSystemResponseTab = 'actualRequest'">实际请求</button>
+                    <button :class="{ 'is-active': scenarioStepSystemResponseTab === 'assertions' }" @click="scenarioStepSystemResponseTab = 'assertions'">断言</button>
                   </div>
                   <div class="ms-like-response-body">
-                    <ApiCodeEditor v-if="scenarioStepSystemResponseTab === 'body'" :model-value="scenarioStepSystemResponseBody || '-'" :language="scenarioStepSystemResponseBodyLanguage" :read-only="true" height="280px" />
-                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'header'" :model-value="scenarioStepSystemResponseHeaders" language="json" :read-only="true" height="280px" />
-                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'console'" :model-value="scenarioStepSystemConsole" language="text" :read-only="true" height="280px" />
-                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'actualRequest'" :model-value="scenarioStepSystemActualRequest" language="json" :read-only="true" height="280px" />
-                    <el-table v-else :data="scenarioStepSystemAssertionResults" size="small">
+                    <ApiCodeEditor v-if="scenarioStepSystemResponseTab === 'body'" :model-value="scenarioStepSystemResponseBodyPretty || '-'" :language="scenarioStepSystemResponseBodyLanguage" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'header'" :model-value="scenarioStepSystemResponseHeaders" language="json" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'console'" :model-value="scenarioStepSystemConsole" language="text" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                    <ApiCodeEditor v-else-if="scenarioStepSystemResponseTab === 'actualRequest'" :model-value="scenarioStepSystemActualRequest" language="json" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                    <div v-else class="assertion-result-panel">
+                    <div v-if="!scenarioStepSystemAssertionResults.length" class="assertion-result-empty">当前请求未配置断言</div>
+                    <el-table v-else :data="scenarioStepSystemAssertionResults" size="small" class="assertion-result-table">
                       <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
                         <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
                       </el-table-column>
                       <el-table-column label="条件" width="92">
                         <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                       </el-table-column>
-                      <el-table-column prop="expectedValue" label="期望值" min-width="120" show-overflow-tooltip />
-                      <el-table-column prop="actualValue" label="实际值" min-width="120" show-overflow-tooltip />
-                      <el-table-column label="结果" width="78">
-                        <template #default="{ row }"><span :class="['scenario-assertion-result-pill', `is-${assertionResultTone(row)}`]">{{ assertionResultLabel(row.success) }}</span></template>
+                      <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
                       </el-table-column>
-                      <el-table-column prop="message" label="失败原因" min-width="160" show-overflow-tooltip />
+                      <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.actualValue || '-' }}</template>
+                      </el-table-column>
+                      <el-table-column label="结果" width="78">
+                        <template #default="{ row }"><span :class="['case-drawer-history-result', assertionResultClass(row.success)]">{{ assertionResultLabel(row.success) }}</span></template>
+                      </el-table-column>
+                      <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                        <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                      </el-table-column>
                     </el-table>
+                    </div>
                   </div>
                 </template>
               </div>
@@ -4329,70 +4538,139 @@ watch(activeScenarioDetailTab, (tab) => {
             <button :class="['ms-like-top-tab', { active: scenarioStepConfigActiveTab === 'settings' }]" @click="scenarioStepConfigActiveTab = 'settings'">设置</button>
           </div>
           <div class="scenario-step-config-body scenario-custom-request-body app-soft-scrollbar">
-            <div v-if="scenarioStepConfigActiveTab === 'headers'" class="scenario-step-param-table">
-              <div class="scenario-step-param-header"><span>参数名称</span><span>参数值</span><span>描述</span><span></span></div>
-              <div v-for="(row, index) in activeScenarioStepRequestConfig.headers" :key="`scenario-header-${index}`" class="scenario-step-param-row">
-                <el-input v-model="row.key" placeholder="参数名称" @input="markScenarioDirty" />
-                <el-input v-model="row.value" placeholder="参数值" @input="markScenarioDirty" />
-                <el-input v-model="row.description" placeholder="描述" @input="markScenarioDirty" />
-                <button type="button" class="scenario-step-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.headers, index)">删除</button>
+            <div v-if="scenarioStepConfigActiveTab === 'headers'" class="request-section ms-like-table-surface ms-like-param-table ms-like-param-table--header">
+              <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--header">
+                <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
+                  <el-checkbox
+                    v-model="scenarioStepHeaderSelectionModel"
+                    :indeterminate="scenarioTableSelectionState(activeScenarioStepRequestConfig.headers).indeterminate"
+                  />
+                </div>
+                <span class="ms-like-header-input-title">参数名称</span>
+                <span>参数值</span>
+                <span>描述</span>
+                <span></span>
               </div>
-              <button type="button" class="scenario-step-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.headers)">+ 添加一行</button>
+              <div v-for="(row, index) in activeScenarioStepRequestConfig.headers" :key="`scenario-header-${index}`" class="ms-like-table-row ms-like-param-table-grid ms-like-param-table-grid--header">
+                <div class="ms-like-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markScenarioDirty" /></div>
+                <div class="ms-like-header-input-cell">
+                  <el-input v-model="row.key" placeholder="参数名称" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.headers, scenarioHeaderParamDefaults())" />
+                </div>
+                <el-input v-model="row.value" placeholder="参数值" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.headers, scenarioHeaderParamDefaults())" />
+                <el-input v-model="row.description" placeholder="描述" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.headers, scenarioHeaderParamDefaults())" />
+                <button type="button" class="ms-like-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.headers, index)">删除</button>
+              </div>
+              <button type="button" class="ms-like-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.headers, scenarioHeaderParamDefaults())">+ 添加一行</button>
             </div>
-            <div v-else-if="scenarioStepConfigActiveTab === 'params'" class="scenario-step-param-table">
-              <div class="scenario-step-param-header"><span>参数名称</span><span>参数值</span><span>描述</span><span></span></div>
-              <div v-for="(row, index) in activeScenarioStepRequestConfig.queryParams" :key="`scenario-query-${index}`" class="scenario-step-param-row">
-                <el-input v-model="row.key" placeholder="参数名称" @input="markScenarioDirty" />
-                <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="markScenarioDirty" />
-                <el-input v-model="row.description" placeholder="描述" @input="markScenarioDirty" />
-                <button type="button" class="scenario-step-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.queryParams, index)">删除</button>
+            <div v-else-if="scenarioStepConfigActiveTab === 'params'" class="request-section ms-like-table-surface ms-like-param-table ms-like-param-table--query">
+              <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--query">
+                <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
+                  <el-checkbox
+                    v-model="scenarioStepQuerySelectionModel"
+                    :indeterminate="scenarioTableSelectionState(activeScenarioStepRequestConfig.queryParams).indeterminate"
+                  />
+                </div>
+                <span class="ms-like-header-input-title">Query 参数</span>
+                <span class="ms-like-type-header">类型</span>
+                <span>参数值</span>
+                <span class="ms-like-length-header">长度范围</span>
+                <span>编码</span>
+                <span>描述</span>
+                <span></span>
               </div>
-              <button type="button" class="scenario-step-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.queryParams)">+ 添加一行</button>
+              <div v-for="(row, index) in activeScenarioStepRequestConfig.queryParams" :key="`scenario-query-${index}`" class="ms-like-table-row ms-like-param-table-grid ms-like-param-table-grid--query">
+                <div class="ms-like-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markScenarioDirty" /></div>
+                <div class="ms-like-name-field">
+                  <el-input v-model="row.key" placeholder="参数名称" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())" />
+                </div>
+                <div class="ms-like-type-field">
+                  <button type="button" :class="['ms-like-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markScenarioDirty()">*</button>
+                  <el-select v-model="row.paramType" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())">
+                    <el-option v-for="option in scenarioQueryParamTypeOptions" :key="option" :label="option" :value="option" />
+                  </el-select>
+                </div>
+                <el-input v-model="row.value" placeholder="参数值 / {{variable}}" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())" />
+                <div class="ms-like-length-range-cell">
+                  <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())" />
+                  <span>至</span>
+                  <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())" />
+                </div>
+                <div class="ms-like-switch-cell ms-like-switch-cell--query"><el-switch v-model="row.encode" size="small" @change="markScenarioDirty" /></div>
+                <el-input v-model="row.description" placeholder="描述" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())" />
+                <button type="button" class="ms-like-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.queryParams, index)">删除</button>
+              </div>
+              <button type="button" class="ms-like-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.queryParams, scenarioQueryParamDefaults())">+ 添加一行</button>
             </div>
             <div v-else-if="scenarioStepConfigActiveTab === 'body'" class="scenario-step-body-section">
-              <div class="scenario-step-body-modes">
+              <div class="ms-like-body-type-row">
                 <button
                   v-for="mode in scenarioStepBodyModes"
                   :key="mode.value"
-                  :class="['scenario-step-body-chip', { active: activeScenarioStepRequestConfig.body.type === mode.value }]"
+                  :class="['ms-like-body-chip', { active: activeScenarioStepRequestConfig.body.type === mode.value }]"
                   type="button"
                   @click="setScenarioStepBodyMode(mode.value)"
                 >
                   {{ mode.label }}
                 </button>
               </div>
-              <div class="scenario-step-body-editor">
-                <div v-if="activeScenarioStepRequestConfig.body.type === 'NONE'" class="scenario-step-empty-body">请求没有 Body</div>
+              <div class="ms-like-body-mode-shell">
                 <ApiCodeEditor
-                  v-else-if="isScenarioRawBody(activeScenarioStepRequestConfig.body.type)"
+                  v-if="isScenarioRawBody(activeScenarioStepRequestConfig.body.type)"
                   v-model="scenarioStepRawText"
                   :language="scenarioStepBodyLanguage"
                   height="300px"
                   placeholder="请输入请求体"
                   @change="markScenarioDirty"
                 />
-                <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeScenarioStepRequestConfig.body.type)" class="scenario-step-param-table">
-                  <div class="scenario-step-param-header is-body"><span>参数名称</span><span>类型</span><span>参数值</span><span>描述</span><span></span></div>
-                  <div v-for="(row, index) in activeScenarioStepRequestConfig.body.formItems" :key="`scenario-body-${index}`" class="scenario-step-param-row is-body">
-                    <el-input v-model="row.key" placeholder="参数名称" @input="markScenarioDirty" />
-                    <el-select v-model="row.paramType" placeholder="类型" @change="markScenarioDirty">
-                      <el-option label="string" value="string" />
-                      <el-option label="number" value="number" />
-                      <el-option label="boolean" value="boolean" />
-                      <el-option v-if="activeScenarioStepRequestConfig.body.type === 'FORM_DATA'" label="file" value="file" />
-                    </el-select>
-                    <el-input v-model="row.value" placeholder="参数值" @input="markScenarioDirty" />
-                    <el-input v-model="row.description" placeholder="描述" @input="markScenarioDirty" />
-                    <button type="button" class="scenario-step-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.body.formItems, index)">删除</button>
-                  </div>
-                  <button type="button" class="scenario-step-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.body.formItems)">+ 添加一行</button>
-                </div>
-                <div v-else class="scenario-step-binary-panel">
-                  <div class="scenario-step-form-row">
-                    <span>File</span>
-                    <el-input v-model="activeScenarioStepRequestConfig.body.fileName" placeholder="文件名" @input="markScenarioDirty" />
+                <div v-else-if="activeScenarioStepRequestConfig.body.type === 'BINARY'" class="request-section ms-like-form-panel">
+                  <div class="ms-like-form-row">
+                    <div class="ms-like-form-label">File</div>
+                    <el-input v-model="activeScenarioStepRequestConfig.body.fileName" class="ms-like-form-control" placeholder="文件名" @input="markScenarioDirty" />
                   </div>
                 </div>
+                <div v-else-if="['FORM_DATA', 'FORM_URLENCODED'].includes(activeScenarioStepRequestConfig.body.type)" class="body-form-grid ms-like-table-surface ms-like-param-table ms-like-param-table--body-form">
+                  <div class="ms-like-table-header ms-like-param-table-grid ms-like-param-table-grid--body-form">
+                    <div class="ms-like-checkbox-cell ms-like-checkbox-cell--header">
+                      <el-checkbox
+                        v-model="scenarioStepBodyFormSelectionModel"
+                        :indeterminate="scenarioTableSelectionState(activeScenarioStepRequestConfig.body.formItems).indeterminate"
+                      />
+                    </div>
+                    <span class="ms-like-header-input-title">参数名称</span>
+                    <span class="ms-like-type-header">类型</span>
+                    <span>参数值</span>
+                    <span class="ms-like-length-header">长度范围</span>
+                    <span>描述</span>
+                    <span></span>
+                  </div>
+                  <div v-for="(row, index) in activeScenarioStepRequestConfig.body.formItems" :key="`scenario-body-${index}`" class="ms-like-table-row ms-like-param-table-grid ms-like-param-table-grid--body-form">
+                    <div class="ms-like-checkbox-cell"><el-checkbox v-model="row.enabled" @change="markScenarioDirty" /></div>
+                    <div class="ms-like-name-field">
+                      <el-input v-model="row.key" placeholder="参数名称" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())" />
+                    </div>
+                    <div class="ms-like-type-field">
+                      <button type="button" :class="['ms-like-required-button', { active: row.required }]" :title="row.required ? '必填' : '非必填'" @click="row.required = !row.required; markScenarioDirty()">*</button>
+                      <el-select v-model="row.paramType" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())">
+                        <el-option v-for="option in scenarioBodyParamTypeOptions()" :key="option" :label="option" :value="option" />
+                      </el-select>
+                    </div>
+                    <div v-if="row.paramType === 'file'" class="ms-like-file-param-cell">
+                      <button type="button" class="ms-like-file-pick" @click="pickScenarioBodyFormRowFile(row, activeScenarioStepRequestConfig.body.formItems)">{{ row.fileName || '选择文件' }}</button>
+                      <button v-if="row.fileBase64" type="button" class="ms-like-file-clear" @click="clearScenarioBodyFormRowFile(row)">清空</button>
+                      <small v-if="row.fileBase64">{{ formatScenarioBodyFormFileSize(row) }}</small>
+                    </div>
+                    <el-input v-else v-model="row.value" placeholder="参数值" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())" />
+                    <div class="ms-like-length-range-cell">
+                      <el-input-number v-model="row.minLength" :min="0" :controls="false" placeholder="最小" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())" />
+                      <span>至</span>
+                      <el-input-number v-model="row.maxLength" :min="0" :controls="false" placeholder="最大" @change="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())" />
+                    </div>
+                    <el-input v-model="row.description" placeholder="描述" @input="handleScenarioKeyValueRowInput(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())" />
+                    <button type="button" class="ms-like-row-remove" @click="removeScenarioKeyValueRow(activeScenarioStepRequestConfig.body.formItems, index)">删除</button>
+                  </div>
+                  <button type="button" class="ms-like-add-row" @click="addScenarioKeyValueRow(activeScenarioStepRequestConfig.body.formItems, scenarioBodyFormParamDefaults())">+ 添加一行</button>
+                </div>
+                <div v-else class="ms-like-empty-body">请求没有 Body</div>
               </div>
             </div>
             <div v-else-if="scenarioStepConfigActiveTab === 'pre'" class="scenario-step-advanced-pane">
@@ -4450,34 +4728,46 @@ watch(activeScenarioDetailTab, (tab) => {
             </div>
           </div>
           <div class="ms-like-response-shell scenario-step-response-shell scenario-custom-response-shell">
-            <div class="ms-like-response-header">
+            <div class="api-response-header">
               <strong>响应内容</strong>
-              <div v-if="!scenarioStepCustomShowResponseEmptyState" class="ms-like-response-metrics">
-                <span>状态 {{ scenarioStepCustomResponseStatusCode ?? '-' }}</span>
-                <span>耗时 {{ scenarioStepCustomResponseDuration ?? '-' }}<template v-if="scenarioStepCustomResponseDuration !== null"> ms</template></span>
-                <span>大小 {{ scenarioStepCustomResponseSize }}</span>
+              <div class="api-response-header__right">
+                <div v-if="!scenarioStepCustomShowResponseEmptyState" class="api-response-metrics">
+                  <span v-if="scenarioStepCustomAssertionResultPresentation.visible" :class="['api-response-result-pill', `is-${scenarioStepCustomAssertionResultPresentation.tone}`]">
+                    {{ scenarioStepCustomAssertionResultPresentation.label }}
+                  </span>
+                  <span :class="['api-response-pill', `is-${scenarioStepCustomResponseStatusTone}`]">状态 {{ scenarioStepCustomResponseStatusCode ?? '-' }}</span>
+                  <span>耗时 {{ scenarioStepCustomResponseDuration ?? '-' }}<template v-if="scenarioStepCustomResponseDuration !== null"> ms</template></span>
+                  <span>大小 {{ scenarioStepCustomResponseSize }}</span>
+                </div>
               </div>
+            </div>
+            <div v-if="scenarioStepCustomDebugMessage" class="response-error-banner">
+              {{ scenarioStepCustomDebugMessage }}
             </div>
             <div v-if="scenarioStepCustomShowResponseEmptyState" class="ms-like-response-empty">
               <div class="ms-like-response-empty-card">
-                <div class="ms-like-response-empty-window"><span></span><span></span><span></span></div>
-                <div>点击 <span>发送</span> 获取响应内容</div>
+                <div class="ms-like-response-empty-visual">
+                  <div class="ms-like-response-empty-window"><span></span><span></span><span></span></div>
+                </div>
+                <div class="ms-like-response-empty-text">点击 <span>发送</span> 获取响应内容</div>
               </div>
             </div>
             <template v-else>
-              <div class="ms-like-response-tabs">
-                <button :class="['ms-like-top-tab', { active: scenarioStepCustomResponseTab === 'body' }]" @click="scenarioStepCustomResponseTab = 'body'">Body</button>
-                <button :class="['ms-like-top-tab', { active: scenarioStepCustomResponseTab === 'header' }]" @click="scenarioStepCustomResponseTab = 'header'">Header</button>
-                <button :class="['ms-like-top-tab', { active: scenarioStepCustomResponseTab === 'console' }]" @click="scenarioStepCustomResponseTab = 'console'">控制台</button>
-                <button :class="['ms-like-top-tab', { active: scenarioStepCustomResponseTab === 'actualRequest' }]" @click="scenarioStepCustomResponseTab = 'actualRequest'">实际请求</button>
-                <button :class="['ms-like-top-tab', { active: scenarioStepCustomResponseTab === 'assertions' }]" @click="scenarioStepCustomResponseTab = 'assertions'">断言</button>
+              <div class="api-response-tabs">
+                <button :class="{ 'is-active': scenarioStepCustomResponseTab === 'body' }" @click="scenarioStepCustomResponseTab = 'body'">Body</button>
+                <button :class="{ 'is-active': scenarioStepCustomResponseTab === 'header' }" @click="scenarioStepCustomResponseTab = 'header'">Header</button>
+                <button :class="{ 'is-active': scenarioStepCustomResponseTab === 'console' }" @click="scenarioStepCustomResponseTab = 'console'">控制台</button>
+                <button :class="{ 'is-active': scenarioStepCustomResponseTab === 'actualRequest' }" @click="scenarioStepCustomResponseTab = 'actualRequest'">实际请求</button>
+                <button :class="{ 'is-active': scenarioStepCustomResponseTab === 'assertions' }" @click="scenarioStepCustomResponseTab = 'assertions'">断言</button>
               </div>
               <div class="ms-like-response-body">
-                <ApiCodeEditor v-if="scenarioStepCustomResponseTab === 'body'" :model-value="scenarioStepCustomResponseBody || '-'" :language="scenarioStepCustomResponseBodyLanguage" :read-only="true" height="280px" />
-                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'header'" :model-value="scenarioStepCustomResponseHeaders" language="json" :read-only="true" height="280px" />
-                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'console'" :model-value="scenarioStepCustomConsole" language="text" :read-only="true" height="280px" />
-                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'actualRequest'" :model-value="scenarioStepCustomActualRequest" language="json" :read-only="true" height="280px" />
-                <el-table v-else :data="scenarioStepCustomAssertionResults" size="small">
+                <ApiCodeEditor v-if="scenarioStepCustomResponseTab === 'body'" :model-value="scenarioStepCustomResponseBodyPretty || '-'" :language="scenarioStepCustomResponseBodyLanguage" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'header'" :model-value="scenarioStepCustomResponseHeaders" language="json" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'console'" :model-value="scenarioStepCustomConsole" language="text" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                <ApiCodeEditor v-else-if="scenarioStepCustomResponseTab === 'actualRequest'" :model-value="scenarioStepCustomActualRequest" language="json" :read-only="true" :show-format-button="false" :fit-content="true" :max-fit-content-height="1000" height="100%" />
+                <div v-else class="assertion-result-panel">
+                <div v-if="!scenarioStepCustomAssertionResults.length" class="assertion-result-empty">当前请求未配置断言</div>
+                <el-table v-else :data="scenarioStepCustomAssertionResults" size="small" class="assertion-result-table">
                   <el-table-column label="断言名称" min-width="140" show-overflow-tooltip>
                     <template #default="{ row }">{{ row.name || assertionTypeLabel(row.type) }}</template>
                   </el-table-column>
@@ -4487,13 +4777,20 @@ watch(activeScenarioDetailTab, (tab) => {
                   <el-table-column label="条件" width="92">
                     <template #default="{ row }">{{ assertionConditionLabel(row.condition) }}</template>
                   </el-table-column>
-                  <el-table-column prop="expectedValue" label="期望值" min-width="120" show-overflow-tooltip />
-                  <el-table-column prop="actualValue" label="实际值" min-width="120" show-overflow-tooltip />
-                  <el-table-column label="结果" width="78">
-                    <template #default="{ row }"><span :class="['scenario-assertion-result-pill', `is-${assertionResultTone(row)}`]">{{ assertionResultLabel(row.success) }}</span></template>
+                  <el-table-column label="期望值" min-width="120" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.expectedValue || '-' }}</template>
                   </el-table-column>
-                  <el-table-column prop="message" label="失败原因" min-width="160" show-overflow-tooltip />
+                  <el-table-column label="实际值" min-width="120" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.actualValue || '-' }}</template>
+                  </el-table-column>
+                  <el-table-column label="结果" width="78">
+                    <template #default="{ row }"><span :class="['case-drawer-history-result', assertionResultClass(row.success)]">{{ assertionResultLabel(row.success) }}</span></template>
+                  </el-table-column>
+                  <el-table-column label="失败原因" min-width="160" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.success ? '-' : row.message || '-' }}</template>
+                  </el-table-column>
                 </el-table>
+                </div>
               </div>
             </template>
           </div>
@@ -6792,6 +7089,41 @@ watch(activeScenarioDetailTab, (tab) => {
   white-space: nowrap;
 }
 
+.scenario-drawer-title-input {
+  width: min(420px, 56vw);
+}
+
+.scenario-drawer-title-input :deep(.el-input__wrapper) {
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px #8b5cf6 inset;
+}
+
+.scenario-drawer-title-input :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px #8b5cf6 inset;
+}
+
+.scenario-custom-title-edit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  background: transparent;
+  color: #344054;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.scenario-custom-title-edit:hover {
+  border-color: #d0d5dd;
+  background: #f2f4f7;
+  color: #2563eb;
+}
+
 .scenario-step-config-shell {
   display: flex;
   height: 100%;
@@ -6918,6 +7250,10 @@ watch(activeScenarioDetailTab, (tab) => {
   min-width: 0;
 }
 
+.scenario-step-config-request-row .request-url-input {
+  flex: 1;
+}
+
 .scenario-step-method {
   display: inline-flex;
   align-items: center;
@@ -6926,6 +7262,10 @@ watch(activeScenarioDetailTab, (tab) => {
   font-size: 13px;
   font-weight: 700;
   line-height: 18px;
+}
+
+.scenario-system-request-method {
+  min-width: 56px;
 }
 
 .scenario-step-ref-pill {
@@ -7090,9 +7430,135 @@ watch(activeScenarioDetailTab, (tab) => {
   color: #111827;
 }
 
-.ms-like-response-header strong {
+.ms-like-response-header strong,
+.ms-like-response-title {
+  color: #111827;
   font-size: 14px;
   font-weight: 600;
+}
+
+.scenario-step-response-shell .api-response-header {
+  display: flex;
+  height: 41px;
+  min-height: 41px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--app-border, #e5e7eb);
+  background: #fff;
+}
+
+.scenario-step-response-shell .api-response-header strong {
+  color: var(--app-text-primary, #111827);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.scenario-step-response-shell .api-response-header__right {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.scenario-step-response-shell .api-response-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-text-subtle, #667085);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.scenario-step-response-shell .api-response-result-pill {
+  display: inline-flex;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.scenario-step-response-shell .api-response-result-pill.is-success,
+.scenario-step-response-shell .api-response-result-pill.is-passed {
+  background: var(--app-success-soft, #f0fdf4);
+  color: var(--app-success, #16a34a);
+}
+
+.scenario-step-response-shell .api-response-result-pill.is-failed,
+.scenario-step-response-shell .api-response-result-pill.is-not-passed {
+  background: var(--app-danger-soft, #fef2f2);
+  color: var(--app-danger, #dc2626);
+}
+
+.scenario-step-response-shell .api-response-result-pill.is-no-assertion {
+  background: #f5f7fa;
+  color: var(--app-text-subtle, #667085);
+}
+
+.scenario-step-response-shell .api-response-pill {
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--app-text-subtle, #667085);
+}
+
+.scenario-step-response-shell .api-response-pill.is-success {
+  color: var(--app-success, #16a34a);
+}
+
+.scenario-step-response-shell .api-response-pill.is-danger {
+  color: var(--app-danger, #dc2626);
+}
+
+.scenario-step-response-shell .api-response-pill.is-warning {
+  color: var(--app-warning, #ea580c);
+}
+
+.scenario-step-response-shell .api-response-tabs {
+  display: flex;
+  height: 41px;
+  min-height: 41px;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--app-border, #e5e7eb);
+  background: #fff;
+}
+
+.scenario-step-response-shell .api-response-tabs button {
+  position: relative;
+  display: inline-flex;
+  box-sizing: border-box;
+  height: 41px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--app-text-muted, #667085);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.scenario-step-response-shell .api-response-tabs button.is-active {
+  border-bottom-color: var(--app-primary, #2563eb);
+  color: var(--app-primary, #2563eb);
+  font-weight: 500;
+}
+
+.scenario-step-response-shell .api-response-tabs button:not(.is-active):hover {
+  color: var(--app-text-secondary, #344054);
 }
 
 .ms-like-response-metrics {
@@ -7114,6 +7580,72 @@ watch(activeScenarioDetailTab, (tab) => {
   font-weight: 500;
 }
 
+.ms-like-response-metric.is-success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.ms-like-response-metric.is-warning {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.ms-like-response-metric.is-danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.ms-like-response-metric.is-muted {
+  border-color: #e5e7eb;
+  background: #fff;
+  color: #475467;
+}
+
+.ms-like-result-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.ms-like-result-pill.is-passed {
+  background: #ecfdf3;
+  color: #039855;
+}
+
+.ms-like-result-pill.is-not-passed {
+  background: #fff7ed;
+  color: #dc6803;
+}
+
+.ms-like-result-pill.is-no-assertion {
+  background: #f5f7fa;
+  color: #667085;
+}
+
+.ms-like-result-pill.is-failed {
+  background: #fef3f2;
+  color: #d92d20;
+}
+
+.response-error-banner {
+  margin: 12px 14px 0;
+  padding: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 13px;
+}
+
 .ms-like-response-empty {
   display: flex;
   min-height: 220px;
@@ -7125,14 +7657,16 @@ watch(activeScenarioDetailTab, (tab) => {
 }
 
 .ms-like-response-empty-card {
-  display: grid;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: 12px;
 }
 
-.ms-like-response-empty-card span {
-  color: #2563eb;
-  font-weight: 600;
+.ms-like-response-empty-visual {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ms-like-response-empty-window {
@@ -7154,6 +7688,18 @@ watch(activeScenarioDetailTab, (tab) => {
   background: #cbd5e1;
 }
 
+.ms-like-response-empty-text {
+  color: #98a2b3;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.ms-like-response-empty-text span {
+  color: #2563eb;
+  font-weight: 600;
+}
+
 .ms-like-response-tabs {
   display: flex;
   align-items: center;
@@ -7168,6 +7714,46 @@ watch(activeScenarioDetailTab, (tab) => {
   flex: 1;
   overflow: hidden;
   padding: 12px;
+}
+
+.assertion-result-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.assertion-result-empty {
+  padding: 18px 0;
+  color: #98a2b3;
+  font-size: 13px;
+  text-align: center;
+}
+
+.case-drawer-history-result {
+  display: inline-flex;
+  min-width: 44px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.case-drawer-history-result.is-passed {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.case-drawer-history-result.is-failed {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.case-drawer-history-result.is-neutral {
+  background: #f3f4f6;
+  color: #6b7280;
 }
 
 .scenario-assertion-result-pill {
@@ -7364,6 +7950,297 @@ watch(activeScenarioDetailTab, (tab) => {
   justify-self: start;
   margin: 6px 0;
   padding: 0 8px;
+}
+
+.request-section {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.ms-like-table-surface {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ms-like-param-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.ms-like-param-table::-webkit-scrollbar {
+  height: 8px;
+}
+
+.ms-like-param-table::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.72);
+}
+
+.ms-like-table-header,
+.ms-like-table-row,
+.ms-like-param-table-grid {
+  display: grid;
+  align-items: center;
+}
+
+.ms-like-param-table-grid--query {
+  grid-template-columns: 32px minmax(220px, 1fr) 150px minmax(220px, 1fr) 190px 72px minmax(200px, 1fr) 76px;
+}
+
+.ms-like-param-table-grid--header {
+  grid-template-columns: 32px repeat(3, minmax(0, 1fr)) 76px;
+}
+
+.ms-like-param-table-grid--body-form {
+  grid-template-columns: 32px 220px 150px 220px 190px minmax(200px, 1fr) 76px;
+}
+
+.ms-like-table-header {
+  box-sizing: border-box;
+  height: 40px;
+  min-height: 40px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.ms-like-table-row {
+  box-sizing: border-box;
+  min-height: 44px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fff;
+}
+
+.ms-like-table-row:last-of-type {
+  border-bottom: 0;
+}
+
+.ms-like-table-header,
+.ms-like-table-row {
+  column-gap: 10px;
+  min-width: 100%;
+  padding: 0 10px;
+}
+
+.ms-like-param-table--query .ms-like-table-header,
+.ms-like-param-table--query .ms-like-table-row {
+  min-width: 1360px;
+}
+
+.ms-like-param-table--header .ms-like-table-header,
+.ms-like-param-table--header .ms-like-table-row {
+  min-width: 820px;
+}
+
+.ms-like-param-table--body-form .ms-like-table-header,
+.ms-like-param-table--body-form .ms-like-table-row {
+  min-width: 1280px;
+}
+
+.ms-like-checkbox-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ms-like-name-field,
+.ms-like-header-input-cell,
+.ms-like-type-field,
+.ms-like-length-range-cell,
+.ms-like-file-param-cell {
+  min-width: 0;
+}
+
+.ms-like-type-field,
+.ms-like-length-range-cell,
+.ms-like-file-param-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ms-like-type-field .el-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.ms-like-length-range-cell :deep(.el-input-number) {
+  width: 72px;
+}
+
+.ms-like-length-range-cell > span {
+  flex: 0 0 auto;
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.ms-like-required-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 1px solid #d1d5db;
+  border-radius: 50%;
+  background: #fff;
+  color: #98a2b3;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.ms-like-required-button.active {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.ms-like-link-button,
+.ms-like-row-remove,
+.ms-like-add-row,
+.ms-like-file-pick,
+.ms-like-file-clear {
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 0;
+}
+
+.ms-like-row-remove {
+  justify-self: center;
+  color: #c75450;
+}
+
+.ms-like-add-row {
+  align-self: flex-start;
+  padding: 9px 10px 11px;
+}
+
+.ms-like-file-pick {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-like-file-clear {
+  color: #c75450;
+}
+
+.ms-like-file-param-cell small {
+  color: #98a2b3;
+  font-size: 12px;
+}
+
+.ms-like-body-type-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.ms-like-body-chip {
+  height: 24px;
+  padding: 0 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #667085;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ms-like-body-chip:hover {
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
+.ms-like-body-chip.active,
+.ms-like-body-chip.active:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.ms-like-body-mode-shell {
+  min-height: 300px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ms-like-body-mode-shell > .api-code-editor,
+.ms-like-body-mode-shell > .ms-like-table-surface,
+.ms-like-body-mode-shell > .ms-like-form-panel,
+.ms-like-body-mode-shell > .ms-like-empty-body {
+  width: 100%;
+  min-height: 300px;
+}
+
+.ms-like-body-mode-shell > .ms-like-table-surface {
+  border: 0;
+  border-radius: 0;
+}
+
+.ms-like-empty-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  border: 0;
+  background: #f9fafb;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.ms-like-form-panel {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.ms-like-form-row {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.ms-like-form-row:last-of-type {
+  border-bottom: 0;
+}
+
+.ms-like-form-label {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.ms-like-form-control {
+  min-width: 0;
 }
 
 .scenario-step-body-section {

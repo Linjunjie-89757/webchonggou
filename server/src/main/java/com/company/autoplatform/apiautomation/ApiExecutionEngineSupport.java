@@ -87,6 +87,7 @@ public class ApiExecutionEngineSupport {
     private final ApiScenarioExecutionSupport scenarioExecutionSupport;
     private final ApiRunResultPersistenceSupport runResultPersistenceSupport;
     private final ApiRunFinalizerSupport runFinalizerSupport;
+    private final ApiVariableResolver variableResolver;
     private final String mockPublicBaseUrl;
 
     public ApiExecutionEngineSupport(
@@ -108,6 +109,7 @@ public class ApiExecutionEngineSupport {
             ApiScenarioExecutionSupport scenarioExecutionSupport,
             ApiRunResultPersistenceSupport runResultPersistenceSupport,
             ApiRunFinalizerSupport runFinalizerSupport,
+            ApiVariableResolver variableResolver,
             @Value("${autoplatform.mock.public-base-url:http://localhost:${server.port:8080}/api/mock}") String mockPublicBaseUrl
     ) {
         this.definitionMapper = definitionMapper;
@@ -128,6 +130,7 @@ public class ApiExecutionEngineSupport {
         this.scenarioExecutionSupport = scenarioExecutionSupport;
         this.runResultPersistenceSupport = runResultPersistenceSupport;
         this.runFinalizerSupport = runFinalizerSupport;
+        this.variableResolver = variableResolver;
         this.mockPublicBaseUrl = trimTrailingSlash(mockPublicBaseUrl);
     }
     ExecutionContext buildExecutionContext(Long workspaceId, Long environmentId, Long variableSetId) {
@@ -164,6 +167,7 @@ public class ApiExecutionEngineSupport {
             applyVariableSet(variables, runtimeVariableSet, variableSetSnapshots);
         }
         ParamSetEntity effectiveVariableSet = runtimeVariableSet != null ? runtimeVariableSet : defaultVariableSet;
+        variables = variableResolver.resolveVariableValues(variables);
         return new ExecutionContext(environment, variables, buildContextSnapshot(environment, effectiveVariableSet, variableSetSnapshots, variables));
     }
 
@@ -184,7 +188,8 @@ public class ApiExecutionEngineSupport {
                 }
             });
         }
-        return new ExecutionContext(context.environment(), context.variables(), rebuildContextSnapshot(context.contextSnapshotJson(), context.environment(), context.variables()));
+        Map<String, String> variables = variableResolver.resolveVariableValues(context.variables());
+        return new ExecutionContext(context.environment(), variables, rebuildContextSnapshot(context.contextSnapshotJson(), context.environment(), variables));
     }
 
     private ResolvedEnvironment resolveEnvironment(Long workspaceId, Long environmentId) {
