@@ -578,7 +578,13 @@ export interface ApiRunStepResult {
   reportId: number | null
   stepOrder: number
   stepName: string
+  stepKind?: 'REQUEST' | 'SCENARIO_GROUP' | 'CONTROLLER' | 'SCRIPT' | 'ASSERTION' | string | null
+  stepKey?: string | null
+  parentStepKey?: string | null
+  depth?: number | null
   definitionId: number | null
+  suiteItemId?: number | null
+  suiteItemOrder?: number | null
   success: boolean
   durationMs: number
   request: ApiRequestSnapshot | null

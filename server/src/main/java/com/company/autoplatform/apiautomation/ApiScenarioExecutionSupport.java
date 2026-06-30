@@ -293,9 +293,11 @@ public class ApiScenarioExecutionSupport {
         }
         List<ApiScenarioStepInput> childSteps = delegate.readScenarioSteps(scenario.getStepsJson());
         List<ApiExecutionRuntimeModels.RunStepComputation> results = new ArrayList<>();
-        results.add(syntheticScenarioStep(stepOrder[0]++, blankToFallback(step.stepName(), scenario.getScenarioName()), true, 0L, null, List.of()));
-        results.addAll(executeScenarioSteps(childSteps, stepOrder, variables, environment, workspaceCode, workspaceId,
-                rootScenarioId, nestingDepth + 1, onceOnlyKeys, policy, delegate));
+        ApiExecutionRuntimeModels.RunStepComputation groupStep = syntheticScenarioStep(stepOrder[0]++, blankToFallback(step.stepName(), scenario.getScenarioName()),
+                "SCENARIO_GROUP", null, nestingDepth, true, 0L, null, List.of());
+        results.add(groupStep);
+        results.addAll(withScenarioGroupParent(executeScenarioSteps(childSteps, stepOrder, variables, environment, workspaceCode, workspaceId,
+                rootScenarioId, nestingDepth + 1, onceOnlyKeys, policy, delegate), groupStep.response()));
         return results;
     }
 
@@ -428,6 +430,7 @@ public class ApiScenarioExecutionSupport {
                 null,
                 stepOrder,
                 blankToFallback(step.stepName(), "Script"),
+                "SCRIPT",
                 null,
                 success,
                 durationMs,
@@ -533,11 +536,41 @@ public class ApiScenarioExecutionSupport {
             String message,
             List<ApiProcessorResult> processorResults
     ) {
+        return syntheticScenarioStep(stepOrder, stepName, "CONTROLLER", success, durationMs, message, processorResults);
+    }
+
+    private ApiExecutionRuntimeModels.RunStepComputation syntheticScenarioStep(
+            int stepOrder,
+            String stepName,
+            String stepKind,
+            boolean success,
+            long durationMs,
+            String message,
+            List<ApiProcessorResult> processorResults
+    ) {
+        return syntheticScenarioStep(stepOrder, stepName, stepKind, null, 0, success, durationMs, message, processorResults);
+    }
+
+    private ApiExecutionRuntimeModels.RunStepComputation syntheticScenarioStep(
+            int stepOrder,
+            String stepName,
+            String stepKind,
+            String parentStepKey,
+            int depth,
+            boolean success,
+            long durationMs,
+            String message,
+            List<ApiProcessorResult> processorResults
+    ) {
         return new ApiExecutionRuntimeModels.RunStepComputation(success, new ApiRunStepResultResponse(
                 null,
                 null,
                 stepOrder,
                 stepName,
+                stepKind,
+                "step-" + stepOrder,
+                parentStepKey,
+                depth,
                 null,
                 success,
                 durationMs,
@@ -561,6 +594,10 @@ public class ApiScenarioExecutionSupport {
                 response.reportId(),
                 response.stepOrder(),
                 response.stepName(),
+                response.stepKind(),
+                response.stepKey(),
+                response.parentStepKey(),
+                response.depth(),
                 response.definitionId(),
                 response.success(),
                 response.durationMs(),
@@ -572,6 +609,45 @@ public class ApiScenarioExecutionSupport {
                 response.errorMessage(),
                 response.createdAt()
         ));
+    }
+
+    private List<ApiExecutionRuntimeModels.RunStepComputation> withScenarioGroupParent(
+            List<ApiExecutionRuntimeModels.RunStepComputation> computations,
+            ApiRunStepResultResponse parent
+    ) {
+        if (computations == null || computations.isEmpty()) {
+            return List.of();
+        }
+        List<ApiExecutionRuntimeModels.RunStepComputation> next = new ArrayList<>();
+        for (ApiExecutionRuntimeModels.RunStepComputation computation : computations) {
+            ApiRunStepResultResponse response = computation.response();
+            if (response == null || response.parentStepKey() != null) {
+                next.add(computation);
+                continue;
+            }
+            ApiRunStepResultResponse child = new ApiRunStepResultResponse(
+                    response.id(),
+                    response.reportId(),
+                    response.stepOrder(),
+                    response.stepName(),
+                    response.stepKind(),
+                    response.stepKey(),
+                    parent.stepKey(),
+                    Optional.ofNullable(parent.depth()).orElse(0) + 1,
+                    response.definitionId(),
+                    response.success(),
+                    response.durationMs(),
+                    response.request(),
+                    response.response(),
+                    response.assertionResults(),
+                    response.extractionResults(),
+                    response.processorResults(),
+                    response.errorMessage(),
+                    response.createdAt()
+            );
+            next.add(new ApiExecutionRuntimeModels.RunStepComputation(computation.success(), child));
+        }
+        return next;
     }
 
     private void sleep(int delayMs) {

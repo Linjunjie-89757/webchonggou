@@ -50,8 +50,6 @@ import {
 } from '@/entities/api-automation'
 import {
   buildLocalRunnerContextRows,
-  buildStepEvidenceRows,
-  type ReportEvidenceRow,
 } from '@/entities/api-automation/lib/reportEvidence'
 import { aiProviderApi, type AiProviderConnectionItem } from '@/entities/ai-provider'
 import {
@@ -69,6 +67,7 @@ import ApiCaseCreateEditDialog from '@/features/api-case-create-edit/ApiCaseCrea
 import { getRequestErrorMessage } from '@/shared/api/error'
 import { ApiExecutionWorkspace } from '@/widgets/api-execution-workspace'
 import { ApiScenarioWorkspace } from '@/widgets/api-scenario-workspace'
+import ApiRunStepDetailViewer from '@/widgets/api-scenario-workspace/ApiRunStepDetailViewer.vue'
 import ApiAiGenerationDrawer from './ApiAiGenerationDrawer.vue'
 import ApiAiGenerationWorkspace from './ApiAiGenerationWorkspace.vue'
 import ApiAssertionPanel from './ApiAssertionPanel.vue'
@@ -110,6 +109,7 @@ type ApiImportMode = 'swagger' | 'postman' | 'har'
 type ApiImportInputMode = 'url' | 'file'
 type ApiSoftPromptInputType = 'text' | 'textarea'
 type ApiReportArchiveFilter = 'active' | 'archived' | 'all'
+type ApiReportTreeNodeType = 'root' | 'item' | 'scenario' | 'request' | 'step'
 type ApiTopTab = 'definitions' | 'scenarios' | 'execution' | 'reports' | 'settings'
 type FastExtractionTarget =
   | { kind: 'assertionBody', assertion: ApiAssertionConfig, item: ApiAssertionItemConfig }
@@ -121,6 +121,20 @@ interface DefinitionSchemaGroup {
   description: string
   fields: ApiSchemaFieldInput[]
   emptyText: string
+}
+
+interface ApiReportTreeNode {
+  key: string
+  type: ApiReportTreeNodeType
+  title: string
+  subtitle: string
+  result: string | null
+  success: boolean | null
+  durationMs: number | null
+  statusCode: number | null
+  failureSummary: string | null
+  step: ApiRunStepResult | null
+  children: ApiReportTreeNode[]
 }
 
 interface DefinitionResponseSchemaGroup {
@@ -420,10 +434,12 @@ const reportAnalysis = ref<ApiAutomationReportAnalysis | null>(null)
 const reportAnalysisLoading = ref(false)
 const reportStatistics = ref<ApiAutomationReportStatistics | null>(null)
 const reportStatisticsLoading = ref(false)
-const reportDetailVisible = ref(false)
 const reportDetailLoading = ref(false)
 const reportDetailErrorMessage = ref('')
 const selectedReportDetail = ref<ApiAutomationReportDetail | null>(null)
+const expandedReportTreeKeys = ref<string[]>([])
+const reportStepDetailDrawerVisible = ref(false)
+const reportStepDetail = ref<ApiRunStepResult | null>(null)
 const reportExporting = ref(false)
 const reportActionLoadingKey = ref('')
 const maxDebugFileBytes = 5 * 1024 * 1024
@@ -1396,17 +1412,147 @@ function resetReportFilters() {
 
 async function openReportDetail(item: ApiAutomationReportItem) {
   if (!item.reportKey) return
-  reportDetailVisible.value = true
   reportDetailLoading.value = true
   reportDetailErrorMessage.value = ''
   selectedReportDetail.value = null
   try {
-    selectedReportDetail.value = await apiAutomationApi.getReportDetail(item.workspaceCode || props.workspaceCode || 'ALL', item.reportKey)
+    const detail = await apiAutomationApi.getReportDetail(item.workspaceCode || props.workspaceCode || 'ALL', item.reportKey)
+    selectedReportDetail.value = detail
+    syncReportTreeExpansion(detail)
   } catch (error) {
     reportDetailErrorMessage.value = getRequestErrorMessage(error)
   } finally {
     reportDetailLoading.value = false
   }
+}
+
+function backToReportList() {
+  selectedReportDetail.value = null
+  expandedReportTreeKeys.value = []
+  reportDetailErrorMessage.value = ''
+  reportDetailLoading.value = false
+}
+
+function reportTreeStepKey(step: ApiRunStepResult, index: number) {
+  return `step:${step.id ?? step.stepKey ?? step.stepOrder}:${index}`
+}
+
+function reportItemKey(item: ApiAutomationReportDetail['itemSnapshots'][number], index: number) {
+  return `item:${item.sortOrder ?? index}:${item.itemType}:${item.itemId ?? index}`
+}
+
+function buildReportStepNode(step: ApiRunStepResult, index: number): ApiReportTreeNode {
+  return {
+    key: reportTreeStepKey(step, index),
+    type: step.stepKind === 'SCENARIO_GROUP' ? 'scenario' : step.request ? 'request' : 'step',
+    title: step.stepName || `步骤 ${step.stepOrder}`,
+    subtitle: step.request?.url || `#${step.stepOrder}`,
+    result: step.success ? 'SUCCESS' : 'FAILED',
+    success: step.success,
+    durationMs: step.durationMs,
+    statusCode: step.response?.statusCode ?? null,
+    failureSummary: step.errorMessage || null,
+    step,
+    children: [],
+  }
+}
+
+function buildReportTree(detail: ApiAutomationReportDetail): ApiReportTreeNode[] {
+  const steps = detail.stepResults || []
+  if (!detail.itemSnapshots.length) {
+    return [{
+      key: `root:${detail.reportKey}`,
+      type: detail.objectType === 'SCENARIO' ? 'scenario' : detail.objectType === 'API_CASE' ? 'request' : 'root',
+      title: detail.objectName || detail.reportName || '执行报告',
+      subtitle: reportObjectTypeLabel(detail.objectType),
+      result: detail.result,
+      success: detail.result ? !['FAILED', 'ERROR'].includes(String(detail.result).toUpperCase()) : null,
+      durationMs: detail.durationMs,
+      statusCode: detail.statusCode,
+      failureSummary: detail.failureSummary,
+      step: null,
+      children: steps.map(buildReportStepNode),
+    }]
+  }
+
+  const keyedSteps = new Map<string, ApiRunStepResult[]>()
+  steps.forEach((step) => {
+    if (step.suiteItemId == null && step.suiteItemOrder == null) return
+    const key = `${step.suiteItemOrder ?? ''}-${step.suiteItemId ?? ''}`
+    const rows = keyedSteps.get(key) || []
+    rows.push(step)
+    keyedSteps.set(key, rows)
+  })
+
+  let stepCursor = 0
+  return detail.itemSnapshots.map((item, index) => {
+    const stepCount = Math.max(0, Number(item.stepCount || 0))
+    const itemStepKey = `${item.sortOrder ?? ''}-${item.itemId ?? ''}`
+    let itemSteps = keyedSteps.get(itemStepKey) || []
+    if (!itemSteps.length) {
+      itemSteps = steps.slice(stepCursor, stepCursor + stepCount)
+      stepCursor += stepCount
+    }
+    return {
+      key: reportItemKey(item, index),
+      type: item.itemType === 'SCENARIO' ? 'scenario' : 'request',
+      title: item.itemName || `${reportObjectTypeLabel(item.itemType)} ${item.sortOrder ?? index + 1}`,
+      subtitle: reportObjectTypeLabel(item.itemType),
+      result: item.result,
+      success: item.result ? !['FAILED', 'ERROR'].includes(String(item.result).toUpperCase()) : null,
+      durationMs: item.durationMs,
+      statusCode: null,
+      failureSummary: item.failureSummary,
+      step: null,
+      children: itemSteps.map(buildReportStepNode),
+    }
+  })
+}
+
+function reportTreeContainsFailure(node: ApiReportTreeNode): boolean {
+  return node.success === false || Boolean(node.failureSummary) || node.children.some(reportTreeContainsFailure)
+}
+
+function reportTreeNodeTypeLabel(node: ApiReportTreeNode) {
+  if (node.type === 'scenario') return '场景'
+  if (node.type === 'request') return '接口'
+  if (node.type === 'step') return '步骤'
+  return node.subtitle || '节点'
+}
+
+function syncReportTreeExpansion(detail: ApiAutomationReportDetail) {
+  const keys = new Set<string>()
+  const visit = (node: ApiReportTreeNode) => {
+    if (node.children.length && reportTreeContainsFailure(node)) {
+      keys.add(node.key)
+    }
+    node.children.forEach(visit)
+  }
+  buildReportTree(detail).forEach(visit)
+  if (!keys.size) {
+    const first = buildReportTree(detail)[0]
+    if (first?.children.length) keys.add(first.key)
+  }
+  expandedReportTreeKeys.value = [...keys]
+}
+
+function toggleReportTreeNode(node: ApiReportTreeNode) {
+  if (!node.children.length) {
+    if (node.step) openReportStepDetail(node.step)
+    return
+  }
+  const nextKeys = new Set(expandedReportTreeKeys.value)
+  if (nextKeys.has(node.key)) {
+    nextKeys.delete(node.key)
+  } else {
+    nextKeys.add(node.key)
+  }
+  expandedReportTreeKeys.value = [...nextKeys]
+}
+
+function openReportStepDetail(step: ApiRunStepResult) {
+  reportStepDetail.value = step
+  reportStepDetailDrawerVisible.value = true
 }
 
 const selectedReportContextSnapshot = computed<ApiRuntimeContextSnapshot | null>(() => {
@@ -1435,6 +1581,7 @@ const selectedReportContextVariableSetDetails = computed(() => {
     .map(item => item.name ? (item.versionNo ? `${item.name} · v${item.versionNo}` : item.name) : '')
     .filter(Boolean)
 })
+const selectedReportTree = computed(() => selectedReportDetail.value ? buildReportTree(selectedReportDetail.value) : [])
 
 function parseRuntimeContextSnapshot(value?: string | null): ApiRuntimeContextSnapshot | null {
   if (!value) return null
@@ -1443,10 +1590,6 @@ function parseRuntimeContextSnapshot(value?: string | null): ApiRuntimeContextSn
   } catch {
     return null
   }
-}
-
-function reportStepEvidenceRows(step: ApiRunStepResult): ReportEvidenceRow[] {
-  return buildStepEvidenceRows(step)
 }
 
 async function exportReports() {
@@ -6086,7 +6229,198 @@ onBeforeUnmount(() => {
       :variable-sets="variableSets"
     />
 
-    <div v-else-if="activeTopTab === 'reports'" class="api-report-workspace" v-loading="reportLoading">
+    <div v-else-if="activeTopTab === 'reports'" class="api-report-workspace" v-loading="reportLoading && !selectedReportDetail && !reportDetailLoading">
+      <div v-if="selectedReportDetail || reportDetailLoading || reportDetailErrorMessage" class="api-report-detail-page" v-loading="reportDetailLoading">
+        <div class="api-report-detail-page__header">
+          <button type="button" class="api-report-detail-page__back" @click="backToReportList">
+            <el-icon><ArrowLeft /></el-icon>
+            <span>返回报告列表</span>
+          </button>
+          <div class="api-report-detail-page__title">
+            <span :class="['api-report-result', runResultClass(selectedReportDetail?.result)]">
+              {{ runResultLabel(selectedReportDetail?.result) }}
+            </span>
+            <div>
+              <strong>{{ selectedReportDetail?.objectName || '报告详情' }}</strong>
+              <small>{{ reportObjectTypeLabel(selectedReportDetail?.objectType || '') }} · {{ formatDateTime(selectedReportDetail?.createdAt) }}</small>
+            </div>
+          </div>
+          <div v-if="selectedReportDetail" class="api-report-detail-page__actions">
+            <el-button
+              :loading="reportActionLoadingKey === `rerun:${selectedReportDetail.reportKey}`"
+              @click="rerunReport(selectedReportDetail)"
+            >
+              复跑
+            </el-button>
+            <el-button
+              v-if="!selectedReportDetail.archived"
+              type="warning"
+              plain
+              :loading="reportActionLoadingKey === `archive:${selectedReportDetail.reportKey}`"
+              @click="archiveReport(selectedReportDetail)"
+            >
+              归档
+            </el-button>
+          </div>
+        </div>
+
+        <div v-if="reportDetailErrorMessage" class="api-report-empty">{{ reportDetailErrorMessage }}</div>
+        <div v-else-if="selectedReportDetail" class="api-report-detail-page__body app-soft-scrollbar">
+          <section class="api-report-detail-section is-overview">
+            <div class="api-report-detail-section__head">
+              <h3>执行概览</h3>
+              <span>{{ selectedReportDetail.operatorName || '系统' }}</span>
+            </div>
+            <div class="api-report-summary-grid">
+              <div v-for="[label, value] in reportDetailSummaryRows(selectedReportDetail)" :key="label">
+                <span>{{ label }}</span>
+                <strong>{{ value }}</strong>
+              </div>
+            </div>
+            <p v-if="selectedReportDetail.failureSummary" class="api-report-failure">
+              {{ selectedReportDetail.failureSummary }}
+            </p>
+          </section>
+
+          <section v-if="selectedReportContextSnapshot" class="api-report-detail-section">
+            <div class="api-report-detail-section__head">
+              <h3>运行上下文快照</h3>
+              <span>用于复现本次执行</span>
+            </div>
+            <div class="api-report-context-grid">
+              <div>
+                <span>环境</span>
+                <strong>{{ selectedReportDetail.environmentName || selectedReportContextSnapshot.environment?.id || '未选择环境' }}</strong>
+                <small>{{ selectedReportContextSnapshot.environment?.baseUrl || '-' }}</small>
+              </div>
+              <div>
+                <span>变量集</span>
+                <strong>{{ selectedReportContextVariableSetLabel }}</strong>
+                <small>
+                  <template v-if="selectedReportContextVariableSetDetails.length">
+                    {{ selectedReportContextVariableSetDetails.join(' / ') }}
+                  </template>
+                  <template v-else>ID {{ selectedReportContextSnapshot.variableSet?.id ?? selectedReportDetail.variableSetId ?? '-' }}</template>
+                </small>
+              </div>
+              <div>
+                <span>Mock</span>
+                <strong>{{ selectedReportContextSnapshot.mock?.appName || '未启用 Mock' }}</strong>
+                <small>
+                  <template v-if="selectedReportContextSnapshot.mock?.businessScenarioName">
+                    {{ selectedReportContextSnapshot.mock.businessScenarioName }}
+                  </template>
+                  <template v-else>{{ selectedReportContextSnapshot.mock?.appCode || selectedReportContextSnapshot.mock?.baseUrl || '-' }}</template>
+                </small>
+              </div>
+              <div>
+                <span>变量数量</span>
+                <strong>{{ selectedReportContextVariables.length }}</strong>
+                <small>保存本次运行实际变量</small>
+              </div>
+            </div>
+            <div v-if="selectedReportLocalRunnerRows.length" class="api-report-runner-context">
+              <div v-for="row in selectedReportLocalRunnerRows" :key="row.label">
+                <span>{{ row.label }}</span>
+                <strong>{{ row.value }}</strong>
+              </div>
+            </div>
+            <details v-if="selectedReportContextVariables.length" class="api-report-context-variables">
+              <summary>查看变量快照</summary>
+              <div>
+                <span v-for="item in selectedReportContextVariables" :key="item.key">
+                  <b>{{ item.key }}</b>
+                  <em>{{ item.value || '-' }}</em>
+                </span>
+              </div>
+            </details>
+          </section>
+
+          <section class="api-report-detail-section">
+            <div class="api-report-detail-section__head">
+              <h3>执行链路</h3>
+              <span>{{ selectedReportDetail.stepResults.length }} 步</span>
+            </div>
+            <div v-if="!selectedReportTree.length" class="api-report-empty">暂无执行链路</div>
+            <div v-else class="api-report-execution-tree">
+              <template v-for="node in selectedReportTree" :key="node.key">
+                <button
+                  type="button"
+                  :class="[
+                    'api-report-tree-row',
+                    `is-${node.type}`,
+                    { expanded: expandedReportTreeKeys.includes(node.key), 'is-leaf': !node.children.length },
+                  ]"
+                  @click="toggleReportTreeNode(node)"
+                >
+                  <span class="api-report-tree-toggle">
+                    <el-icon v-if="node.children.length"><ArrowRight /></el-icon>
+                  </span>
+                  <span :class="['api-report-result', runResultClass(node.result)]">{{ node.success === null ? runResultLabel(node.result) : node.success ? '通过' : '失败' }}</span>
+                  <span class="api-report-tree-main">
+                    <strong>{{ node.title }}</strong>
+                    <em>{{ reportTreeNodeTypeLabel(node) }}</em>
+                  </span>
+                  <span>{{ node.statusCode ? `HTTP ${node.statusCode}` : '-' }}</span>
+                  <span>{{ formatDuration(node.durationMs) }}</span>
+                  <span class="api-report-tree-error">{{ node.failureSummary || '-' }}</span>
+                </button>
+
+                <div v-if="expandedReportTreeKeys.includes(node.key)" class="api-report-tree-children">
+                  <button
+                    v-for="child in node.children"
+                    :key="child.key"
+                    type="button"
+                    :class="[
+                      'api-report-tree-row',
+                      'is-child',
+                      `is-${child.type}`,
+                      { expanded: expandedReportTreeKeys.includes(child.key), 'is-leaf': !child.children.length },
+                    ]"
+                    @click="toggleReportTreeNode(child)"
+                  >
+                    <span class="api-report-tree-toggle">
+                      <el-icon v-if="child.children.length"><ArrowRight /></el-icon>
+                    </span>
+                    <span :class="['api-report-result', child.success === false ? 'is-failed' : 'is-passed']">{{ child.success === false ? '失败' : '通过' }}</span>
+                    <span class="api-report-tree-main">
+                      <strong>{{ child.title }}</strong>
+                      <em>{{ reportTreeNodeTypeLabel(child) }}</em>
+                    </span>
+                    <span>{{ child.statusCode ? `HTTP ${child.statusCode}` : '-' }}</span>
+                    <span>{{ formatDuration(child.durationMs) }}</span>
+                    <span class="api-report-tree-error">{{ child.failureSummary || '-' }}</span>
+                  </button>
+                </div>
+              </template>
+            </div>
+          </section>
+
+          <section v-if="selectedReportDetail.dataIterations.length" class="api-report-detail-section">
+            <div class="api-report-detail-section__head">
+              <h3>测试数据行结果</h3>
+              <span>{{ selectedReportDetail.dataIterations.length }} 行</span>
+            </div>
+            <div class="api-report-item-list">
+              <div
+                v-for="row in selectedReportDetail.dataIterations"
+                :key="`${row.loopIndex || 1}-${row.rowIndex}`"
+                class="api-report-item-row"
+              >
+                <span :class="['api-report-result', runResultClass(row.result)]">{{ runResultLabel(row.result) }}</span>
+                <small>第 {{ row.loopIndex || 1 }} 轮 / 第 {{ row.rowIndex }} 行</small>
+                <strong>{{ row.caseDesc || '未命名数据行' }}</strong>
+                <span>{{ row.stepCount ?? 0 }} 步</span>
+                <span>{{ formatDuration(row.durationMs) }}</span>
+                <p v-if="row.failureSummary">{{ row.failureSummary }}</p>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <template v-else>
       <div class="api-report-toolbar">
         <el-input
           v-model="reportKeyword"
@@ -6352,6 +6686,7 @@ onBeforeUnmount(() => {
           @size-change="handleReportPageSizeChange"
         />
       </div>
+      </template>
     </div>
 
     <div v-else-if="activeTopTab === 'settings'" class="api-automation-settings-workspace">
@@ -7142,6 +7477,18 @@ onBeforeUnmount(() => {
       @apply="applyFastExtraction"
     />
     <el-drawer
+      v-model="reportStepDetailDrawerVisible"
+      :title="reportStepDetail?.stepName || '接口明细'"
+      size="960px"
+      destroy-on-close
+      append-to-body
+      class="api-soft-drawer api-report-step-detail-drawer"
+    >
+      <div v-if="reportStepDetail" class="api-report-step-detail-drawer__body">
+        <ApiRunStepDetailViewer :step="reportStepDetail" />
+      </div>
+    </el-drawer>
+    <el-drawer
       v-model="runEnvironmentDrawerVisible"
       append-to-body
       size="520px"
@@ -7258,173 +7605,6 @@ onBeforeUnmount(() => {
       </template>
     </el-drawer>
 
-    <el-drawer
-      v-model="reportDetailVisible"
-      append-to-body
-      size="760px"
-      class="api-report-detail-drawer"
-      :with-header="false"
-    >
-      <div class="api-report-detail" v-loading="reportDetailLoading">
-        <div class="api-report-detail__header">
-          <div>
-            <span :class="['api-report-result', runResultClass(selectedReportDetail?.result)]">
-              {{ runResultLabel(selectedReportDetail?.result) }}
-            </span>
-            <strong>{{ selectedReportDetail?.objectName || '报告详情' }}</strong>
-            <small>{{ formatDateTime(selectedReportDetail?.createdAt) }}</small>
-          </div>
-          <button type="button" class="api-report-detail__close" @click="reportDetailVisible = false">
-            <LucideX :size="16" />
-          </button>
-        </div>
-
-        <div v-if="reportDetailErrorMessage" class="api-report-empty">{{ reportDetailErrorMessage }}</div>
-        <template v-else-if="selectedReportDetail">
-          <section class="api-report-detail-section">
-            <h3>概览</h3>
-            <div class="api-report-summary-grid">
-              <div v-for="[label, value] in reportDetailSummaryRows(selectedReportDetail)" :key="label">
-                <span>{{ label }}</span>
-                <strong>{{ value }}</strong>
-              </div>
-            </div>
-            <p v-if="selectedReportDetail.failureSummary" class="api-report-failure">
-              {{ selectedReportDetail.failureSummary }}
-            </p>
-          </section>
-
-          <section v-if="selectedReportContextSnapshot" class="api-report-detail-section">
-            <h3>运行上下文快照</h3>
-            <div class="api-report-context-grid">
-              <div>
-                <span>环境</span>
-                <strong>{{ selectedReportDetail.environmentName || selectedReportContextSnapshot.environment?.id || '未选择环境' }}</strong>
-                <small>{{ selectedReportContextSnapshot.environment?.baseUrl || '-' }}</small>
-              </div>
-              <div>
-                <span>变量集</span>
-                <strong>{{ selectedReportContextVariableSetLabel }}</strong>
-                <small>
-                  <template v-if="selectedReportContextVariableSetDetails.length">
-                    {{ selectedReportContextVariableSetDetails.join(' / ') }}
-                  </template>
-                  <template v-else>ID {{ selectedReportContextSnapshot.variableSet?.id ?? selectedReportDetail.variableSetId ?? '-' }}</template>
-                </small>
-              </div>
-              <div>
-                <span>Mock</span>
-                <strong>{{ selectedReportContextSnapshot.mock?.appName || '未启用 Mock' }}</strong>
-                <small>
-                  <template v-if="selectedReportContextSnapshot.mock?.businessScenarioName">
-                    {{ selectedReportContextSnapshot.mock.businessScenarioName }}
-                  </template>
-                  <template v-else>{{ selectedReportContextSnapshot.mock?.appCode || selectedReportContextSnapshot.mock?.baseUrl || '-' }}</template>
-                </small>
-              </div>
-              <div>
-                <span>变量数量</span>
-                <strong>{{ selectedReportContextVariables.length }}</strong>
-                <small>保存本次运行实际变量</small>
-              </div>
-            </div>
-            <div v-if="selectedReportLocalRunnerRows.length" class="api-report-runner-context">
-              <div v-for="row in selectedReportLocalRunnerRows" :key="row.label">
-                <span>{{ row.label }}</span>
-                <strong>{{ row.value }}</strong>
-              </div>
-            </div>
-            <details v-if="selectedReportContextVariables.length" class="api-report-context-variables">
-              <summary>查看变量快照</summary>
-              <div>
-                <span v-for="item in selectedReportContextVariables" :key="item.key">
-                  <b>{{ item.key }}</b>
-                  <em>{{ item.value || '-' }}</em>
-                </span>
-              </div>
-            </details>
-          </section>
-
-          <section v-if="selectedReportDetail.itemSnapshots.length" class="api-report-detail-section">
-            <h3>编排项结果</h3>
-            <div class="api-report-item-list">
-              <div
-                v-for="item in selectedReportDetail.itemSnapshots"
-                :key="`${item.itemType}-${item.itemId}-${item.sortOrder}`"
-                class="api-report-item-row"
-              >
-                <span :class="['api-report-result', runResultClass(item.result)]">{{ runResultLabel(item.result) }}</span>
-                <small>{{ reportObjectTypeLabel(item.itemType) }}</small>
-                <strong>{{ item.itemName }}</strong>
-                <span>{{ item.stepCount ?? 0 }} 步</span>
-                <span>{{ formatDuration(item.durationMs) }}</span>
-                <p v-if="item.failureSummary">{{ item.failureSummary }}</p>
-              </div>
-            </div>
-          </section>
-
-          <section v-if="selectedReportDetail.dataIterations.length" class="api-report-detail-section">
-            <h3>测试数据行结果</h3>
-            <div class="api-report-item-list">
-              <div
-                v-for="row in selectedReportDetail.dataIterations"
-                :key="`${row.loopIndex || 1}-${row.rowIndex}`"
-                class="api-report-item-row"
-              >
-                <span :class="['api-report-result', runResultClass(row.result)]">{{ runResultLabel(row.result) }}</span>
-                <small>第 {{ row.loopIndex || 1 }} 轮 / 第 {{ row.rowIndex }} 行</small>
-                <strong>{{ row.caseDesc || '未命名数据行' }}</strong>
-                <span>{{ row.stepCount ?? 0 }} 步</span>
-                <span>{{ formatDuration(row.durationMs) }}</span>
-                <p v-if="row.failureSummary">{{ row.failureSummary }}</p>
-              </div>
-            </div>
-          </section>
-
-          <section class="api-report-detail-section">
-            <h3>步骤结果</h3>
-            <div v-if="!selectedReportDetail.stepResults.length" class="api-report-empty">暂无步骤结果</div>
-            <div v-else class="api-report-step-list">
-              <div
-                v-for="step in selectedReportDetail.stepResults"
-                :key="`${step.stepOrder}-${step.stepName}-${step.createdAt}`"
-                class="api-report-step-row"
-              >
-                <span :class="['api-report-result', step.success ? 'is-passed' : 'is-failed']">
-                  {{ step.success ? '通过' : '失败' }}
-                </span>
-                <div>
-                  <strong>{{ step.stepName || `步骤 ${step.stepOrder}` }}</strong>
-                  <small>
-                    第 {{ step.stepOrder }} 步 · {{ formatDuration(step.durationMs) }}
-                    <template v-if="step.response?.statusCode"> · HTTP {{ step.response.statusCode }}</template>
-                  </small>
-                  <p v-if="step.errorMessage">{{ step.errorMessage }}</p>
-                  <div class="api-report-step-meta">
-                    <span v-if="step.assertionResults?.length">断言 {{ step.assertionResults.length }}</span>
-                    <span v-if="step.extractionResults?.length">提取 {{ step.extractionResults.length }}</span>
-                    <span v-if="step.processorResults?.length">处理 {{ step.processorResults.length }}</span>
-                  </div>
-                  <div v-if="reportStepEvidenceRows(step).length" class="api-report-step-evidence">
-                    <div
-                      v-for="item in reportStepEvidenceRows(step)"
-                      :key="`${item.type}-${item.label}-${item.name}`"
-                      :class="['api-report-step-evidence__row', `is-${item.tone}`]"
-                    >
-                      <span>{{ item.label }}</span>
-                      <strong>{{ item.name }}</strong>
-                      <em>{{ item.status }}</em>
-                      <small>{{ item.value }}</small>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-        </template>
-        <div v-else class="api-report-empty">选择一条报告查看详情</div>
-      </div>
-    </el-drawer>
   </section>
 </template>
 
@@ -7949,11 +8129,7 @@ onBeforeUnmount(() => {
   background: #fff;
 }
 
-:global(.api-report-detail-drawer) {
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", Inter, Arial, sans-serif;
-}
-
-.api-report-detail {
+.api-report-detail-page {
   display: flex;
   height: 100%;
   min-height: 0;
@@ -7961,25 +8137,50 @@ onBeforeUnmount(() => {
   background: #f8fafc;
 }
 
-.api-report-detail__header {
+.api-report-detail-page__header {
   display: flex;
-  min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-height: 72px;
   padding: 0 20px;
   border-bottom: 1px solid var(--app-border);
   background: #fff;
 }
 
-.api-report-detail__header > div {
-  display: flex;
-  min-width: 0;
+.api-report-detail-page__back {
+  display: inline-flex;
+  height: 32px;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: 13px;
 }
 
-.api-report-detail__header strong {
+.api-report-detail-page__back:hover {
+  background: #dbeafe;
+}
+
+.api-report-detail-page__title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 12px;
+}
+
+.api-report-detail-page__title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.api-report-detail-page__title strong {
   overflow: hidden;
   color: #111827;
   font-size: 16px;
@@ -7988,59 +8189,76 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.api-report-detail__header small {
+.api-report-detail-page__title small {
   color: #6b7280;
   font-size: 12px;
   white-space: nowrap;
 }
 
-.api-report-detail__close {
+.api-report-detail-page__actions {
   display: inline-flex;
-  width: 30px;
-  height: 30px;
   align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #6b7280;
-  cursor: pointer;
+  gap: 8px;
 }
 
-.api-report-detail__close:hover {
-  background: #f3f4f6;
-  color: #111827;
+.api-report-detail-page__body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 14px;
+  overflow: auto;
+  padding: 16px 18px 24px;
 }
 
 .api-report-detail-section {
-  margin: 14px 16px 0;
   padding: 16px;
   border: 1px solid var(--app-border);
   border-radius: 8px;
   background: #fff;
 }
 
-.api-report-detail-section h3 {
-  margin: 0 0 12px;
+.api-report-detail-section.is-overview {
+  border-color: #dbeafe;
+}
+
+.api-report-detail-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.api-report-detail-section__head h3 {
+  margin: 0;
   color: #111827;
   font-size: 14px;
   font-weight: 700;
 }
 
+.api-report-detail-section__head span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
 .api-report-summary-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
 .api-report-summary-grid div {
   display: flex;
   min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  border-bottom: 1px solid #f3f4f6;
-  padding-bottom: 8px;
+  min-height: 58px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
+  background: #fbfdff;
 }
 
 .api-report-summary-grid span {
@@ -8051,8 +8269,8 @@ onBeforeUnmount(() => {
 .api-report-summary-grid strong {
   overflow: hidden;
   color: #111827;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8235,6 +8453,114 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex-direction: column;
   gap: 4px;
+}
+
+.api-report-execution-tree {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.api-report-tree-row {
+  display: grid;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 28px 64px minmax(220px, 1fr) 90px 90px minmax(180px, 0.8fr);
+  gap: 10px;
+  border: 0;
+  border-bottom: 1px solid #eef2f7;
+  background: #fff;
+  padding: 0 12px;
+  color: #374151;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.api-report-tree-row:hover {
+  background: #f8fafc;
+}
+
+.api-report-tree-row.is-child {
+  padding-left: 34px;
+  background: #fbfdff;
+}
+
+.api-report-tree-row.is-leaf .api-report-tree-main strong {
+  color: #2563eb;
+}
+
+.api-report-tree-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #64748b;
+  transition: transform 0.16s ease;
+}
+
+.api-report-tree-row.expanded .api-report-tree-toggle {
+  transform: rotate(90deg);
+}
+
+.api-report-tree-main {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.api-report-tree-main strong,
+.api-report-tree-row > span:not(.api-report-result):not(.api-report-tree-toggle):not(.api-report-tree-main) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.api-report-tree-main strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.api-report-tree-main em {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 20px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  padding: 0 6px;
+  color: #6b7280;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.api-report-tree-row > span:not(.api-report-result):not(.api-report-tree-toggle):not(.api-report-tree-main) {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.api-report-tree-error {
+  color: #b91c1c !important;
+}
+
+.api-report-step-detail-drawer__body {
+  display: flex;
+  height: calc(100vh - 52px);
+  min-height: 0;
+  flex-direction: column;
+  padding: 16px 18px 20px;
+  box-sizing: border-box;
+}
+
+.api-report-empty.is-compact {
+  min-height: 88px;
 }
 
 .api-report-step-meta {

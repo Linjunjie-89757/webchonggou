@@ -32,6 +32,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type {
   ApiAutomationEnvironmentItem,
   ApiDefinitionCaseItem,
+  ApiRunStepResult,
   ApiScenarioItem,
   ApiAutomationVariableSetItem,
 } from '@/entities/api-automation'
@@ -59,9 +60,24 @@ import {
   type RunnerNodeSummary,
 } from '@/entities/local-runner'
 import type { WorkspaceItem } from '@/entities/workspace'
+import ApiRunStepDetailViewer from '../api-scenario-workspace/ApiRunStepDetailViewer.vue'
 
 type ExecutionSuiteCaseType = 'api' | 'scene'
 type ExecutionSubTabKey = 'arrange' | 'schedule' | 'branch' | 'result'
+type ExecutionSuiteTab =
+  | { kind: 'suite'; suite: ApiExecutionSuiteItem }
+  | { kind: 'report'; key: string; historyId: number; workspaceCode: string; title: string; result: string | null; detail: ApiExecutionSuiteRunHistoryDetail | null; loading: boolean }
+
+type ExecutionSuiteReportStepNode = ApiRunStepResult & {
+  children: ExecutionSuiteReportStepNode[]
+  level: number
+  expanded: boolean
+}
+
+type ExecutionSuiteReportItemGroup = ApiExecutionSuiteRunHistoryDetail['itemSnapshots'][number] & {
+  steps: ExecutionSuiteReportStepNode[]
+  expanded: boolean
+}
 
 const EXECUTION_SUITE_LIST_KEY = 'suite-list'
 
@@ -111,7 +127,7 @@ const suiteKeyword = ref('')
 const activeSuiteId = ref(EXECUTION_SUITE_LIST_KEY)
 const suiteModules = ref<ApiExecutionSuiteModuleItem[]>([])
 const suites = ref<ApiExecutionSuiteItem[]>([])
-const openedSuiteTabs = ref<ApiExecutionSuiteItem[]>([])
+const openedSuiteTabs = ref<ExecutionSuiteTab[]>([])
 const activeSuiteDetail = ref<ApiExecutionSuiteDetail | null>(null)
 const suiteArrangeItems = ref<ApiExecutionSuiteArrangeItem[]>([])
 const suiteTreeLoading = ref(false)
@@ -148,6 +164,10 @@ const executionTriggerSource = ref('')
 const executionBranchNote = ref('')
 const suiteSaving = ref(false)
 const suiteRunning = ref(false)
+const suiteReportStepDrawerVisible = ref(false)
+const suiteReportStepDetail = ref<ApiRunStepResult | null>(null)
+const expandedSuiteReportItemKeys = ref<string[]>([])
+const expandedSuiteReportStepKeys = ref<string[]>([])
 const suiteRunnerNodesLoading = ref(false)
 const suiteRunnerNodes = ref<RunnerNodeSummary[]>([])
 const selectedSuiteRunnerId = ref<string | null>(null)
@@ -235,6 +255,43 @@ const visibleExecutionSuiteCases = computed<ExecutionSuiteCase[]>(() => (
     description: item.description || '',
     enabled: item.enabled,
   }))
+))
+
+const suiteReportItemGroups = computed<ExecutionSuiteReportItemGroup[]>(() => {
+  const detail = suiteRunHistoryDetail.value
+  if (!detail) return []
+
+  const keyedSteps = new Map<string, ApiRunStepResult[]>()
+  detail.stepResults.forEach((step) => {
+    if (step.suiteItemId == null && step.suiteItemOrder == null) return
+    const key = `${step.suiteItemOrder ?? ''}-${step.suiteItemId ?? ''}`
+    const rows = keyedSteps.get(key) || []
+    rows.push(step)
+    keyedSteps.set(key, rows)
+  })
+
+  let stepCursor = 0
+  return detail.itemSnapshots.map((item, index) => {
+    const stepCount = Math.max(0, Number(item.stepCount || 0))
+    const itemKey = `${item.sortOrder ?? ''}-${item.suiteItemId ?? item.itemId ?? ''}`
+    let steps = keyedSteps.get(itemKey) || []
+    if (!steps.length) {
+      steps = detail.stepResults.slice(stepCursor, stepCursor + stepCount)
+      stepCursor += stepCount
+    }
+    const visibleSteps = buildSuiteReportStepTree(steps)
+    const key = suiteReportItemKey(item, index)
+
+    return {
+      ...item,
+      steps: visibleSteps,
+      expanded: expandedSuiteReportItemKeys.value.includes(key),
+    }
+  })
+})
+
+const suiteReportVisibleStepCount = computed(() => (
+  suiteReportItemGroups.value.reduce((total, item) => total + countSuiteReportStepNodes(item.steps), 0)
 ))
 
 const arrangePickerTitle = computed(() => (
@@ -694,14 +751,29 @@ function requestMethodClass(method: string) {
   return `is-${method.toLowerCase()}`
 }
 
+function suiteTabKey(suite: ApiExecutionSuiteItem) {
+  return `suite:${suite.id}`
+}
+
+function suiteReportTabKey(historyId: number) {
+  return `suite-report:${historyId}`
+}
+
+function suiteReportTabTitle(item?: ApiExecutionSuiteRunHistoryItem | ApiExecutionSuiteRunHistoryDetail | null) {
+  if (!item) return '套件报告'
+  const time = formatDateTime(item.createdAt)
+  return time === '--' ? '套件报告' : `套件报告 ${time.slice(5)}`
+}
+
 function openSuiteTab(suite: ApiExecutionSuiteItem) {
-  const index = openedSuiteTabs.value.findIndex(item => item.id === suite.id)
+  const key = suiteTabKey(suite)
+  const index = openedSuiteTabs.value.findIndex(item => item.kind === 'suite' && item.suite.id === suite.id)
   if (index >= 0) {
-    openedSuiteTabs.value[index] = suite
+    openedSuiteTabs.value[index] = { kind: 'suite', suite }
   } else {
-    openedSuiteTabs.value.push(suite)
+    openedSuiteTabs.value.push({ kind: 'suite', suite })
   }
-  activeSuiteId.value = `suite:${suite.id}`
+  activeSuiteId.value = key
   void nextTick(scrollActiveSuiteTabIntoView)
 }
 
@@ -723,9 +795,9 @@ function openExecutionSuite(suite: ApiExecutionSuiteItem) {
 }
 
 function closeSuiteTab(suite: ApiExecutionSuiteItem) {
-  const index = openedSuiteTabs.value.findIndex(item => item.id === suite.id)
+  const index = openedSuiteTabs.value.findIndex(item => item.kind === 'suite' && item.suite.id === suite.id)
   if (index < 0) return
-  const wasActive = activeSuiteId.value === `suite:${suite.id}`
+  const wasActive = activeSuiteId.value === suiteTabKey(suite)
   openedSuiteTabs.value.splice(index, 1)
   if (suite.id < 0) {
     const nextDirtyIds = new Set(dirtySuiteDraftIds.value)
@@ -733,9 +805,13 @@ function closeSuiteTab(suite: ApiExecutionSuiteItem) {
     dirtySuiteDraftIds.value = nextDirtyIds
   }
   if (!wasActive) return
-  const nextSuite = openedSuiteTabs.value[index] || openedSuiteTabs.value[index - 1]
-  if (nextSuite) {
-    switchSuiteTab(nextSuite)
+  const nextTab = openedSuiteTabs.value[index] || openedSuiteTabs.value[index - 1]
+  if (nextTab?.kind === 'suite') {
+    switchSuiteTab(nextTab.suite)
+    return
+  }
+  if (nextTab?.kind === 'report') {
+    activateSuiteReportTab(nextTab)
     return
   }
   activeSuiteId.value = EXECUTION_SUITE_LIST_KEY
@@ -772,8 +848,9 @@ async function closeActiveSuiteTab() {
 
 async function closeOtherSuiteTabs() {
   if (!activeSuiteDetail.value) return
-  const others = openedSuiteTabs.value.filter(item => item.id !== activeSuiteDetail.value?.id)
-  const hasDirtyDraft = others.some(item => item.id < 0 && dirtySuiteDraftIds.value.has(item.id))
+  const activeId = activeSuiteDetail.value.id
+  const others = openedSuiteTabs.value.filter(item => item.kind !== 'suite' || item.suite.id !== activeId)
+  const hasDirtyDraft = others.some(item => item.kind === 'suite' && item.suite.id < 0 && dirtySuiteDraftIds.value.has(item.suite.id))
   if (hasDirtyDraft) {
     try {
       await ElMessageBox.confirm('其他未保存草稿会被关闭，确认继续？', '关闭其他套件', {
@@ -786,17 +863,17 @@ async function closeOtherSuiteTabs() {
       return
     }
   }
-  openedSuiteTabs.value = openedSuiteTabs.value.filter(item => item.id === activeSuiteDetail.value?.id)
+  openedSuiteTabs.value = openedSuiteTabs.value.filter(item => item.kind === 'suite' && item.suite.id === activeId)
   void nextTick(updateSuiteTabOverflow)
 }
 
 async function closeDraftSuiteTabs() {
-  const drafts = openedSuiteTabs.value.filter(item => item.id < 0)
+  const drafts = openedSuiteTabs.value.filter((item): item is Extract<ExecutionSuiteTab, { kind: 'suite' }> => item.kind === 'suite' && item.suite.id < 0)
   if (!drafts.length) {
     ElMessage.info('当前没有草稿标签')
     return
   }
-  const dirtyDrafts = drafts.filter(item => dirtySuiteDraftIds.value.has(item.id))
+  const dirtyDrafts = drafts.filter(item => dirtySuiteDraftIds.value.has(item.suite.id))
   if (dirtyDrafts.length) {
     try {
       await ElMessageBox.confirm('草稿标签尚未保存，关闭后会丢失，确认关闭吗？', '关闭全部草稿', {
@@ -810,11 +887,13 @@ async function closeDraftSuiteTabs() {
     }
   }
   const activeWillClose = activeSuiteDetail.value ? activeSuiteDetail.value.id < 0 : false
-  openedSuiteTabs.value = openedSuiteTabs.value.filter(item => item.id >= 0)
+  openedSuiteTabs.value = openedSuiteTabs.value.filter(item => item.kind !== 'suite' || item.suite.id >= 0)
   if (activeWillClose) {
-    const nextSuite = openedSuiteTabs.value[0]
-    if (nextSuite) {
-      switchSuiteTab(nextSuite)
+    const nextTab = openedSuiteTabs.value[0]
+    if (nextTab?.kind === 'suite') {
+      switchSuiteTab(nextTab.suite)
+    } else if (nextTab?.kind === 'report') {
+      activateSuiteReportTab(nextTab)
     } else {
       activeSuiteId.value = EXECUTION_SUITE_LIST_KEY
       activeSuiteDetail.value = null
@@ -1054,6 +1133,13 @@ async function loadSuiteRunHistories() {
   }
 }
 
+async function openLatestSuiteRunReportTab() {
+  const latest = suiteRunHistories.value[0]
+  if (latest) {
+    await openSuiteRunReportTab(latest)
+  }
+}
+
 async function refreshSuiteLocalRunnerReport(showMessage = true) {
   await loadSuiteRunHistories()
   const localHistory = latestSuiteLocalRunnerHistory.value
@@ -1071,7 +1157,7 @@ async function refreshSuiteLocalRunnerReport(showMessage = true) {
 
 async function openSuiteLocalRunnerReport() {
   if (suiteLocalRunNotice.value.reportKey && latestSuiteLocalRunnerHistory.value) {
-    await selectSuiteRunHistory(latestSuiteLocalRunnerHistory.value)
+    await openSuiteRunReportTab(latestSuiteLocalRunnerHistory.value)
     activeExecutionSubTab.value = 'result'
     return
   }
@@ -1080,14 +1166,189 @@ async function openSuiteLocalRunnerReport() {
 }
 
 async function selectSuiteRunHistory(row: ApiExecutionSuiteRunHistoryItem) {
+  await openSuiteRunReportTab(row)
+}
+
+function activateSuiteReportTab(tab: Extract<ExecutionSuiteTab, { kind: 'report' }>) {
+  activeSuiteId.value = tab.key
+  activeSuiteDetail.value = null
+  suiteRunHistoryDetail.value = tab.detail
+  collapseSuiteReportExpansion()
+  void nextTick(scrollActiveSuiteTabIntoView)
+  if (!tab.detail && !tab.loading) {
+    void loadSuiteReportTabDetail(tab)
+  }
+}
+
+async function openSuiteRunReportTab(row: ApiExecutionSuiteRunHistoryItem) {
+  const key = suiteReportTabKey(row.id)
+  const existing = openedSuiteTabs.value.find((item): item is Extract<ExecutionSuiteTab, { kind: 'report' }> => item.kind === 'report' && item.historyId === row.id)
+  if (existing) {
+    activateSuiteReportTab(existing)
+    return
+  }
+  const tab: Extract<ExecutionSuiteTab, { kind: 'report' }> = {
+    kind: 'report',
+    key,
+    historyId: row.id,
+    workspaceCode: row.workspaceCode,
+    title: suiteReportTabTitle(row),
+    result: row.result,
+    detail: null,
+    loading: false,
+  }
+  openedSuiteTabs.value.push(tab)
+  activateSuiteReportTab(tab)
+  await loadSuiteReportTabDetail(tab)
+}
+
+async function loadSuiteReportTabDetail(tab: Extract<ExecutionSuiteTab, { kind: 'report' }>) {
   suiteRunHistoryLoading.value = true
+  tab.loading = true
   try {
-    suiteRunHistoryDetail.value = await apiExecutionSuiteApi.getSuiteRunHistoryDetail(row.workspaceCode, row.id)
+    const detail = await apiExecutionSuiteApi.getSuiteRunHistoryDetail(tab.workspaceCode, tab.historyId)
+    tab.detail = detail
+    tab.title = suiteReportTabTitle(detail)
+    tab.result = detail.result
+    suiteRunHistoryDetail.value = detail
+    collapseSuiteReportExpansion()
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
+    tab.loading = false
     suiteRunHistoryLoading.value = false
   }
+}
+
+function closeSuiteReportTab(tab: Extract<ExecutionSuiteTab, { kind: 'report' }>) {
+  const index = openedSuiteTabs.value.findIndex(item => item.kind === 'report' && item.key === tab.key)
+  if (index < 0) return
+  const wasActive = activeSuiteId.value === tab.key
+  openedSuiteTabs.value.splice(index, 1)
+  if (!wasActive) return
+  const nextTab = openedSuiteTabs.value[index] || openedSuiteTabs.value[index - 1]
+  if (nextTab?.kind === 'suite') {
+    switchSuiteTab(nextTab.suite)
+  } else if (nextTab?.kind === 'report') {
+    activateSuiteReportTab(nextTab)
+  } else {
+    activeSuiteId.value = EXECUTION_SUITE_LIST_KEY
+    activeSuiteDetail.value = null
+    suiteRunHistoryDetail.value = null
+  }
+  void nextTick(updateSuiteTabOverflow)
+}
+
+function openSuiteReportStepDrawer(row: ApiRunStepResult) {
+  if (!isSuiteReportInspectableStep(row)) return
+  suiteReportStepDetail.value = row
+  suiteReportStepDrawerVisible.value = true
+}
+
+function isSuiteReportInspectableStep(row: ApiRunStepResult) {
+  return !row.stepKind || row.stepKind === 'REQUEST'
+}
+
+function isSuiteReportVisibleStep(row: ApiRunStepResult) {
+  if (row.stepKind) return true
+  return Boolean(
+    row.request
+      || row.response
+      || row.errorMessage
+      || row.assertionResults?.length
+      || row.extractionResults?.length
+      || row.processorResults?.length
+      || Number(row.durationMs || 0) > 0,
+  )
+}
+
+function suiteReportStepKey(row: ApiRunStepResult) {
+  return row.stepKey || `step-${row.stepOrder}`
+}
+
+function buildSuiteReportStepTree(rows: ApiRunStepResult[]) {
+  const nodeMap = new Map<string, ExecutionSuiteReportStepNode>()
+  const roots: ExecutionSuiteReportStepNode[] = []
+
+  rows.forEach((row) => {
+    if (!isSuiteReportVisibleStep(row)) return
+    const key = suiteReportStepKey(row)
+    nodeMap.set(key, {
+      ...row,
+      stepKey: key,
+      children: [],
+      level: Number(row.depth ?? 0),
+      expanded: row.stepKind === 'SCENARIO_GROUP' ? expandedSuiteReportStepKeys.value.includes(key) : true,
+    })
+  })
+
+  nodeMap.forEach((node) => {
+    if (node.parentStepKey && nodeMap.has(node.parentStepKey)) {
+      const parent = nodeMap.get(node.parentStepKey)
+      if (parent) {
+        node.level = parent.level + 1
+        parent.children.push(node)
+        return
+      }
+    }
+    roots.push(node)
+  })
+
+  return roots
+}
+
+function countSuiteReportStepNodes(rows: ExecutionSuiteReportStepNode[]): number {
+  return rows.reduce((total, row) => total + 1 + countSuiteReportStepNodes(row.children), 0)
+}
+
+function formatSuiteReportStepKind(row: ApiRunStepResult) {
+  switch (row.stepKind) {
+    case 'SCENARIO_GROUP':
+      return '场景'
+    case 'CONTROLLER':
+      return '控制'
+    case 'SCRIPT':
+      return '脚本'
+    case 'ASSERTION':
+      return '断言'
+    default:
+      return ''
+  }
+}
+
+function toggleSuiteReportStepNode(row: ExecutionSuiteReportStepNode) {
+  if (row.stepKind !== 'SCENARIO_GROUP') {
+    openSuiteReportStepDrawer(row)
+    return
+  }
+  const key = suiteReportStepKey(row)
+  const nextKeys = new Set(expandedSuiteReportStepKeys.value)
+  if (nextKeys.has(key)) {
+    nextKeys.delete(key)
+  } else {
+    nextKeys.add(key)
+  }
+  expandedSuiteReportStepKeys.value = [...nextKeys]
+}
+
+function collapseSuiteReportExpansion() {
+  expandedSuiteReportItemKeys.value = []
+  expandedSuiteReportStepKeys.value = []
+}
+
+function suiteReportItemKey(item: ApiExecutionSuiteRunHistoryDetail['itemSnapshots'][number], index: number) {
+  return `${item.sortOrder ?? index}-${item.itemType || 'ITEM'}-${item.itemId ?? index}`
+}
+
+function toggleSuiteReportItem(item: ApiExecutionSuiteRunHistoryDetail['itemSnapshots'][number], index: number) {
+  const key = suiteReportItemKey(item, index)
+  const nextKeys = new Set(expandedSuiteReportItemKeys.value)
+  if (nextKeys.has(key)) {
+    nextKeys.delete(key)
+  } else {
+    nextKeys.add(key)
+  }
+  expandedSuiteReportItemKeys.value = [...nextKeys]
 }
 
 function formatRunResult(result: string | null) {
@@ -1105,21 +1366,6 @@ function formatRunMode(value?: string | null) {
 function formatRunOn(value?: string | null) {
   if (value === 'REMOTE') return '远程执行器'
   return '本地执行器'
-}
-
-function formatSuiteItemType(value?: string | null) {
-  if (value === 'SCENARIO') return '场景'
-  if (value === 'API_CASE') return '接口用例'
-  return value || '未知类型'
-}
-
-function formatRowValues(values?: Record<string, string> | null) {
-  const entries = Object.entries(values || {})
-  if (!entries.length) return '无数据'
-  return entries
-    .slice(0, 6)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('，')
 }
 
 function formatDuration(value?: number | null) {
@@ -1248,11 +1494,12 @@ async function handleRunSuite() {
     latestSuiteLocalRunnerRunId.value = runOn === 'LOCAL' ? extractRunnerRunId(response) : null
     ElMessage.success(runOn === 'LOCAL' ? '本地套件任务已创建' : '套件运行已触发')
     await loadSuiteDetail(activeSuiteDetail.value.workspaceCode, activeSuiteDetail.value.id)
+    activeExecutionSubTab.value = 'result'
     if (runOn === 'LOCAL') {
-      activeExecutionSubTab.value = 'result'
       await refreshSuiteLocalRunnerReport(false)
-    } else if (activeExecutionSubTab.value === 'result') {
+    } else {
       await loadSuiteRunHistories()
+      await openLatestSuiteRunReportTab()
     }
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
@@ -1299,6 +1546,10 @@ async function runSuiteFromList(suite: ApiExecutionSuiteItem) {
       if (runOn === 'LOCAL') {
         activeExecutionSubTab.value = 'result'
         await refreshSuiteLocalRunnerReport(false)
+      } else {
+        activeExecutionSubTab.value = 'result'
+        await loadSuiteRunHistories()
+        await openLatestSuiteRunReportTab()
       }
     }
   } catch (error) {
@@ -1415,11 +1666,11 @@ async function confirmCreateDraftSuite() {
       caseDescColumn: null,
       dataFailureStrategy: 'STOP_ON_ROW_FAILURE',
     })
-    const tabIndex = openedSuiteTabs.value.findIndex(item => item.id === draftId)
+    const tabIndex = openedSuiteTabs.value.findIndex(item => item.kind === 'suite' && item.suite.id === draftId)
     if (tabIndex >= 0) {
-      openedSuiteTabs.value.splice(tabIndex, 1, detail)
+      openedSuiteTabs.value.splice(tabIndex, 1, { kind: 'suite', suite: detail })
     } else {
-      openedSuiteTabs.value.push(detail)
+      openedSuiteTabs.value.push({ kind: 'suite', suite: detail })
     }
     activeSuiteId.value = `suite:${detail.id}`
     activeSuiteDetail.value = detail
@@ -1568,15 +1819,19 @@ function showPending(message: string) {
             <span class="execution-suite-tab-label">套件列表</span>
           </button>
           <button
-            v-for="suite in openedSuiteTabs"
-            :key="suite.id"
+            v-for="tab in openedSuiteTabs"
+            :key="tab.kind === 'suite' ? `suite-tab-${tab.suite.id}` : tab.key"
             type="button"
-            :class="['execution-suite-tab', { active: activeSuiteKey === `suite:${suite.id}` }]"
-            :title="suite.name"
-            @click="switchSuiteTab(suite)"
+            :class="['execution-suite-tab', { active: activeSuiteKey === (tab.kind === 'suite' ? `suite:${tab.suite.id}` : tab.key) }]"
+            :title="tab.kind === 'suite' ? tab.suite.name : tab.title"
+            @click="tab.kind === 'suite' ? switchSuiteTab(tab.suite) : activateSuiteReportTab(tab)"
           >
-            <span class="execution-suite-tab-label">{{ suite.name }}</span>
-            <span class="execution-suite-tab-close" @click.stop="closeSuiteTabWithConfirm(suite)">
+            <span
+              v-if="tab.kind === 'report'"
+              :class="['execution-report-tab-status', runResultClass(tab.result)]"
+            ></span>
+            <span class="execution-suite-tab-label">{{ tab.kind === 'suite' ? tab.suite.name : tab.title }}</span>
+            <span class="execution-suite-tab-close" @click.stop="tab.kind === 'suite' ? closeSuiteTabWithConfirm(tab.suite) : closeSuiteReportTab(tab)">
               <el-icon><Close /></el-icon>
             </span>
           </button>
@@ -1612,7 +1867,199 @@ function showPending(message: string) {
         </el-dropdown>
       </div>
 
-      <div v-if="activeSuiteDetail" v-loading="suiteDetailLoading" class="execution-content-row">
+      <div v-if="activeSuiteId.startsWith('suite-report:')" v-loading="suiteRunHistoryLoading" class="execution-suite-report-page">
+        <template v-if="suiteRunHistoryDetail">
+          <div class="execution-suite-report-head">
+            <div class="execution-suite-report-title">
+              <span :class="['execution-result-badge', runResultClass(suiteRunHistoryDetail.result)]">
+                {{ formatRunResult(suiteRunHistoryDetail.result) }}
+              </span>
+              <div>
+                <strong>{{ suiteRunHistoryDetail.suiteName }}</strong>
+                <small>{{ formatDateTime(suiteRunHistoryDetail.createdAt) }} · {{ suiteRunHistoryDetail.operatorName || '系统' }}</small>
+              </div>
+            </div>
+            <div class="execution-suite-report-meta">
+              <span>{{ formatRunMode(suiteRunHistoryDetail.runMode) }}</span>
+              <span>{{ formatRunOn(suiteRunHistoryDetail.runOn) }}</span>
+              <span>{{ formatDuration(suiteRunHistoryDetail.durationMs) }}</span>
+            </div>
+          </div>
+
+          <div class="execution-suite-report-body app-soft-scrollbar">
+            <div class="execution-result-summary-grid execution-suite-report-summary">
+              <span><b>通过</b>{{ suiteRunHistoryDetail.successCount }}/{{ suiteRunHistoryDetail.totalCount }}</span>
+              <span><b>失败</b>{{ suiteRunHistoryDetail.failedCount }}</span>
+              <span><b>跳过</b>{{ suiteRunHistoryDetail.skippedCount }}</span>
+              <span><b>耗时</b>{{ formatDuration(suiteRunHistoryDetail.durationMs) }}</span>
+              <span><b>环境ID</b>{{ suiteRunHistoryDetail.environmentId ?? '-' }}</span>
+              <span><b>变量集ID</b>{{ suiteRunHistoryDetail.variableSetId ?? '-' }}</span>
+              <span><b>失败后继续</b>{{ suiteRunHistoryDetail.continueOnFailure ? '是' : '否' }}</span>
+              <span><b>重试次数</b>{{ suiteRunHistoryDetail.stepFailureRetryCount }}</span>
+            </div>
+            <div v-if="suiteRunHistoryDetail.failureSummary" class="execution-result-failure-summary">
+              {{ suiteRunHistoryDetail.failureSummary }}
+            </div>
+
+            <section v-if="suiteReportItemGroups.length" class="execution-suite-report-section">
+              <div class="execution-suite-report-section-head">
+                <strong>套件条目与步骤</strong>
+                <span>{{ suiteReportItemGroups.length }} 项 · {{ suiteReportVisibleStepCount }} 步</span>
+              </div>
+              <div class="execution-suite-report-item-table">
+                <div class="execution-suite-report-item-row is-head">
+                  <span></span>
+                  <span>#</span>
+                  <span>类型</span>
+                  <span>名称</span>
+                  <span>结果</span>
+                  <span>步骤数</span>
+                  <span>耗时</span>
+                  <span>失败原因</span>
+                </div>
+                <template
+                  v-for="(item, index) in suiteReportItemGroups"
+                  :key="suiteReportItemKey(item, index)"
+                >
+                  <button
+                    type="button"
+                    class="execution-suite-report-item-row"
+                    @click="toggleSuiteReportItem(item, index)"
+                  >
+                    <span class="execution-report-expand-icon" :class="{ expanded: item.expanded }">
+                      <el-icon><ArrowRight /></el-icon>
+                    </span>
+                    <span>{{ item.sortOrder ?? '-' }}</span>
+                    <span>{{ item.itemType === 'SCENARIO' ? '场景' : '接口用例' }}</span>
+                    <span>{{ item.itemName || '-' }}</span>
+                    <span :class="['execution-result-badge', runResultClass(item.result)]">{{ formatRunResult(item.result) }}</span>
+                    <span>{{ item.stepCount ?? '-' }}</span>
+                    <span>{{ formatDuration(item.durationMs) }}</span>
+                    <span class="execution-result-error-text">{{ item.failureSummary || '-' }}</span>
+                  </button>
+                  <div v-if="item.expanded" class="execution-suite-report-item-steps">
+                    <div class="execution-suite-report-step-row is-head">
+                      <span>#</span>
+                      <span>步骤</span>
+                      <span>结果</span>
+                      <span>状态</span>
+                      <span>耗时</span>
+                      <span>错误信息</span>
+                    </div>
+                    <template
+                      v-for="step in item.steps"
+                      :key="`${suiteReportItemKey(item, index)}-${step.stepOrder}-${step.stepName}`"
+                    >
+                    <component
+                      :is="isSuiteReportInspectableStep(step) || step.stepKind === 'SCENARIO_GROUP' ? 'button' : 'div'"
+                      type="button"
+                      :class="[
+                        'execution-suite-report-step-row',
+                        step.stepKind === 'SCENARIO_GROUP' && 'is-group',
+                        !isSuiteReportInspectableStep(step) && 'is-container',
+                      ]"
+                      @click="toggleSuiteReportStepNode(step)"
+                    >
+                      <span class="execution-suite-report-step-order">
+                        <span
+                          v-if="step.stepKind === 'SCENARIO_GROUP'"
+                          class="execution-report-expand-icon"
+                          :class="{ expanded: step.expanded }"
+                        >
+                          <el-icon><ArrowRight /></el-icon>
+                        </span>
+                        <span v-else>{{ step.stepOrder }}</span>
+                      </span>
+                      <span class="execution-suite-report-step-name">
+                        <span>{{ step.stepName || '-' }}</span>
+                        <span v-if="formatSuiteReportStepKind(step)" class="execution-suite-report-step-kind">
+                          {{ formatSuiteReportStepKind(step) }}
+                        </span>
+                      </span>
+                      <span :class="['execution-result-badge', step.success ? 'is-success' : 'is-danger']">{{ step.success ? '通过' : '失败' }}</span>
+                      <span>{{ step.response?.statusCode ?? '-' }}</span>
+                      <span>{{ formatDuration(step.durationMs) }}</span>
+                      <span class="execution-result-error-text">{{ step.errorMessage || '-' }}</span>
+                    </component>
+                    <component
+                      :is="isSuiteReportInspectableStep(child) || child.stepKind === 'SCENARIO_GROUP' ? 'button' : 'div'"
+                      v-for="child in step.expanded ? step.children : []"
+                      :key="`${suiteReportItemKey(item, index)}-${child.stepOrder}-${child.stepName}`"
+                      type="button"
+                      :class="[
+                        'execution-suite-report-step-row',
+                        'is-child',
+                        child.stepKind === 'SCENARIO_GROUP' && 'is-group',
+                        !isSuiteReportInspectableStep(child) && 'is-container',
+                      ]"
+                      @click="toggleSuiteReportStepNode(child)"
+                    >
+                      <span class="execution-suite-report-step-order">
+                        <span
+                          v-if="child.stepKind === 'SCENARIO_GROUP'"
+                          class="execution-report-expand-icon"
+                          :class="{ expanded: child.expanded }"
+                        >
+                          <el-icon><ArrowRight /></el-icon>
+                        </span>
+                        <span v-else>{{ child.stepOrder }}</span>
+                      </span>
+                      <span class="execution-suite-report-step-name">
+                        <span>{{ child.stepName || '-' }}</span>
+                        <span v-if="formatSuiteReportStepKind(child)" class="execution-suite-report-step-kind">
+                          {{ formatSuiteReportStepKind(child) }}
+                        </span>
+                      </span>
+                      <span :class="['execution-result-badge', child.success ? 'is-success' : 'is-danger']">{{ child.success ? '通过' : '失败' }}</span>
+                      <span>{{ child.response?.statusCode ?? '-' }}</span>
+                      <span>{{ formatDuration(child.durationMs) }}</span>
+                      <span class="execution-result-error-text">{{ child.errorMessage || '-' }}</span>
+                    </component>
+                    </template>
+                    <div v-if="!item.steps.length" class="execution-result-empty is-compact">暂无步骤明细</div>
+                  </div>
+                </template>
+              </div>
+            </section>
+
+            <section v-if="suiteRunHistoryDetail.dataIterations?.length" class="execution-suite-report-section">
+              <div class="execution-suite-report-section-head">
+                <strong>数据行结果</strong>
+                <span>{{ suiteRunHistoryDetail.dataIterations.length }} 行</span>
+              </div>
+              <div class="execution-result-items execution-data-iterations">
+                <div class="execution-result-item-row is-head">
+                  <span>行号</span>
+                  <span>用例描述</span>
+                  <span>结果</span>
+                  <span>步骤数</span>
+                  <span>耗时</span>
+                  <span>失败步骤</span>
+                  <span>错误原因</span>
+                </div>
+                <div v-for="row in suiteRunHistoryDetail.dataIterations" :key="row.rowIndex" class="execution-result-item-row">
+                  <span>{{ row.rowIndex }}</span>
+                  <span>{{ row.caseDesc || '-' }}</span>
+                  <span :class="['execution-result-badge', runResultClass(row.result)]">{{ formatRunResult(row.result) }}</span>
+                  <span>{{ row.stepCount ?? '-' }}</span>
+                  <span>{{ formatDuration(row.durationMs) }}</span>
+                  <span>{{ row.failedStep || '-' }}</span>
+                  <span class="execution-result-error-text">{{ row.failureSummary || '-' }}</span>
+                </div>
+              </div>
+            </section>
+
+            <div v-if="!suiteReportItemGroups.length" class="execution-result-empty">暂无套件条目与步骤明细</div>
+          </div>
+        </template>
+        <div v-else class="execution-result-empty">报告详情加载中或已不存在</div>
+      </div>
+
+      <div
+        v-else-if="activeSuiteDetail"
+        v-loading="suiteDetailLoading"
+        :class="['execution-content-row', { 'is-result-tab': activeExecutionSubTab === 'result' }]"
+      >
         <section class="execution-suite-content">
           <div class="execution-sub-tab-row">
             <button
@@ -1715,7 +2162,7 @@ function showPending(message: string) {
               </div>
             </div>
           </div>
-          <div v-else-if="activeExecutionSubTab === 'result'" v-loading="suiteRunHistoryLoading" class="execution-result-panel">
+          <div v-else-if="activeExecutionSubTab === 'result'" v-loading="suiteRunHistoryLoading" class="execution-result-panel is-list-only">
             <section v-if="suiteLocalRunNotice.visible" class="execution-local-suite-run">
               <div class="execution-local-suite-run__main">
                 <el-tag :type="suiteLocalRunNotice.tone" effect="light">
@@ -1762,92 +2209,6 @@ function showPending(message: string) {
                 <span>{{ isActiveSuiteDraft ? '保存套件并运行后，这里会展示最近运行结果。' : '运行套件后，最近 10 次运行结果会显示在这里。' }}</span>
               </div>
             </div>
-            <div class="execution-result-detail app-soft-scrollbar">
-              <template v-if="suiteRunHistoryDetail">
-                <div class="execution-result-detail-head">
-                  <div class="execution-result-title-line">
-                    <span :class="['execution-result-badge', runResultClass(suiteRunHistoryDetail.result)]">
-                      {{ formatRunResult(suiteRunHistoryDetail.result) }}
-                    </span>
-                    <strong>{{ suiteRunHistoryDetail.suiteName }}</strong>
-                    <small>{{ formatDateTime(suiteRunHistoryDetail.createdAt) }}</small>
-                  </div>
-                  <div class="execution-result-summary-grid">
-                    <span><b>通过</b>{{ suiteRunHistoryDetail.successCount }}/{{ suiteRunHistoryDetail.totalCount }}</span>
-                    <span><b>失败</b>{{ suiteRunHistoryDetail.failedCount }}</span>
-                    <span><b>跳过</b>{{ suiteRunHistoryDetail.skippedCount }}</span>
-                    <span><b>耗时</b>{{ formatDuration(suiteRunHistoryDetail.durationMs) }}</span>
-                    <span><b>执行人</b>{{ suiteRunHistoryDetail.operatorName || '系统' }}</span>
-                    <span><b>模块</b>{{ suiteRunHistoryDetail.moduleName || '根目录' }}</span>
-                    <span><b>运行模式</b>{{ formatRunMode(suiteRunHistoryDetail.runMode) }}</span>
-                    <span><b>运行于</b>{{ formatRunOn(suiteRunHistoryDetail.runOn) }}</span>
-                    <span><b>失败后继续</b>{{ suiteRunHistoryDetail.continueOnFailure ? '是' : '否' }}</span>
-                    <span><b>重试次数</b>{{ suiteRunHistoryDetail.stepFailureRetryCount }}</span>
-                    <span><b>步骤等待</b>{{ suiteRunHistoryDetail.defaultStepWaitMs }}ms</span>
-                    <span><b>全局超时</b>{{ suiteRunHistoryDetail.globalTimeoutMs }}ms</span>
-                    <span v-if="suiteRunHistoryDetail.branchName"><b>分支</b>{{ suiteRunHistoryDetail.branchName }}</span>
-                    <span v-if="suiteRunHistoryDetail.triggerSource"><b>触发来源</b>{{ suiteRunHistoryDetail.triggerSource }}</span>
-                    <span v-if="suiteRunHistoryDetail.dataDrivenEnabled"><b>数据文件</b>{{ suiteRunHistoryDetail.dataFileName || '--' }}</span>
-                    <span v-if="suiteRunHistoryDetail.dataDrivenEnabled"><b>数据行数</b>{{ suiteRunHistoryDetail.dataRowCount }}</span>
-                  </div>
-                  <p v-if="suiteRunHistoryDetail.failureSummary">{{ suiteRunHistoryDetail.failureSummary }}</p>
-                </div>
-                <div v-if="suiteRunHistoryDetail.dataIterations?.length" class="execution-result-items execution-data-iterations">
-                  <strong>数据行迭代</strong>
-                  <div
-                    v-for="iteration in suiteRunHistoryDetail.dataIterations"
-                    :key="iteration.rowIndex"
-                    class="execution-data-iteration"
-                  >
-                    <span :class="['execution-result-badge', runResultClass(iteration.result)]">
-                      {{ formatRunResult(iteration.result) }}
-                    </span>
-                    <small>第 {{ iteration.rowIndex }} 行</small>
-                    <b>{{ iteration.caseDesc || `数据行 ${iteration.rowIndex}` }}</b>
-                    <span>{{ iteration.stepCount ?? 0 }} 步</span>
-                    <span>{{ formatDuration(iteration.durationMs) }}</span>
-                    <code>{{ formatRowValues(iteration.rowValues) }}</code>
-                    <p v-if="iteration.failureSummary">{{ iteration.failureSummary }}</p>
-                  </div>
-                </div>
-                <div v-if="suiteRunHistoryDetail.itemSnapshots.length" class="execution-result-items">
-                  <strong>编排项结果</strong>
-                  <div
-                    v-for="item in suiteRunHistoryDetail.itemSnapshots"
-                    :key="`${item.itemType}-${item.itemId}-${item.sortOrder}`"
-                    class="execution-result-item"
-                  >
-                    <span :class="['execution-result-badge', runResultClass(item.result)]">
-                      {{ formatRunResult(item.result) }}
-                    </span>
-                    <small>{{ formatSuiteItemType(item.itemType) }}</small>
-                    <b>{{ item.itemName }}</b>
-                    <span>{{ item.stepCount }} 步</span>
-                    <span>{{ formatDuration(item.durationMs) }}</span>
-                    <p v-if="item.failureSummary">{{ item.failureSummary }}</p>
-                  </div>
-                </div>
-                <div
-                  v-for="step in suiteRunHistoryDetail.stepResults"
-                  :key="`${step.stepOrder}-${step.stepName}`"
-                  class="execution-result-step"
-                >
-                  <span :class="['execution-result-badge', step.success ? 'is-success' : 'is-danger']">
-                    {{ step.success ? '通过' : '失败' }}
-                  </span>
-                  <strong>{{ step.stepName }}</strong>
-                  <small>{{ formatDuration(step.durationMs) }}</small>
-                  <span v-if="step.response?.statusCode" class="execution-result-code">HTTP {{ step.response.statusCode }}</span>
-                  <span v-if="step.assertionResults?.length" class="execution-result-muted">{{ step.assertionResults.length }} 断言</span>
-                  <span v-if="step.processorResults?.length" class="execution-result-muted">{{ step.processorResults.length }} 处理器</span>
-                  <p v-if="step.errorMessage">{{ step.errorMessage }}</p>
-                </div>
-              </template>
-              <div v-else class="execution-result-empty">
-                <strong>暂无运行详情</strong>
-                <span>选择左侧运行结果后查看详情</span>
-              </div>
-            </div>
           </div>
           <div v-else-if="activeExecutionSubTab === 'schedule'" class="execution-sub-config-panel">
             <label class="execution-config-switch is-form-row">
@@ -1880,7 +2241,7 @@ function showPending(message: string) {
           </div>
         </section>
 
-        <aside class="execution-config-panel">
+        <aside v-if="activeExecutionSubTab !== 'result'" class="execution-config-panel">
           <div class="execution-config-card">
             <div class="execution-config-head">
               <el-select v-model="executionVisualEnvironment" placeholder="选择运行环境" class="execution-config-select">
@@ -1919,15 +2280,6 @@ function showPending(message: string) {
             </div>
             <div class="execution-config-body app-soft-scrollbar">
               <label>
-                <span><b>*</b> 套件名称</span>
-                <el-input
-                  v-model="activeSuiteDetail.name"
-                  maxlength="80"
-                  placeholder="请输入套件名称"
-                  @input="markSuiteDraftDirty"
-                />
-              </label>
-              <label>
                 <span><b>*</b> 所属模块</span>
                 <el-select
                   v-model="activeSuiteDetail.moduleId"
@@ -1941,15 +2293,6 @@ function showPending(message: string) {
                     :label="option.label"
                     :value="option.value"
                   />
-                </el-select>
-              </label>
-              <label>
-                <span>套件等级</span>
-                <el-select v-model="activeSuiteDetail.priority" @change="markSuiteDraftDirty">
-                  <el-option label="P0" value="P0" />
-                  <el-option label="P1" value="P1" />
-                  <el-option label="P2" value="P2" />
-                  <el-option label="P3" value="P3" />
                 </el-select>
               </label>
               <label>
@@ -2008,9 +2351,8 @@ function showPending(message: string) {
                 <el-switch v-model="executionVisualNotify" />
               </div>
               <div class="execution-config-stats">
-                <div><span>上次运行</span><strong>{{ activeSuiteDetail.lastRunResult || '未运行' }}</strong></div>
+                <div><span>上次运行</span><strong>{{ activeSuiteDetail.lastRunResult ? formatRunResult(activeSuiteDetail.lastRunResult) : '未运行' }}</strong></div>
                 <div><span>运行时长</span><strong>--</strong></div>
-                <div><span>用例数</span><strong>{{ visibleExecutionSuiteCases.length }} 个</strong></div>
               </div>
             </div>
           </div>
@@ -2215,6 +2557,19 @@ function showPending(message: string) {
           </div>
         </div>
       </template>
+    </el-drawer>
+
+    <el-drawer
+      v-model="suiteReportStepDrawerVisible"
+      :title="suiteReportStepDetail?.stepName || '步骤明细'"
+      size="960px"
+      destroy-on-close
+      append-to-body
+      class="api-soft-drawer scenario-report-step-drawer"
+    >
+      <div v-if="suiteReportStepDetail" class="scenario-report-step-detail">
+        <ApiRunStepDetailViewer :step="suiteReportStepDetail" />
+      </div>
     </el-drawer>
   </div>
 </template>
@@ -2581,6 +2936,26 @@ function showPending(message: string) {
   opacity: 1;
 }
 
+.execution-report-tab-status {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #9ca3af;
+}
+
+.execution-report-tab-status.is-success {
+  background: #22c55e;
+}
+
+.execution-report-tab-status.is-danger {
+  background: #ef4444;
+}
+
+.execution-report-tab-status.is-warning {
+  background: #f59e0b;
+}
+
 .execution-suite-tab-close :deep(.el-icon) {
   font-size: 14px;
   font-weight: 700;
@@ -2633,6 +3008,10 @@ function showPending(message: string) {
   grid-template-columns: minmax(0, 1fr) 288px;
 }
 
+.execution-content-row.is-result-tab {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .execution-suite-content {
   display: flex;
   min-width: 0;
@@ -2640,6 +3019,10 @@ function showPending(message: string) {
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid #e5e7eb;
+}
+
+.execution-content-row.is-result-tab .execution-suite-content {
+  border-right: 0;
 }
 
 .execution-sub-tab-row {
@@ -3396,6 +3779,14 @@ function showPending(message: string) {
   overflow: hidden;
 }
 
+.execution-result-panel.is-list-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.execution-result-panel.is-list-only .execution-result-list {
+  border-right: 0;
+}
+
 .execution-local-suite-run {
   display: flex;
   grid-column: 1 / -1;
@@ -3689,6 +4080,298 @@ function showPending(message: string) {
 
 .execution-result-empty span {
   max-width: 220px;
+}
+
+.execution-suite-report-page {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.execution-suite-report-head {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.execution-suite-report-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.execution-suite-report-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.execution-suite-report-title strong,
+.execution-suite-report-title small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-suite-report-title strong {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.execution-suite-report-title small,
+.execution-suite-report-meta {
+  color: #667085;
+  font-size: 12px;
+}
+
+.execution-suite-report-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.execution-suite-report-body {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
+  gap: 12px;
+  overflow: auto;
+  padding: 16px;
+}
+
+.execution-suite-report-summary {
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.execution-result-failure-summary {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.execution-suite-report-section {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.execution-suite-report-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.execution-suite-report-section-head strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.execution-suite-report-section-head span {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.execution-suite-report-item-table,
+.execution-suite-report-step-table {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.execution-suite-report-item-row,
+.execution-suite-report-step-row {
+  display: grid;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid #f3f4f6;
+  background: #ffffff;
+  color: #4b5563;
+  font-size: 12px;
+  text-align: left;
+}
+
+.execution-suite-report-item-row {
+  grid-template-columns: 28px 48px 72px minmax(160px, 1.6fr) 78px 72px 90px minmax(180px, 1.2fr);
+}
+
+.execution-suite-report-step-row {
+  width: 100%;
+  grid-template-columns: 48px minmax(180px, 1fr) 78px 72px 90px minmax(180px, 1.2fr);
+}
+
+button.execution-suite-report-item-row {
+  width: 100%;
+  cursor: pointer;
+}
+
+button.execution-suite-report-item-row:hover {
+  background: #f9fafb;
+}
+
+button.execution-suite-report-step-row {
+  cursor: pointer;
+}
+
+button.execution-suite-report-step-row:hover {
+  background: #f9fafb;
+}
+
+.execution-suite-report-step-row.is-container {
+  background: #fcfcfd;
+  color: #667085;
+}
+
+.execution-suite-report-step-row.is-group {
+  background: #f8fafc;
+  color: #344054;
+  font-weight: 500;
+}
+
+.execution-suite-report-step-row.is-child {
+  background: #ffffff;
+}
+
+.execution-suite-report-step-row.is-child .execution-suite-report-step-name {
+  padding-left: 18px;
+}
+
+.execution-suite-report-step-name {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.execution-suite-report-step-name > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-suite-report-step-kind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f9fafb;
+  color: #667085;
+  font-size: 11px;
+}
+
+.execution-suite-report-item-row.is-head,
+.execution-suite-report-step-row.is-head {
+  min-height: 36px;
+  background: #f9fafb;
+  color: #667085;
+  font-weight: 600;
+}
+
+.execution-suite-report-item-row:last-child,
+.execution-suite-report-step-row:last-child {
+  border-bottom: 0;
+}
+
+.execution-suite-report-item-row > span,
+.execution-suite-report-step-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-report-expand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  transition: transform 0.16s ease;
+}
+
+.execution-report-expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.execution-report-expand-icon :deep(.el-icon) {
+  font-size: 13px;
+}
+
+.execution-suite-report-item-steps {
+  display: grid;
+  padding: 0 0 0 28px;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fbfcfe;
+}
+
+.execution-suite-report-item-steps .execution-suite-report-step-row {
+  border-left: 1px solid #eef2f7;
+  background: transparent;
+}
+
+.execution-suite-report-item-steps .execution-suite-report-step-row.is-head {
+  background: #f8fafc;
+}
+
+.execution-result-empty.is-compact {
+  min-height: 72px;
+}
+
+.execution-result-error-text {
+  color: #dc2626;
+}
+
+.scenario-report-step-detail {
+  display: flex;
+  height: calc(100vh - 52px);
+  min-height: 0;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px 18px 20px;
+  box-sizing: border-box;
+}
+
+:deep(.scenario-report-step-drawer .el-drawer__header) {
+  display: flex;
+  align-items: center;
+  min-height: 52px;
+  margin-bottom: 0;
+  padding: 0 18px !important;
+  border-bottom: 1px solid #e5e7eb;
+  box-sizing: border-box;
+}
+
+:deep(.scenario-report-step-drawer .el-drawer__body) {
+  padding: 0;
+  background: #ffffff;
 }
 
 .execution-sub-config-panel {

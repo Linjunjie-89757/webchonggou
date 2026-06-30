@@ -162,6 +162,7 @@ function confirmCreateModule() {
     title="保存接口"
     width="520px"
     class="api-definition-save-dialog"
+    append-to-body
     :close-on-click-modal="!props.submitting"
     :close-on-press-escape="!props.submitting"
     @close="closeDialog"

@@ -221,6 +221,7 @@ public class ApiLocalRunnerReportService {
         Map<String, Object> runOptions = safeMap(payload.get("runOptions"));
         List<Map<String, Object>> stepResults = safeList(reportData.get("stepResults"));
         List<Map<String, Object>> itemSnapshots = safeList(reportData.get("itemSnapshots"));
+        List<Map<String, Object>> suiteStepResults = enrichSuiteStepResults(stepResults, itemSnapshots);
         Long suiteId = longValue(suiteSnapshot.get("suiteId"));
         ApiExecutionSuiteEntity suite = suiteMapper == null || suiteId == null ? null : suiteMapper.selectById(suiteId);
         Long workspaceId = suite == null ? event.workspaceId() : suite.getWorkspaceId();
@@ -228,7 +229,7 @@ public class ApiLocalRunnerReportService {
 
         RunArtifacts artifacts = createRunArtifacts(workspaceId, "接口套件本地执行", suiteName, event);
         int order = 1;
-        for (Map<String, Object> stepResult : stepResults) {
+        for (Map<String, Object> stepResult : suiteStepResults) {
             stepResultMapper.insert(toStepEntity(
                     workspaceId,
                     artifacts.report().getId(),
@@ -261,10 +262,10 @@ public class ApiLocalRunnerReportService {
             history.setReportId(artifacts.report().getId());
             history.setResult(event.status());
             history.setFailureSummary(firstText(stringValue(result.get("errorMessage")), stringValue(summary.get("errorMessage")), null));
-            history.setTotalCount(integerValue(summary.get("totalSteps"), stepResults.size()));
-            history.setSuccessCount(integerValue(summary.get("passedSteps"), countStatus(stepResults, "SUCCESS")));
-            history.setFailedCount(integerValue(summary.get("failedSteps"), countStatus(stepResults, "FAILED")));
-            history.setSkippedCount(integerValue(summary.get("skippedSteps"), countStatus(stepResults, "SKIPPED")));
+            history.setTotalCount(integerValue(summary.get("totalSteps"), suiteStepResults.size()));
+            history.setSuccessCount(integerValue(summary.get("passedSteps"), countStatus(suiteStepResults, "SUCCESS")));
+            history.setFailedCount(integerValue(summary.get("failedSteps"), countStatus(suiteStepResults, "FAILED")));
+            history.setSkippedCount(integerValue(summary.get("skippedSteps"), countStatus(suiteStepResults, "SKIPPED")));
             history.setDurationMs(longValue(result.get("durationMs"), 0L));
             history.setEnvironmentId(longValue(runOptions.get("environmentId")));
             history.setVariableSetId(longValue(runOptions.get("variableSetId")));
@@ -278,7 +279,7 @@ public class ApiLocalRunnerReportService {
             history.setDataIterationJson("[]");
             history.setTriggerSource("LOCAL_RUNNER");
             history.setOperatorName("Local Runner");
-            history.setDetailJson(ApiAutomationJsonSupport.toJson(stepResults, "Failed to serialize Local Runner API suite step detail"));
+            history.setDetailJson(ApiAutomationJsonSupport.toJson(suiteStepResults, "Failed to serialize Local Runner API suite step detail"));
             history.setItemSnapshotJson(ApiAutomationJsonSupport.toJson(itemSnapshots, "Failed to serialize Local Runner API suite item snapshots"));
             history.setContextSnapshotJson(contextSnapshot(event));
             history.setCreatedAt(LocalDateTime.now());
@@ -434,6 +435,30 @@ public class ApiLocalRunnerReportService {
                 "runnerId", Optional.ofNullable(event.runnerId()).orElse(""),
                 "taskType", event.taskType()
         ), "Failed to serialize Local Runner API context snapshot");
+    }
+
+    private List<Map<String, Object>> enrichSuiteStepResults(
+            List<Map<String, Object>> stepResults,
+            List<Map<String, Object>> itemSnapshots
+    ) {
+        if (stepResults.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> enriched = new java.util.ArrayList<>();
+        int stepCursor = 0;
+        for (Map<String, Object> item : itemSnapshots) {
+            int stepCount = Math.max(0, integerValue(item.get("stepCount"), 0));
+            for (int offset = 0; offset < stepCount && stepCursor < stepResults.size(); offset++) {
+                Map<String, Object> step = new java.util.LinkedHashMap<>(stepResults.get(stepCursor++));
+                step.putIfAbsent("suiteItemId", firstPresent(item.get("suiteItemId"), item.get("itemId")));
+                step.putIfAbsent("suiteItemOrder", item.get("sortOrder"));
+                enriched.add(step);
+            }
+        }
+        while (stepCursor < stepResults.size()) {
+            enriched.add(new java.util.LinkedHashMap<>(stepResults.get(stepCursor++)));
+        }
+        return enriched;
     }
 
     private long responseSize(Map<String, Object> response) {

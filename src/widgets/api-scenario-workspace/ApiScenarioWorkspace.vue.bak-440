@@ -40,7 +40,6 @@ import {
   type ApiDefinitionCaseItem,
   type ApiDefinitionDetail,
   type ApiDefinitionItem,
-  type ApiDefinitionModuleItem,
   type ApiRequestSnapshot,
   type ApiResponseSnapshot,
   type ApiKeyValueInput,
@@ -76,18 +75,15 @@ import { getRequestErrorMessage } from '@/shared/api/error'
 import AppTableColumnSettingsDrawer, { type AppTableColumnSettingsItem } from '@/shared/ui/app-table-column-settings-drawer/AppTableColumnSettingsDrawer.vue'
 import AppTableSettingsTrigger from '@/shared/ui/app-table-settings-trigger/AppTableSettingsTrigger.vue'
 import ApiCodeEditor from '../api-interface-workspace/ApiCodeEditor.vue'
-import ApiRunStepDetailViewer from './ApiRunStepDetailViewer.vue'
 import ApiScenarioTestDataPanel from './ApiScenarioTestDataPanel.vue'
 import ScenarioAssertionEditor from './ScenarioAssertionEditor.vue'
 import ScenarioProcessorEditor from './ScenarioProcessorEditor.vue'
-import { normalizeSwaggerPathVariables } from './lib/apiRequestPathTemplate'
 
 type ScenarioDetailTab = 'steps' | 'testData' | 'reports' | 'settings' | 'cicd'
 type ScenarioModuleNodeType = 'root' | 'workspace' | 'module'
 type ScenarioImportTreeNodeType = 'root' | 'workspace' | 'module'
 type ScenarioStepConfigTab = 'params' | 'headers' | 'body' | 'auth' | 'pre' | 'post' | 'tests' | 'settings'
 type ScenarioResponseTab = 'body' | 'header' | 'console' | 'actualRequest' | 'assertions'
-type ScenarioEditorTabKind = 'list' | 'scenario' | 'report'
 type ScenarioScriptConfigTab = 'script' | 'assertions'
 type ScenarioBodyType = 'NONE' | 'FORM_DATA' | 'FORM_URLENCODED' | 'RAW_JSON' | 'RAW_XML' | 'RAW_TEXT' | 'BINARY'
 type ScenarioCodeLanguage = 'api-console' | 'json' | 'xml' | 'text' | 'javascript'
@@ -186,17 +182,11 @@ interface ScenarioImportTreeNode {
 
 interface ScenarioEditorTab {
   key: string
-  kind: ScenarioEditorTabKind
   id: number | null
   title: string
   dirty: boolean
   savedFingerprint: string
   detail: ApiScenarioDetail | null
-  reportHistoryId?: number | null
-  reportWorkspaceCode?: string | null
-  reportDetail?: ApiScenarioRunHistoryDetail | null
-  reportLoading?: boolean
-  reportResponseTab?: ScenarioResponseTab
   lastRunStepResults: ApiRunStepResult[]
   lastRunDataIterations: ApiExecutionSuiteDataIteration[]
   lastRunResult: string | null
@@ -244,11 +234,6 @@ const loading = ref(false)
 const moduleErrorMessage = ref('')
 const scenarioErrorMessage = ref('')
 const scenarios = ref<ApiScenarioItem[]>([])
-const scenarioListRows = ref<ApiScenarioItem[]>([])
-const scenarioListTotal = ref(0)
-const scenarioListPageNo = ref(1)
-const scenarioListPageSize = ref(20)
-const scenarioListTotalPages = ref(0)
 const modules = ref<ApiScenarioModuleItem[]>([])
 const dbConnections = ref<DbConnectionItem[]>([])
 const scenarioModuleKeyword = ref('')
@@ -279,11 +264,7 @@ const selectedScenarioRunHistoryId = ref<number | null>(null)
 const selectedScenarioRunHistoryDetail = ref<ApiScenarioRunHistoryDetail | null>(null)
 const scenarioRunHistoryLoading = ref(false)
 const scenarioRunHistoryDetailLoading = ref(false)
-const scenarioReportStepDrawerVisible = ref(false)
-const scenarioReportStepDetail = ref<ApiRunStepResult | null>(null)
-const scenarioReportStepResponseTab = ref<ScenarioResponseTab>('body')
 let scenarioLocalRunnerTaskTimer: ReturnType<typeof window.setTimeout> | null = null
-let scenarioListFilterTimer: ReturnType<typeof window.setTimeout> | null = null
 const scenarioSoftPromptVisible = ref(false)
 const scenarioSoftPromptTitle = ref('')
 const scenarioSoftPromptMessage = ref('')
@@ -302,7 +283,6 @@ const scenarioSoftConfirmText = ref('确定')
 const scenarioSoftCancelText = ref('取消')
 const scenarioDefinitions = ref<ApiDefinitionItem[]>([])
 const scenarioCases = ref<ApiDefinitionCaseItem[]>([])
-const scenarioDefinitionModules = ref<ApiDefinitionModuleItem[]>([])
 const scenarioImportDrawerVisible = ref(false)
 const scenarioImportActiveTab = ref<ScenarioImportTab>('api')
 const scenarioImportKeyword = ref('')
@@ -338,7 +318,6 @@ const scenarioHeaderNameDraft = ref('')
 const scenarioEditorTabs = ref<ScenarioEditorTab[]>([
   {
     key: 'scenario-list',
-    kind: 'list',
     id: null,
     title: '全部场景',
     dirty: false,
@@ -391,7 +370,7 @@ const activeScenarioEditorTab = computed(() => (
 ))
 
 const activeScenarioDetail = computed(() => activeScenarioEditorTab.value?.detail || buildEmptyScenarioDetail())
-const activeScenarioRunHistoryDetail = computed(() => activeScenarioEditorTab.value?.reportDetail || selectedScenarioRunHistoryDetail.value)
+const activeScenarioRunHistoryDetail = computed(() => selectedScenarioRunHistoryDetail.value)
 const activeScenarioRunSteps = computed(() => activeScenarioRunHistoryDetail.value?.stepResults || activeScenarioEditorTab.value?.lastRunStepResults || [])
 const activeScenarioRunDataIterations = computed(() => activeScenarioRunHistoryDetail.value?.dataIterations || activeScenarioEditorTab.value?.lastRunDataIterations || [])
 const activeScenarioRunResult = computed(() => activeScenarioRunHistoryDetail.value?.result || activeScenarioEditorTab.value?.lastRunResult || activeScenarioDetail.value.lastRunResult || null)
@@ -404,8 +383,6 @@ const activeScenarioWorkspaceName = computed(() => getWorkspaceName(activeScenar
 const activeScenarioUpdatedAt = computed(() => formatScenarioDateTime(activeScenarioDetail.value.updatedAt))
 const activeScenarioLocalRunnerTask = computed(() => activeScenarioEditorTab.value?.localRunnerTask || null)
 const activeScenarioLocalRunnerReportKey = computed(() => buildApiReportKey('SCENARIO', selectedScenarioRunHistoryId.value))
-const activeScenarioReportTabDetail = computed(() => activeScenarioEditorTab.value?.reportDetail || null)
-const activeScenarioReportTabLoading = computed(() => Boolean(activeScenarioEditorTab.value?.reportLoading))
 const activeScenarioModuleLabel = computed(() => {
   if (activeScenarioDetail.value.moduleName) return activeScenarioDetail.value.moduleName
   return activeScenarioDetail.value.moduleId == null ? '根目录' : '未命名模块'
@@ -498,7 +475,20 @@ const scenarioModuleTree = computed<ScenarioModuleTreeNode[]>(() => {
   return workspaceNodes
 })
 
-const filteredScenarios = computed(() => scenarioListRows.value)
+const filteredScenarios = computed(() => scenarios.value.filter((item) => {
+  const keyword = scenarioFilters.value.keyword.trim().toLowerCase()
+  if (keyword) {
+    const haystack = [String(100000 + item.id), item.name, item.description, ...(item.tags || [])]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    if (!haystack.includes(keyword)) return false
+  }
+  if (selectedScenarioWorkspaceCode.value && item.workspaceCode !== selectedScenarioWorkspaceCode.value) return false
+  if (selectedScenarioModuleId.value != null && item.moduleId !== selectedScenarioModuleId.value) return false
+  if (scenarioFilters.value.status && item.status !== scenarioFilters.value.status) return false
+  return true
+}))
 
 const activeScenarioStep = computed(() => {
   if (!scenarioStepConfigPath.value.length) return null
@@ -673,11 +663,9 @@ const scenarioImportSelectedDefinitionRows = computed(() => scenarioDefinitions.
 const scenarioImportSelectedCaseRows = computed(() => scenarioCases.value.filter(item => scenarioImportSelectedCaseIds.value.includes(item.id)))
 const scenarioImportSelectedScenarioRows = computed(() => scenarios.value.filter(item => scenarioImportSelectedScenarioIds.value.includes(item.id)))
 const scenarioImportSelectedTotal = computed(() => (
-  scenarioImportActiveTab.value === 'api'
-    ? scenarioImportSelectedDefinitionIds.value.length
-    : scenarioImportActiveTab.value === 'case'
-      ? scenarioImportSelectedCaseIds.value.length
-      : scenarioImportSelectedScenarioIds.value.length
+  scenarioImportSelectedDefinitionIds.value.length
+  + scenarioImportSelectedCaseIds.value.length
+  + scenarioImportSelectedScenarioIds.value.length
 ))
 
 const scenarioStepConfigTitle = computed(() => {
@@ -1131,58 +1119,47 @@ function filterScenarioImportTreeNodes(nodes: ScenarioImportTreeNode[], keyword:
 }
 
 function buildScenarioImportDirectoryNodes(workspaceCode: string | null, type: 'api' | 'case'): ScenarioImportTreeNode[] {
-  const scopedModules = scenarioDefinitionModules.value.filter(item => !workspaceCode || item.workspaceCode === workspaceCode)
-  const countByPath = new Map<string, number>()
-  const increaseCount = (path: string | null | undefined) => {
-    const normalized = normalizeScenarioImportModulePath(path)
-    if (!normalized) return
-    const segments = normalized.split('/').map(item => item.trim()).filter(Boolean)
+  type MutableNode = ScenarioImportTreeNode & { childMap?: Map<string, MutableNode> }
+  const directories = type === 'api'
+    ? scenarioDefinitions.value.map(item => item.directoryName || '')
+    : scenarioCases.value.map(item => scenarioDefinitions.value.find(definition => definition.id === item.definitionId)?.directoryName || '')
+  const rootChildren: MutableNode[] = []
+  const rootMap = new Map<string, MutableNode>()
+  const ensureNode = (parentChildren: MutableNode[], parentMap: Map<string, MutableNode>, label: string, fullPath: string) => {
+    let node = parentMap.get(fullPath)
+    if (!node) {
+      node = {
+        key: `scenario-import-directory:${type}:${workspaceCode || 'ALL'}:${fullPath}`,
+        type: 'module',
+        label,
+        workspaceCode,
+        modulePath: fullPath,
+        moduleId: null,
+        count: 0,
+        children: [],
+        childMap: new Map(),
+      }
+      parentMap.set(fullPath, node)
+      parentChildren.push(node)
+    }
+    return node
+  }
+  for (const directory of directories) {
+    const path = directory.trim()
+    if (!path) continue
+    const segments = path.split('/').map(item => item.trim()).filter(Boolean)
+    let currentChildren = rootChildren
+    let currentMap = rootMap
     let assembled = ''
     for (const segment of segments) {
       assembled = assembled ? `${assembled}/${segment}` : segment
-      countByPath.set(assembled, (countByPath.get(assembled) || 0) + 1)
+      const node = ensureNode(currentChildren, currentMap, segment, assembled)
+      node.count += 1
+      currentChildren = node.children as MutableNode[]
+      currentMap = node.childMap ?? new Map<string, MutableNode>()
     }
   }
-
-  if (type === 'api') {
-    scenarioDefinitions.value.forEach(item => increaseCount(item.directoryName))
-  } else {
-    scenarioCases.value.forEach((item) => {
-      const definition = scenarioDefinitions.value.find(definitionItem => definitionItem.id === item.definitionId)
-      increaseCount(definition?.directoryName)
-    })
-  }
-
-  const toImportNode = (module: ApiDefinitionModuleItem): ScenarioImportTreeNode => {
-    const fullPath = normalizeScenarioImportModulePath(module.fullPath || module.name)
-    return {
-      key: `scenario-import-directory:${type}:${module.workspaceCode}:${module.id}`,
-      type: 'module',
-      label: module.name,
-      workspaceCode: module.workspaceCode,
-      modulePath: fullPath || null,
-      moduleId: module.id,
-      count: countByPath.get(fullPath) || 0,
-      children: (module.children || []).map(toImportNode),
-    }
-  }
-  return scopedModules.map(toImportNode)
-}
-
-function normalizeScenarioImportModulePath(path: string | null | undefined) {
-  return (path || '')
-    .replace(/\\/g, '/')
-    .split('/')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .join('/')
-}
-
-function isScenarioImportPathInModule(directoryName: string | null | undefined, modulePath: string | null | undefined) {
-  const directory = normalizeScenarioImportModulePath(directoryName)
-  const module = normalizeScenarioImportModulePath(modulePath)
-  if (!module) return true
-  return directory === module || directory.startsWith(`${module}/`)
+  return stripScenarioImportChildMap(rootChildren)
 }
 
 function buildScenarioImportScenarioModuleNodes(workspaceCode: string | null): ScenarioImportTreeNode[] {
@@ -1201,10 +1178,17 @@ function buildScenarioImportScenarioModuleNodes(workspaceCode: string | null): S
     .map(toImportNode)
 }
 
+function stripScenarioImportChildMap(nodes: Array<ScenarioImportTreeNode & { childMap?: Map<string, unknown> }>): ScenarioImportTreeNode[] {
+  return nodes.map(({ childMap: _childMap, children, ...node }) => ({
+    ...node,
+    children: stripScenarioImportChildMap(children as Array<ScenarioImportTreeNode & { childMap?: Map<string, unknown> }>),
+  }))
+}
+
 function matchesScenarioImportDefinitionScope(item: ApiDefinitionItem, node: ScenarioImportTreeNode | null) {
   if (!node || node.type === 'root') return true
   if (node.workspaceCode && item.workspaceCode !== node.workspaceCode) return false
-  if (node.modulePath) return isScenarioImportPathInModule(item.directoryName, node.modulePath)
+  if (node.modulePath) return (item.directoryName || '').startsWith(node.modulePath)
   return true
 }
 
@@ -1213,7 +1197,7 @@ function matchesScenarioImportCaseScope(item: ApiDefinitionCaseItem, node: Scena
   if (node.workspaceCode && item.workspaceCode !== node.workspaceCode) return false
   if (!node.modulePath) return true
   const definition = scenarioDefinitions.value.find(definitionItem => definitionItem.id === item.definitionId)
-  return isScenarioImportPathInModule(definition?.directoryName, node.modulePath)
+  return (definition?.directoryName || '').startsWith(node.modulePath)
 }
 
 function matchesScenarioImportScenarioScope(item: ApiScenarioItem, node: ScenarioImportTreeNode | null) {
@@ -1240,25 +1224,19 @@ function collapseAllScenarioModuleTreeChildren() {
   scenarioModuleTreeRenderKey.value += 1
 }
 
-async function handleScenarioModuleSelect(data: ScenarioModuleTreeNode) {
+function handleScenarioModuleSelect(data: ScenarioModuleTreeNode) {
   if (data.type === 'root') {
     selectedScenarioWorkspaceCode.value = null
     selectedScenarioModuleId.value = null
-    resetScenarioListPage()
-    await loadScenarioWorkspace()
     return
   }
   if (data.type === 'workspace') {
     selectedScenarioWorkspaceCode.value = data.workspaceCode
     selectedScenarioModuleId.value = null
-    resetScenarioListPage()
-    await loadScenarioWorkspace()
     return
   }
   selectedScenarioWorkspaceCode.value = data.workspaceCode
   selectedScenarioModuleId.value = data.id
-  resetScenarioListPage()
-  await loadScenarioWorkspace()
 }
 
 function scenarioStatusLabel(status?: string | null) {
@@ -1487,7 +1465,7 @@ function setHoveredScenarioRow(rowId: number | null) {
 }
 
 function markScenarioDirty() {
-  if (activeScenarioEditorTab.value?.kind === 'scenario') {
+  if (activeScenarioEditorTab.value && activeScenarioEditorTab.value.key !== 'scenario-list') {
     activeScenarioEditorTab.value.dirty = true
   }
 }
@@ -1591,90 +1569,6 @@ async function loadScenarioRunHistoryDetail(historyId: number) {
   }
 }
 
-function scenarioReportTabKey(historyId: number) {
-  return `scenario-report-${historyId}`
-}
-
-function scenarioReportTabTitle(item?: ApiScenarioRunHistoryItem | ApiScenarioRunHistoryDetail | null) {
-  if (!item) return '测试报告'
-  const time = formatScenarioDateTime(item.createdAt)
-  return time === '-' ? '测试报告' : `测试报告 ${time.slice(5)}`
-}
-
-async function openScenarioRunReportTab(historyId: number, workspaceCode?: string | null) {
-  const key = scenarioReportTabKey(historyId)
-  const existing = scenarioEditorTabs.value.find(item => item.key === key)
-  if (existing) {
-    activeScenarioEditorKey.value = existing.key
-    if (!existing.reportDetail && !existing.reportLoading) {
-      void loadScenarioReportTabDetail(existing)
-    }
-    void nextTick(scrollActiveScenarioTabIntoView)
-    return
-  }
-
-  const historyItem = scenarioRunHistoryItems.value.find(item => item.id === historyId)
-  const tab: ScenarioEditorTab = {
-    key,
-    kind: 'report',
-    id: null,
-    title: scenarioReportTabTitle(historyItem),
-    dirty: false,
-    savedFingerprint: '',
-    detail: null,
-    reportHistoryId: historyId,
-    reportWorkspaceCode: workspaceCode || historyItem?.workspaceCode || activeScenarioDetail.value.workspaceCode || props.workspaceCode,
-    reportDetail: null,
-    reportLoading: true,
-    reportResponseTab: 'body',
-    lastRunStepResults: [],
-    lastRunDataIterations: [],
-    lastRunResult: historyItem?.result || null,
-    lastRunFailureSummary: historyItem?.failureSummary || null,
-    localRunnerTask: null,
-  }
-  scenarioEditorTabs.value.push(tab)
-  activeScenarioEditorKey.value = key
-  selectedScenarioRunHistoryId.value = historyId
-  void nextTick(scrollActiveScenarioTabIntoView)
-  const reactiveTab = scenarioEditorTabs.value.find(item => item.key === key) || tab
-  await loadScenarioReportTabDetail(reactiveTab)
-}
-
-async function loadScenarioReportTabDetail(tab: ScenarioEditorTab) {
-  const target = scenarioEditorTabs.value.find(item => item.key === tab.key) || tab
-  if (!target.reportHistoryId || !target.reportWorkspaceCode || target.reportWorkspaceCode === 'ALL') return
-  target.reportLoading = true
-  try {
-    const detail = await apiAutomationApi.getScenarioRunHistoryDetail(target.reportWorkspaceCode, target.reportHistoryId)
-    target.reportDetail = detail
-    target.title = scenarioReportTabTitle(detail)
-    target.lastRunStepResults = detail.stepResults || []
-    target.lastRunDataIterations = detail.dataIterations || []
-    target.lastRunResult = detail.result
-    target.lastRunFailureSummary = detail.failureSummary || null
-    selectedScenarioRunHistoryId.value = detail.id
-    selectedScenarioRunHistoryDetail.value = detail
-  } catch (error) {
-    target.reportDetail = null
-    ElMessage.error(getRequestErrorMessage(error))
-  } finally {
-    target.reportLoading = false
-  }
-}
-
-async function openLatestScenarioRunReportTab() {
-  const latest = scenarioRunHistoryItems.value[0]
-  if (!latest) return
-  await openScenarioRunReportTab(latest.id, latest.workspaceCode)
-}
-
-function openScenarioReportStepDrawer(row: ApiRunStepResult) {
-  scenarioReportStepDetail.value = row
-  scenarioReportStepResponseTab.value = row.response ? 'body' : 'console'
-  scenarioReportStepDrawerVisible.value = true
-}
-
 function stopScenarioLocalRunnerTaskRefresh() {
   if (scenarioLocalRunnerTaskTimer) {
     window.clearTimeout(scenarioLocalRunnerTaskTimer)
@@ -1705,7 +1599,6 @@ async function refreshScenarioLocalRunnerTask(silent = false) {
     if (isApiRunnerTaskTerminal(task.status)) {
       await loadScenarioRunHistory(true)
       activeScenarioDetailTab.value = 'reports'
-      await openLatestScenarioRunReportTab()
     }
     if (!silent) {
       ElMessage.success('本地执行任务状态已刷新')
@@ -1758,7 +1651,7 @@ function fingerprintScenarioDetail(detail: ApiScenarioDetail) {
 }
 
 function isScenarioEditorTabDirty(tab: ScenarioEditorTab) {
-  if (tab.kind !== 'scenario' || !tab.detail) return false
+  if (tab.key === 'scenario-list' || !tab.detail) return false
   return tab.dirty || tab.savedFingerprint !== fingerprintScenarioDetail(tab.detail)
 }
 
@@ -1983,7 +1876,7 @@ function normalizeScenarioRequestConfig(config?: ApiRequestConfigInput | null): 
   const rawText = body.rawText ?? ''
   return {
     method: String(next.method || 'GET').toUpperCase(),
-    path: normalizeSwaggerPathVariables(next.path),
+    path: next.path || '',
     timeoutMs: Number(next.timeoutMs || 30000),
     queryParams: Array.isArray(next.queryParams) ? next.queryParams : [],
     headers: Array.isArray(next.headers) ? next.headers : [],
@@ -2120,7 +2013,6 @@ function openNewScenarioTab() {
   const detail = buildEmptyScenarioDetail()
   scenarioEditorTabs.value.push({
     key,
-    kind: 'scenario',
     id: null,
     title: detail.name,
     dirty: false,
@@ -2141,16 +2033,8 @@ function openNewScenarioTab() {
 
 function activateScenarioEditorTab(key: string) {
   activeScenarioEditorKey.value = key
-  const tab = scenarioEditorTabs.value.find(item => item.key === key)
-  if (tab?.kind === 'report') {
-    selectedScenarioRunHistoryId.value = tab.reportHistoryId || null
-  } else {
-    resetScenarioRunHistoryState()
-    void loadScenarioRunDatasets()
-    if (activeScenarioDetailTab.value === 'reports') {
-      void loadScenarioRunHistory(false)
-    }
-  }
+  resetScenarioRunHistoryState()
+  void loadScenarioRunDatasets()
   void nextTick(scrollActiveScenarioTabIntoView)
 }
 
@@ -2170,7 +2054,6 @@ async function selectScenario(id: number) {
     const key = `scenario-${id}`
     scenarioEditorTabs.value.push({
       key,
-      kind: 'scenario',
       id,
       title: detail.name,
       dirty: false,
@@ -2263,7 +2146,7 @@ async function handleScenarioEditorMoreAction(command: string) {
     return
   }
   if (command === 'closeDrafts') {
-    const draftTabs = scenarioEditorTabs.value.filter(item => item.kind === 'scenario' && item.id == null)
+    const draftTabs = scenarioEditorTabs.value.filter(item => item.key !== 'scenario-list' && item.id == null)
     if (!draftTabs.length) {
       ElMessage.info('当前没有草稿标签')
       return
@@ -2380,7 +2263,6 @@ async function copyScenario(row: ApiScenarioItem) {
     const key = `scenario-copy-${Date.now()}`
     scenarioEditorTabs.value.push({
       key,
-      kind: 'scenario',
       id: null,
       title: copy.name,
       dirty: true,
@@ -2440,6 +2322,13 @@ function scenarioStepTypeBadgeLabel(stepOrType?: ApiScenarioStep | ApiScenarioSt
     SCRIPT: '脚本操作',
   }
   return labels[type || 'API'] || '引用 API'
+}
+
+function scenarioStepRefTypeLabel(step?: ApiScenarioStep | null) {
+  const refType = normalizeScenarioStepRefType(step)
+  if (refType === 'COPY') return '复制'
+  if (refType === 'REF') return '引用'
+  return '自定义'
 }
 
 function scenarioStepTypeClass(type?: ApiScenarioStepType | null) {
@@ -2579,9 +2468,6 @@ function resetScenarioImportSelection() {
 function handleScenarioImportTabChange() {
   scenarioImportKeyword.value = ''
   selectedScenarioImportTreeKey.value = 'scenario-import-all'
-  scenarioImportSelectedDefinitionIds.value = []
-  scenarioImportSelectedCaseIds.value = []
-  scenarioImportSelectedScenarioIds.value = []
 }
 
 function handleScenarioImportDefinitionSelection(rows: ApiDefinitionItem[]) {
@@ -2856,7 +2742,7 @@ function createCopyStepFromDefinition(detail: Awaited<ReturnType<typeof apiAutom
     stepName: detail.name,
     refType: 'COPY',
     resourceId: detail.id,
-    requestConfig: normalizeScenarioRequestConfig(deepClone(detail.requestConfig)),
+    requestConfig: deepClone(detail.requestConfig),
     assertions: deepClone(detail.assertions || []),
     preProcessors: deepClone(detail.preProcessors || []),
     postProcessors: deepClone(detail.postProcessors || []),
@@ -2878,19 +2764,10 @@ function createCopyStepFromCase(detail: Awaited<ReturnType<typeof apiAutomationA
     stepName: detail.name,
     refType: 'COPY',
     resourceId: detail.id,
-    requestConfig: normalizeScenarioRequestConfig(deepClone(detail.requestConfig)),
+    requestConfig: deepClone(detail.requestConfig),
     assertions: deepClone(detail.assertions || []),
     preProcessors: deepClone(detail.preProcessors || []),
     postProcessors: deepClone(detail.postProcessors || []),
-  }
-}
-
-function createReferenceStepFromScenario(item: ApiScenarioItem): ApiScenarioStep {
-  return {
-    ...createScenarioStep('API_SCENARIO'),
-    stepName: item.name,
-    refType: 'REF',
-    resourceId: item.id,
   }
 }
 
@@ -2903,31 +2780,23 @@ async function handleScenarioImport(mode: ScenarioImportMode) {
   const workspaceCode = activeScenarioDetail.value.workspaceCode || props.workspaceCode
   scenarioImportLoading.value = true
   try {
-    const importedDefinitionSteps = scenarioImportActiveTab.value !== 'api'
-      ? []
-      : mode === 'copy'
+    const copiedDefinitionSteps = mode === 'copy'
       ? await Promise.all(
           scenarioImportSelectedDefinitionRows.value.map(async item => createCopyStepFromDefinition(await apiAutomationApi.getDefinitionDetail(workspaceCode, item.id))),
         )
       : scenarioImportSelectedDefinitionRows.value.map(createReferenceStepFromDefinition)
-    const importedCaseSteps = scenarioImportActiveTab.value !== 'case'
-      ? []
-      : mode === 'copy'
+    const copiedCaseSteps = mode === 'copy'
       ? await Promise.all(
           scenarioImportSelectedCaseRows.value.map(async item => createCopyStepFromCase(await apiAutomationApi.getCaseDetail(workspaceCode, item.id))),
         )
       : scenarioImportSelectedCaseRows.value.map(createReferenceStepFromCase)
-    const importedScenarioSteps = scenarioImportActiveTab.value !== 'scenario'
-      ? []
-      : mode === 'copy'
-        ? (await Promise.all(
-            scenarioImportSelectedScenarioRows.value.map(async item => cloneScenarioStepsForImport((await apiAutomationApi.getScenarioDetail(workspaceCode, item.id)).steps || [])),
-          )).flat()
-        : scenarioImportSelectedScenarioRows.value.map(createReferenceStepFromScenario)
+    const copiedScenarioStepGroups = await Promise.all(
+      scenarioImportSelectedScenarioRows.value.map(async item => cloneScenarioStepsForImport((await apiAutomationApi.getScenarioDetail(workspaceCode, item.id)).steps || [])),
+    )
     activeScenarioDetail.value.steps.push(
-      ...importedDefinitionSteps,
-      ...importedCaseSteps,
-      ...importedScenarioSteps,
+      ...copiedDefinitionSteps,
+      ...copiedCaseSteps,
+      ...copiedScenarioStepGroups.flat(),
     )
     markScenarioDirty()
     ElMessage.success('已添加到场景步骤')
@@ -2942,18 +2811,16 @@ async function handleScenarioImport(mode: ScenarioImportMode) {
 
 async function ensureScenarioStepResources() {
   if (scenarioStepResourceLoading.value) return
-  if (scenarioDefinitions.value.length && scenarioCases.value.length && scenarioDefinitionModules.value.length) return
+  if (scenarioDefinitions.value.length && scenarioCases.value.length) return
   scenarioStepResourceLoading.value = true
   try {
     const workspaceCode = activeScenarioDetail.value.workspaceCode || props.workspaceCode
-    const [definitionPage, casePage, definitionModules] = await Promise.all([
-      apiAutomationApi.getDefinitions(workspaceCode),
-      apiAutomationApi.getCases(workspaceCode),
-      apiAutomationApi.getDefinitionModules(workspaceCode),
+    const [definitionPage, casePage] = await Promise.all([
+      apiAutomationApi.getDefinitions(workspaceCode, { pageNo: 1, pageSize: 100 }),
+      apiAutomationApi.getCases(workspaceCode, { pageNo: 1, pageSize: 100 }),
     ])
     scenarioDefinitions.value = definitionPage.items
     scenarioCases.value = casePage.items
-    scenarioDefinitionModules.value = definitionModules
   } catch (error) {
     ElMessage.error(getRequestErrorMessage(error))
   } finally {
@@ -3261,7 +3128,6 @@ async function runScenario() {
       ElMessage.success(response.result === 'SUCCESS' ? '场景执行成功' : '场景执行失败')
       await loadScenarioRunHistory(true)
       activeScenarioDetailTab.value = 'reports'
-      await openLatestScenarioRunReportTab()
     }
     await loadScenarioWorkspace()
   } catch (error) {
@@ -3294,19 +3160,13 @@ async function loadScenarioWorkspace() {
   moduleErrorMessage.value = ''
   scenarioErrorMessage.value = ''
   try {
-    const [moduleRows, scenarioPage, scenarioReferencePage, dbConnectionPage] = await Promise.all([
+    const [moduleRows, scenarioPage, dbConnectionPage] = await Promise.all([
       apiAutomationApi.getScenarioModules(props.workspaceCode),
-      apiAutomationApi.getScenarios(scenarioListRequestWorkspaceCode(), buildScenarioListQuery()),
-      apiAutomationApi.getScenarios(props.workspaceCode, { pageNo: 1, pageSize: 1000 }),
+      apiAutomationApi.getScenarios(props.workspaceCode),
       configApi.getSettingsDbConnections(props.workspaceCode, { status: 1 }),
     ])
     modules.value = moduleRows
-    scenarioListRows.value = scenarioPage.items
-    scenarioListTotal.value = scenarioPage.total
-    scenarioListPageNo.value = scenarioPage.pageNo
-    scenarioListPageSize.value = scenarioPage.pageSize
-    scenarioListTotalPages.value = scenarioPage.totalPages
-    scenarios.value = scenarioReferencePage.items
+    scenarios.value = scenarioPage.items
     dbConnections.value = dbConnectionPage.items
     emit('loaded', { scenarios: scenarios.value, modules: modules.value })
   } catch (error) {
@@ -3316,37 +3176,6 @@ async function loadScenarioWorkspace() {
   } finally {
     loading.value = false
   }
-}
-
-function buildScenarioListQuery() {
-  return {
-    moduleId: selectedScenarioModuleId.value,
-    keyword: scenarioFilters.value.keyword.trim() || undefined,
-    status: scenarioFilters.value.status || undefined,
-    pageNo: scenarioListPageNo.value,
-    pageSize: scenarioListPageSize.value,
-  }
-}
-
-function scenarioListRequestWorkspaceCode() {
-  return selectedScenarioWorkspaceCode.value || props.workspaceCode
-}
-
-function resetScenarioListPage() {
-  scenarioListPageNo.value = 1
-}
-
-async function changeScenarioListPage(pageNo: number) {
-  const nextPageNo = Math.min(Math.max(1, pageNo), Math.max(1, scenarioListTotalPages.value || 1))
-  if (nextPageNo === scenarioListPageNo.value) return
-  scenarioListPageNo.value = nextPageNo
-  await loadScenarioWorkspace()
-}
-
-async function changeScenarioListPageSize(pageSize: number) {
-  scenarioListPageSize.value = pageSize
-  resetScenarioListPage()
-  await loadScenarioWorkspace()
 }
 
 onMounted(() => {
@@ -3360,10 +3189,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopScenarioLocalRunnerTaskRefresh()
-  if (scenarioListFilterTimer) {
-    window.clearTimeout(scenarioListFilterTimer)
-    scenarioListFilterTimer = null
-  }
   document.removeEventListener('mousedown', handleScenarioStepNameOutsidePointerDown, true)
   window.removeEventListener('resize', updateScenarioTabOverflow)
 })
@@ -3372,10 +3197,6 @@ watch(
   () => [props.workspaceCode, props.workspaceReady],
   () => {
     scenarios.value = []
-    scenarioListRows.value = []
-    scenarioListTotal.value = 0
-    scenarioListTotalPages.value = 0
-    resetScenarioListPage()
     modules.value = []
     selectedScenarioWorkspaceCode.value = null
     selectedScenarioModuleId.value = null
@@ -3386,30 +3207,12 @@ watch(
   },
 )
 
-watch(
-  () => [scenarioFilters.value.keyword, scenarioFilters.value.status],
-  () => {
-    resetScenarioListPage()
-    if (scenarioListFilterTimer) window.clearTimeout(scenarioListFilterTimer)
-    scenarioListFilterTimer = window.setTimeout(() => {
-      void loadScenarioWorkspace()
-    }, 300)
-  },
-)
-
 watch(scenarioEditorTabs, () => {
   void nextTick(updateScenarioTabOverflow)
 }, { deep: true })
 
 watch(activeScenarioEditorKey, () => {
-  if (activeScenarioEditorTab.value?.kind === 'report') {
-    selectedScenarioRunHistoryId.value = activeScenarioEditorTab.value.reportHistoryId || null
-  } else {
-    resetScenarioRunHistoryState()
-    if (activeScenarioDetailTab.value === 'reports') {
-      void loadScenarioRunHistory(false)
-    }
-  }
+  resetScenarioRunHistoryState()
   void nextTick(updateScenarioTabOverflow)
 })
 
@@ -3543,10 +3346,6 @@ watch(activeScenarioDetailTab, (tab) => {
               :class="['ms-like-editor-tab', { active: tab.key === activeScenarioEditorKey }]"
               @click="activateScenarioEditorTab(tab.key)"
             >
-              <span
-                v-if="tab.kind === 'report'"
-                :class="['ms-like-editor-tab-status', `is-${scenarioRunResultTone(tab.lastRunResult)}`]"
-              ></span>
               <span class="ms-like-editor-tab-label">{{ tab.title }}</span>
               <span v-if="tab.dirty" class="ms-like-editor-tab-dot"></span>
               <span
@@ -3592,7 +3391,7 @@ watch(activeScenarioDetailTab, (tab) => {
       </div>
 
       <div class="scenario-editor-tabs">
-        <template v-if="activeScenarioEditorTab.kind === 'list'">
+        <template v-if="activeScenarioEditorKey === 'scenario-list'">
           <div class="ms-scenario-list-shell">
             <div class="ms-scenario-list-toolbar">
               <div class="ms-scenario-search">
@@ -3764,123 +3563,11 @@ watch(activeScenarioDetailTab, (tab) => {
               </el-table-column>
             </el-table>
             <div class="ms-scenario-pagination">
-              <span>共 {{ scenarioListTotal }} 条</span>
-              <el-pagination
-                background
-                layout="prev, pager, next, sizes"
-                :total="scenarioListTotal"
-                :current-page="scenarioListPageNo"
-                :page-size="scenarioListPageSize"
-                :page-sizes="[10, 20, 50, 100]"
-                @current-change="(page: number) => void changeScenarioListPage(page)"
-                @size-change="(size: number) => void changeScenarioListPageSize(size)"
-              />
+              <span>共 {{ filteredScenarios.length }} 条</span>
+              <button type="button">‹</button>
+              <span class="ms-scenario-page-current">1</span>
+              <button type="button">›</button>
             </div>
-          </div>
-        </template>
-
-        <template v-else-if="activeScenarioEditorTab.kind === 'report'">
-          <div v-loading="activeScenarioReportTabLoading" class="scenario-report-tab-page">
-            <div class="scenario-report-tab-head">
-              <div class="scenario-report-tab-title">
-                <span :class="['scenario-run-result-pill', `is-${scenarioRunResultTone(activeScenarioRunResult)}`]">
-                  {{ scenarioRunResultLabel(activeScenarioRunResult) }}
-                </span>
-                <div>
-                  <strong>{{ activeScenarioReportTabDetail?.scenarioName || activeScenarioEditorTab.title }}</strong>
-                  <small>{{ formatScenarioDateTime(activeScenarioReportTabDetail?.createdAt) }} · {{ activeScenarioRunDatasetName || '未使用测试数据' }}</small>
-                </div>
-              </div>
-              <div class="scenario-report-tab-meta">
-                <span>{{ activeScenarioRunLoopCount || 1 }} 轮</span>
-                <span>{{ activeScenarioRunThreadCount || 1 }} 线程</span>
-                <span>{{ activeScenarioReportTabDetail?.durationMs ?? activeScenarioRunSummary.duration }} ms</span>
-              </div>
-            </div>
-
-            <div v-if="activeScenarioReportTabDetail" class="scenario-report-tab-body app-soft-scrollbar">
-              <div v-if="activeScenarioRunDataIterations.length" class="scenario-run-data-meta">
-                <span><b>测试数据</b>{{ activeScenarioRunDatasetName }}</span>
-                <span><b>数据行数</b>{{ activeScenarioRunDataSummary.total }}</span>
-                <span><b>循环次数</b>{{ activeScenarioRunLoopCount }}</span>
-                <span><b>线程数</b>{{ activeScenarioRunThreadCount }}</span>
-              </div>
-              <div class="scenario-run-summary-grid">
-                <div>
-                  <span>{{ activeScenarioRunDataIterations.length ? '总行数' : '总步骤' }}</span>
-                  <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.total : activeScenarioRunSummary.total }}</strong>
-                </div>
-                <div>
-                  <span>通过</span>
-                  <strong class="is-passed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.passed : activeScenarioRunSummary.passed }}</strong>
-                </div>
-                <div>
-                  <span>失败</span>
-                  <strong class="is-failed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.failed : activeScenarioRunSummary.failed }}</strong>
-                </div>
-                <div>
-                  <span>总耗时</span>
-                  <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.duration : activeScenarioRunSummary.duration }} ms</strong>
-                </div>
-              </div>
-              <div v-if="activeScenarioRunFailureSummary" class="scenario-run-failure-summary">
-                {{ activeScenarioRunFailureSummary }}
-              </div>
-              <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table app-soft-scrollbar">
-                <div class="scenario-step-table-header">
-                  <span>轮次</span>
-                  <span>行号</span>
-                  <span>用例描述</span>
-                  <span>结果</span>
-                  <span>步骤数</span>
-                  <span>耗时 ms</span>
-                  <span>失败步骤</span>
-                  <span>错误原因</span>
-                </div>
-                <div
-                  v-for="row in activeScenarioRunDataIterations"
-                  :key="`${row.loopIndex || 1}-${row.rowIndex}`"
-                  class="scenario-step-table-row"
-                >
-                  <span>{{ row.loopIndex || 1 }}</span>
-                  <span>{{ row.rowIndex }}</span>
-                  <span>{{ row.caseDesc || '-' }}</span>
-                  <span :class="['scenario-run-step-result', `is-${scenarioRunResultTone(row.result)}`]">
-                    {{ scenarioRunResultLabel(row.result) }}
-                  </span>
-                  <span>{{ row.stepCount ?? '-' }}</span>
-                  <span>{{ row.durationMs ?? '-' }}</span>
-                  <span>{{ row.failedStep || '-' }}</span>
-                  <span class="scenario-run-step-error">{{ row.failureSummary || '-' }}</span>
-                </div>
-              </div>
-              <div class="scenario-step-table scenario-run-history-table app-soft-scrollbar">
-                <div class="scenario-step-table-header">
-                  <span>#</span>
-                  <span>步骤</span>
-                  <span>结果</span>
-                  <span>耗时 ms</span>
-                  <span>错误信息</span>
-                </div>
-                <button
-                  v-for="row in activeScenarioRunSteps"
-                  :key="`${row.stepOrder}-${row.stepName}`"
-                  type="button"
-                  class="scenario-step-table-row scenario-report-step-row"
-                  @click="openScenarioReportStepDrawer(row)"
-                >
-                  <span>{{ row.stepOrder }}</span>
-                  <span>{{ row.stepName || '-' }}</span>
-                  <span :class="['scenario-run-step-result', `is-${scenarioStepResultTone(row)}`]">
-                    {{ scenarioStepResultLabel(row) }}
-                  </span>
-                  <span>{{ row.durationMs ?? '-' }}</span>
-                  <span class="scenario-run-step-error">{{ row.errorMessage || '-' }}</span>
-                </button>
-                <div v-if="!activeScenarioRunSteps.length" class="scenario-step-empty">暂无步骤明细</div>
-              </div>
-            </div>
-            <div v-else-if="!activeScenarioReportTabLoading" class="scenario-step-empty">报告详情加载失败或已不存在</div>
           </div>
         </template>
 
@@ -3994,10 +3681,16 @@ watch(activeScenarioDetailTab, (tab) => {
                         <span :class="['scenario-step-method', requestMethodClass(selectedScenarioResourceMethod(item.step))]">
                           {{ selectedScenarioResourceMethod(item.step) || 'HTTP' }}
                         </span>
+                        <span :class="['scenario-step-ref-pill', `is-${normalizeScenarioStepRefType(item.step).toLowerCase()}`]">
+                          {{ scenarioStepRefTypeLabel(item.step) }}
+                        </span>
                       </template>
                       <template v-else-if="item.step.stepType === 'API_CASE'">
                         <span :class="['scenario-step-method', requestMethodClass(selectedScenarioResourceMethod(item.step))]">
                           {{ selectedScenarioResourceMethod(item.step) || 'HTTP' }}
+                        </span>
+                        <span :class="['scenario-step-ref-pill', `is-${normalizeScenarioStepRefType(item.step).toLowerCase()}`]">
+                          {{ scenarioStepRefTypeLabel(item.step) }}
                         </span>
                       </template>
                       <template v-else-if="item.step.stepType === 'CUSTOM_REQUEST'">
@@ -4091,12 +3784,18 @@ watch(activeScenarioDetailTab, (tab) => {
                 @dirty="markScenarioDirty"
               />
 
-              <div v-else-if="activeScenarioDetailTab === 'reports'" v-loading="scenarioRunHistoryLoading" class="scenario-placeholder-panel">
+              <div v-else-if="activeScenarioDetailTab === 'reports'" v-loading="scenarioRunHistoryLoading || scenarioRunHistoryDetailLoading" class="scenario-placeholder-panel">
                 <div class="scenario-run-history-head">
                   <div>
                     <span class="scenario-run-history-title">测试报告</span>
-                    <small>最近 10 次场景运行结果，点击后在新标签查看步骤明细</small>
+                    <small>最近 10 次场景运行结果，点击后查看数据行和步骤明细</small>
                   </div>
+                  <span
+                    v-if="activeScenarioRunResult"
+                    :class="['scenario-run-result-pill', `is-${scenarioRunResultTone(activeScenarioRunResult)}`]"
+                  >
+                    {{ scenarioRunResultLabel(activeScenarioRunResult) }}
+                  </span>
                 </div>
                 <div class="scenario-run-history-list">
                   <button
@@ -4104,7 +3803,7 @@ watch(activeScenarioDetailTab, (tab) => {
                     :key="item.id"
                     type="button"
                     :class="['scenario-run-history-item', { active: selectedScenarioRunHistoryId === item.id }]"
-                    @click="openScenarioRunReportTab(item.id, item.workspaceCode)"
+                    @click="loadScenarioRunHistoryDetail(item.id)"
                   >
                     <span :class="['scenario-run-result-pill', `is-${scenarioRunResultTone(item.result)}`]">
                       {{ scenarioRunResultLabel(item.result) }}
@@ -4119,6 +3818,88 @@ watch(activeScenarioDetailTab, (tab) => {
                     </span>
                   </button>
                   <div v-if="!scenarioRunHistoryItems.length" class="scenario-step-empty">暂无测试报告</div>
+                </div>
+                <div v-if="activeScenarioRunDataIterations.length" class="scenario-run-data-meta">
+                  <span><b>测试数据</b>{{ activeScenarioRunDatasetName }}</span>
+                  <span><b>数据行数</b>{{ activeScenarioRunDataSummary.total }}</span>
+                  <span><b>循环次数</b>{{ activeScenarioRunLoopCount }}</span>
+                  <span><b>线程数</b>{{ activeScenarioRunThreadCount }}</span>
+                  <span><b>用例描述列</b>{{ activeScenarioDetail.caseDescColumn || 'caseDesc' }}</span>
+                  <span><b>行失败策略</b>{{ activeScenarioDetail.dataFailureStrategy === 'CONTINUE_ON_ROW_FAILURE' ? '失败后继续下一行' : '失败后停止' }}</span>
+                </div>
+                <div class="scenario-run-summary-grid">
+                  <div>
+                    <span>{{ activeScenarioRunDataIterations.length ? '总行数' : '总步骤' }}</span>
+                    <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.total : activeScenarioRunSummary.total }}</strong>
+                  </div>
+                  <div>
+                    <span>通过</span>
+                    <strong class="is-passed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.passed : activeScenarioRunSummary.passed }}</strong>
+                  </div>
+                  <div>
+                    <span>失败</span>
+                    <strong class="is-failed">{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.failed : activeScenarioRunSummary.failed }}</strong>
+                  </div>
+                  <div>
+                    <span>总耗时</span>
+                    <strong>{{ activeScenarioRunDataIterations.length ? activeScenarioRunDataSummary.duration : activeScenarioRunSummary.duration }} ms</strong>
+                  </div>
+                </div>
+                <div v-if="activeScenarioRunFailureSummary" class="scenario-run-failure-summary">
+                  {{ activeScenarioRunFailureSummary }}
+                </div>
+                <div v-if="activeScenarioRunDataIterations.length" class="scenario-step-table scenario-run-history-table scenario-run-data-table app-soft-scrollbar">
+                  <div class="scenario-step-table-header">
+                    <span>轮次</span>
+                    <span>行号</span>
+                    <span>用例描述</span>
+                    <span>结果</span>
+                    <span>步骤数</span>
+                    <span>耗时 ms</span>
+                    <span>失败步骤</span>
+                    <span>错误原因</span>
+                  </div>
+                  <div
+                    v-for="row in activeScenarioRunDataIterations"
+                    :key="`${row.loopIndex || 1}-${row.rowIndex}`"
+                    class="scenario-step-table-row"
+                  >
+                    <span>{{ row.loopIndex || 1 }}</span>
+                    <span>{{ row.rowIndex }}</span>
+                    <span>{{ row.caseDesc || '-' }}</span>
+                    <span :class="['scenario-run-step-result', `is-${scenarioRunResultTone(row.result)}`]">
+                      {{ scenarioRunResultLabel(row.result) }}
+                    </span>
+                    <span>{{ row.stepCount ?? '-' }}</span>
+                    <span>{{ row.durationMs ?? '-' }}</span>
+                    <span>{{ row.failedStep || '-' }}</span>
+                    <span class="scenario-run-step-error">{{ row.failureSummary || '-' }}</span>
+                  </div>
+                </div>
+                <div class="scenario-step-table scenario-run-history-table app-soft-scrollbar">
+                  <div class="scenario-step-table-header">
+                    <span>#</span>
+                    <span>步骤</span>
+                    <span>类型</span>
+                    <span>结果</span>
+                    <span>耗时 ms</span>
+                    <span>错误信息</span>
+                  </div>
+                  <div
+                    v-for="row in activeScenarioRunSteps"
+                    :key="`${row.stepOrder}-${row.stepName}`"
+                    class="scenario-step-table-row"
+                  >
+                    <span>{{ row.stepOrder }}</span>
+                    <span>{{ row.stepName || '-' }}</span>
+                    <span>{{ row.definitionId ? '接口' : '-' }}</span>
+                    <span :class="['scenario-run-step-result', `is-${scenarioStepResultTone(row)}`]">
+                      {{ scenarioStepResultLabel(row) }}
+                    </span>
+                    <span>{{ row.durationMs ?? '-' }}</span>
+                    <span class="scenario-run-step-error">{{ row.errorMessage || '-' }}</span>
+                  </div>
+                  <div v-if="!activeScenarioRunSteps.length" class="scenario-step-empty">暂无测试报告</div>
                 </div>
               </div>
 
@@ -5140,19 +4921,6 @@ watch(activeScenarioDetailTab, (tab) => {
       </template>
     </el-drawer>
 
-    <el-drawer
-      v-model="scenarioReportStepDrawerVisible"
-      :title="scenarioReportStepDetail?.stepName || '步骤明细'"
-      size="960px"
-      destroy-on-close
-      append-to-body
-      class="api-soft-drawer scenario-report-step-drawer"
-    >
-      <div v-if="scenarioReportStepDetail" class="scenario-report-step-detail">
-        <ApiRunStepDetailViewer :step="scenarioReportStepDetail" />
-      </div>
-    </el-drawer>
-
     <el-dialog
       v-model="scenarioSoftPromptVisible"
       width="420px"
@@ -5536,26 +5304,6 @@ watch(activeScenarioDetailTab, (tab) => {
   background: #f97316;
 }
 
-.ms-like-editor-tab-status {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #9ca3af;
-}
-
-.ms-like-editor-tab-status.is-passed {
-  background: #22c55e;
-}
-
-.ms-like-editor-tab-status.is-failed {
-  background: #ef4444;
-}
-
-.ms-like-editor-tab-status.is-running {
-  background: #3b82f6;
-}
-
 .ms-like-editor-tab-close {
   display: inline-flex;
   align-items: center;
@@ -5686,12 +5434,10 @@ watch(activeScenarioDetailTab, (tab) => {
   grid-template-columns: minmax(0, 1fr) var(--scenario-grid-actions-width);
   min-height: 0;
   flex: 1;
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   background: #ffffff;
-  scrollbar-gutter: stable;
 }
 
 .ms-scenario-grid-data {
@@ -5836,23 +5582,6 @@ watch(activeScenarioDetailTab, (tab) => {
   background: rgba(120, 134, 156, 0.72);
 }
 
-.ms-scenario-grid-shell::-webkit-scrollbar {
-  width: 8px;
-}
-
-.ms-scenario-grid-shell::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ms-scenario-grid-shell::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: rgba(148, 163, 184, 0.36);
-}
-
-.ms-scenario-grid-shell::-webkit-scrollbar-thumb:hover {
-  background: rgba(120, 134, 156, 0.68);
-}
-
 .ms-scenario-table :deep(.el-table__inner-wrapper) {
   border: 0;
   border-radius: 0;
@@ -5936,6 +5665,25 @@ watch(activeScenarioDetailTab, (tab) => {
   padding: 16px;
   color: #303640;
   font-size: 13px;
+}
+
+.ms-scenario-pagination button,
+.ms-scenario-page-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  border: 1px solid #dbeafe;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.ms-scenario-page-current {
+  border-color: #3b82f6;
+  cursor: default;
 }
 
 .scenario-edit-workspace {
@@ -6841,109 +6589,6 @@ watch(activeScenarioDetailTab, (tab) => {
   white-space: nowrap;
 }
 
-.scenario-report-tab-page {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-  background: #ffffff;
-}
-
-.scenario-report-tab-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: 10px 16px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #ffffff;
-}
-
-.scenario-report-tab-title {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 12px;
-}
-
-.scenario-report-tab-title > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.scenario-report-tab-title strong,
-.scenario-report-tab-title small {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.scenario-report-tab-title strong {
-  color: #111827;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.scenario-report-tab-title small,
-.scenario-report-tab-meta {
-  color: #667085;
-  font-size: 12px;
-}
-
-.scenario-report-tab-meta {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.scenario-report-tab-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding-bottom: 16px;
-}
-
-.scenario-report-step-row {
-  width: 100%;
-  border-right: 0;
-  border-bottom: 0;
-  border-left: 0;
-  background: #ffffff;
-  text-align: left;
-  cursor: pointer;
-}
-
-.scenario-report-step-detail {
-  display: flex;
-  height: calc(100vh - 52px);
-  min-height: 0;
-  flex-direction: column;
-  gap: 14px;
-  padding: 16px 18px 20px;
-  box-sizing: border-box;
-}
-
-:deep(.scenario-report-step-drawer .el-drawer__header) {
-  display: flex;
-  align-items: center;
-  min-height: 52px;
-  margin-bottom: 0;
-  padding: 0 18px !important;
-  border-bottom: 1px solid #e5e7eb;
-  box-sizing: border-box;
-}
-
-:deep(.scenario-report-step-drawer .el-drawer__body) {
-  padding: 0;
-  background: #ffffff;
-}
-
 .scenario-run-result-pill {
   display: inline-flex;
   align-items: center;
@@ -6999,7 +6644,7 @@ watch(activeScenarioDetailTab, (tab) => {
 
 .scenario-run-history-table .scenario-step-table-header,
 .scenario-run-history-table .scenario-step-table-row {
-  grid-template-columns: 56px minmax(180px, 1.4fr) 96px 96px minmax(220px, 1fr);
+  grid-template-columns: 56px minmax(160px, 1.2fr) 96px 96px 96px minmax(180px, 1fr);
 }
 
 .scenario-run-data-table .scenario-step-table-header,
@@ -7621,6 +7266,26 @@ watch(activeScenarioDetailTab, (tab) => {
 
 .scenario-system-request-method {
   min-width: 56px;
+}
+
+.scenario-step-ref-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.scenario-step-ref-pill.is-copy {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #ea580c;
 }
 
 .scenario-step-method.is-get {

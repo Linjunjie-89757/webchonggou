@@ -161,6 +161,7 @@ export interface ApiExecutionSuiteRunHistoryItem {
 }
 
 export interface ApiExecutionSuiteRunItemSnapshot {
+  suiteItemId?: number | null
   itemId: number | null
   itemType: ApiExecutionSuiteItemType | string | null
   itemName: string | null

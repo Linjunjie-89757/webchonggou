@@ -582,7 +582,7 @@ public class ApiExecutionSuiteDomainService {
                 taskId = itemRun.taskId();
                 reportId = itemRun.reportId();
             }
-            stepResults.addAll(prefixStepResults(itemRun.stepResults(), dataRow));
+            stepResults.addAll(decorateSuiteStepResults(itemRun.stepResults(), item, dataRow));
             itemSnapshots.add(toSuiteRunItemSnapshot(item, itemRun));
             if (!"SUCCESS".equals(itemRun.result())) {
                 success = false;
@@ -988,6 +988,7 @@ public class ApiExecutionSuiteDomainService {
                 .mapToLong(Long::longValue)
                 .sum();
         return new ApiExecutionSuiteRunItemSnapshot(
+                item.getId(),
                 item.getItemId(),
                 item.getItemType(),
                 item.getItemNameSnapshot(),
@@ -1000,14 +1001,15 @@ public class ApiExecutionSuiteDomainService {
         );
     }
 
-    private List<ApiRunStepResultResponse> prefixStepResults(
+    private List<ApiRunStepResultResponse> decorateSuiteStepResults(
             List<ApiRunStepResultResponse> responses,
+            ApiExecutionSuiteItemEntity item,
             ApiDataFileDomainService.ApiDataFileRuntimeRow dataRow
     ) {
-        if (dataRow == null || responses == null || responses.isEmpty()) {
-            return responses == null ? List.of() : responses;
+        if (responses == null || responses.isEmpty()) {
+            return List.of();
         }
-        String prefix = "[Row " + dataRow.rowIndex()
+        String prefix = dataRow == null ? "" : "[Row " + dataRow.rowIndex()
                 + (blankToNull(dataRow.caseDesc()) == null ? "" : " " + dataRow.caseDesc())
                 + "] ";
         List<ApiRunStepResultResponse> next = new ArrayList<>();
@@ -1017,7 +1019,13 @@ public class ApiExecutionSuiteDomainService {
                     response.reportId(),
                     response.stepOrder(),
                     prefix + response.stepName(),
+                    response.stepKind(),
+                    response.stepKey(),
+                    response.parentStepKey(),
+                    response.depth(),
                     response.definitionId(),
+                    item.getId(),
+                    item.getSortOrder(),
                     response.success(),
                     response.durationMs(),
                     response.request(),
@@ -1122,7 +1130,7 @@ public class ApiExecutionSuiteDomainService {
     ) {
         return switch (item.getItemType()) {
             case "API_CASE" -> executionDomainService.runCase(item.getItemId(), workspaceCode, request);
-            case "SCENARIO" -> executionDomainService.runScenario(item.getItemId(), workspaceCode, request);
+            case "SCENARIO" -> executionDomainService.runScenarioAsSuiteItem(item.getItemId(), workspaceCode, request);
             default -> throw new BadRequestException("Unsupported execution suite item type");
         };
     }
@@ -1175,7 +1183,13 @@ public class ApiExecutionSuiteDomainService {
                 response.reportId(),
                 response.stepOrder(),
                 response.stepName(),
+                response.stepKind(),
+                response.stepKey(),
+                response.parentStepKey(),
+                response.depth(),
                 response.definitionId(),
+                response.suiteItemId(),
+                response.suiteItemOrder(),
                 response.success(),
                 response.durationMs(),
                 response.request(),

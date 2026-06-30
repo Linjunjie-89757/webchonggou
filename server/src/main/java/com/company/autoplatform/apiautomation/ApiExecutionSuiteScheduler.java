@@ -1,8 +1,15 @@
 package com.company.autoplatform.apiautomation;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.company.autoplatform.auth.CurrentUserPrincipal;
+import com.company.autoplatform.auth.PlatformUserDetailsService;
 import com.company.autoplatform.common.BadRequestException;
 import com.company.autoplatform.workspace.WorkspaceService;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -23,16 +30,22 @@ public class ApiExecutionSuiteScheduler {
     private final ApiExecutionSuiteMapper suiteMapper;
     private final ApiExecutionSuiteDomainService suiteDomainService;
     private final WorkspaceService workspaceService;
+    private final PlatformUserDetailsService userDetailsService;
+    private final String schedulerUsername;
     private final Set<Long> runningSuiteIds = ConcurrentHashMap.newKeySet();
 
     public ApiExecutionSuiteScheduler(
             ApiExecutionSuiteMapper suiteMapper,
             ApiExecutionSuiteDomainService suiteDomainService,
-            WorkspaceService workspaceService
+            WorkspaceService workspaceService,
+            PlatformUserDetailsService userDetailsService,
+            @Value("${automation.api.execution-suite.scheduler-username:${app.super-admin.username:superadmin}}") String schedulerUsername
     ) {
         this.suiteMapper = suiteMapper;
         this.suiteDomainService = suiteDomainService;
         this.workspaceService = workspaceService;
+        this.userDetailsService = userDetailsService;
+        this.schedulerUsername = schedulerUsername;
     }
 
     @Scheduled(fixedDelayString = "${automation.api.execution-suite.schedule-scan-delay-ms:30000}")
@@ -73,7 +86,9 @@ public class ApiExecutionSuiteScheduler {
         if (!runningSuiteIds.add(suite.getId())) {
             return;
         }
+        SecurityContext previousContext = SecurityContextHolder.getContext();
         try {
+            SecurityContextHolder.setContext(systemSchedulerContext());
             suiteDomainService.runSuite(
                     suite.getId(),
                     suiteWorkspaceCode(suite),
@@ -84,8 +99,21 @@ public class ApiExecutionSuiteScheduler {
         } catch (RuntimeException exception) {
             log.error("Scheduled execution suite failed. suiteId={}", suite.getId(), exception);
         } finally {
+            SecurityContextHolder.setContext(previousContext);
             runningSuiteIds.remove(suite.getId());
         }
+    }
+
+    private SecurityContext systemSchedulerContext() {
+        CurrentUserPrincipal principal = (CurrentUserPrincipal) userDetailsService.loadUserByUsername(schedulerUsername);
+        Authentication authentication = new UsernamePasswordAuthenticationToken(
+                principal,
+                principal.getPassword(),
+                principal.getAuthorities()
+        );
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        return context;
     }
 
     private String suiteWorkspaceCode(ApiExecutionSuiteEntity suite) {

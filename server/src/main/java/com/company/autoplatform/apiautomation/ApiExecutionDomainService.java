@@ -278,7 +278,39 @@ public class ApiExecutionDomainService {
         if (Boolean.TRUE.equals(scenario.getDataDrivenEnabled())) {
             return runScenarioWithDataRows(scenario, request);
         }
-        return runScenarioWithPlans(scenario, request, List.of(new ScenarioRunPlan(1, 1, null, null)));
+        return runScenarioWithPlans(scenario, request, List.of(new ScenarioRunPlan(1, 1, null, null)), true);
+    }
+
+    ApiRunResponse runScenarioAsSuiteItem(Long id, String workspaceCode, ApiRunRequest request) {
+        ApiScenarioEntity scenario = executionEngine.requireScenario(id);
+        workspaceScopeSupport.validateReadable(scenario.getWorkspaceId(), workspaceCode, "Current workspace cannot run the scenario");
+        WorkspaceEntity workspace = workspaceService.requireWorkspaceById(scenario.getWorkspaceId());
+        workspaceService.requireWritableWorkspace(workspace.getWorkspaceCode());
+
+        if (isLocalRunnerRun(request.runOn())) {
+            return createLocalRunnerScenarioRun(scenario, workspace, request);
+        }
+
+        List<ApiScenarioTestDatasetDomainService.ApiScenarioDatasetRuntimeRow> datasetRows = List.of();
+        if (request.testDatasetId() != null) {
+            datasetRows = scenarioTestDatasetDomainService.readDatasetRows(scenario.getId(), scenario.getWorkspaceId(), request.testDatasetId());
+        } else if (request.testDatasetEnabled() == null && scenario.getDataFileId() == null) {
+            datasetRows = scenarioTestDatasetDomainService.readEnabledDatasetRows(scenario.getId(), scenario.getWorkspaceId());
+        }
+        if (!datasetRows.isEmpty()) {
+            return runScenarioWithPlans(scenario, request, buildDatasetRunPlans(request, datasetRows), false);
+        }
+        if (Boolean.TRUE.equals(scenario.getDataDrivenEnabled())) {
+            if (scenario.getDataFileId() == null) {
+                throw new BadRequestException("Scenario data file is not configured");
+            }
+            List<ApiDataFileDomainService.ApiDataFileRuntimeRow> rows = dataFileDomainService.readDataRows(scenario.getDataFileId(), scenario.getWorkspaceId());
+            if (rows.isEmpty()) {
+                throw new BadRequestException("Scenario data file has no data rows");
+            }
+            return runScenarioWithPlans(scenario, request, buildDataFileRunPlans(request, rows), false);
+        }
+        return runScenarioWithPlans(scenario, request, List.of(new ScenarioRunPlan(1, 1, null, null)), false);
     }
 
     private ApiRunResponse runScenarioWithDatasetRows(
@@ -289,7 +321,7 @@ public class ApiExecutionDomainService {
         if (rows.isEmpty()) {
             throw new BadRequestException("Scenario test dataset has no data rows");
         }
-        return runScenarioWithPlans(scenario, request, buildDatasetRunPlans(request, rows));
+        return runScenarioWithPlans(scenario, request, buildDatasetRunPlans(request, rows), true);
     }
 
     private ApiRunResponse runScenarioWithDataRows(ApiScenarioEntity scenario, ApiRunRequest request) {
@@ -300,7 +332,7 @@ public class ApiExecutionDomainService {
         if (rows.isEmpty()) {
             throw new BadRequestException("Scenario data file has no data rows");
         }
-        return runScenarioWithPlans(scenario, request, buildDataFileRunPlans(request, rows));
+        return runScenarioWithPlans(scenario, request, buildDataFileRunPlans(request, rows), true);
     }
 
     private List<ScenarioRunPlan> buildDatasetRunPlans(
@@ -336,7 +368,8 @@ public class ApiExecutionDomainService {
     private ApiRunResponse runScenarioWithPlans(
             ApiScenarioEntity scenario,
             ApiRunRequest request,
-            List<ScenarioRunPlan> plans
+            List<ScenarioRunPlan> plans,
+            boolean persistHistory
     ) {
         if (plans.isEmpty()) {
             throw new BadRequestException("Scenario has no run units");
@@ -362,16 +395,18 @@ public class ApiExecutionDomainService {
                 : List.of();
 
         executionEngine.finalizeRunScenario(scenario, success, failureSummary, firstAggregate.envelope().task(), firstAggregate.envelope().report());
-        persistScenarioRunHistory(
-                scenario,
-                request,
-                firstAggregate.envelope().report().getId(),
-                success,
-                failureSummary,
-                dataIterations,
-                responses,
-                firstAggregate.contextSnapshotJson()
-        );
+        if (persistHistory) {
+            persistScenarioRunHistory(
+                    scenario,
+                    request,
+                    firstAggregate.envelope().report().getId(),
+                    success,
+                    failureSummary,
+                    dataIterations,
+                    responses,
+                    firstAggregate.contextSnapshotJson()
+            );
+        }
         return new ApiRunResponse(
                 firstAggregate.envelope().task().getId(),
                 firstAggregate.envelope().report().getId(),
@@ -660,6 +695,7 @@ public class ApiExecutionDomainService {
                     null,
                     stepOrder[0],
                     "场景断言",
+                    "ASSERTION",
                     null,
                     assertionSuccess,
                     0L,

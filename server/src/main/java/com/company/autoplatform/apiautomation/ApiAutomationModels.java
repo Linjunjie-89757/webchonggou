@@ -747,6 +747,7 @@ public final class ApiAutomationModels {
     }
 
     public record ApiExecutionSuiteRunItemSnapshot(
+            Long suiteItemId,
             Long itemId,
             String itemType,
             String itemName,
@@ -1358,7 +1359,13 @@ public final class ApiAutomationModels {
             Long reportId,
             Integer stepOrder,
             String stepName,
+            String stepKind,
+            String stepKey,
+            String parentStepKey,
+            Integer depth,
             Long definitionId,
+            Long suiteItemId,
+            Integer suiteItemOrder,
             boolean success,
             Long durationMs,
             ApiRequestSnapshot request,
@@ -1369,6 +1376,97 @@ public final class ApiAutomationModels {
             String errorMessage,
             LocalDateTime createdAt
     ) {
+        public ApiRunStepResultResponse(
+                Long id,
+                Long reportId,
+                Integer stepOrder,
+                String stepName,
+                Long definitionId,
+                boolean success,
+                Long durationMs,
+                ApiRequestSnapshot request,
+                ApiResponseSnapshot response,
+                List<ApiAssertionResult> assertionResults,
+                List<ApiExtractionResult> extractionResults,
+                List<ApiProcessorResult> processorResults,
+                String errorMessage,
+                LocalDateTime createdAt
+        ) {
+            this(id, reportId, stepOrder, stepName, "REQUEST", defaultStepKey(stepOrder), null, 0, definitionId, null, null, success, durationMs, request, response,
+                    assertionResults, extractionResults, processorResults, errorMessage, createdAt);
+        }
+
+        public ApiRunStepResultResponse(
+                Long id,
+                Long reportId,
+                Integer stepOrder,
+                String stepName,
+                String stepKind,
+                Long definitionId,
+                boolean success,
+                Long durationMs,
+                ApiRequestSnapshot request,
+                ApiResponseSnapshot response,
+                List<ApiAssertionResult> assertionResults,
+                List<ApiExtractionResult> extractionResults,
+                List<ApiProcessorResult> processorResults,
+                String errorMessage,
+                LocalDateTime createdAt
+        ) {
+            this(id, reportId, stepOrder, stepName, stepKind, defaultStepKey(stepOrder), null, 0, definitionId, null, null, success, durationMs, request, response,
+                    assertionResults, extractionResults, processorResults, errorMessage, createdAt);
+        }
+
+        public ApiRunStepResultResponse(
+                Long id,
+                Long reportId,
+                Integer stepOrder,
+                String stepName,
+                String stepKind,
+                Long definitionId,
+                Long suiteItemId,
+                Integer suiteItemOrder,
+                boolean success,
+                Long durationMs,
+                ApiRequestSnapshot request,
+                ApiResponseSnapshot response,
+                List<ApiAssertionResult> assertionResults,
+                List<ApiExtractionResult> extractionResults,
+                List<ApiProcessorResult> processorResults,
+                String errorMessage,
+                LocalDateTime createdAt
+        ) {
+            this(id, reportId, stepOrder, stepName, stepKind, defaultStepKey(stepOrder), null, 0, definitionId, suiteItemId, suiteItemOrder, success, durationMs, request, response,
+                    assertionResults, extractionResults, processorResults, errorMessage, createdAt);
+        }
+
+        public ApiRunStepResultResponse(
+                Long id,
+                Long reportId,
+                Integer stepOrder,
+                String stepName,
+                String stepKind,
+                String stepKey,
+                String parentStepKey,
+                Integer depth,
+                Long definitionId,
+                boolean success,
+                Long durationMs,
+                ApiRequestSnapshot request,
+                ApiResponseSnapshot response,
+                List<ApiAssertionResult> assertionResults,
+                List<ApiExtractionResult> extractionResults,
+                List<ApiProcessorResult> processorResults,
+                String errorMessage,
+                LocalDateTime createdAt
+        ) {
+            this(id, reportId, stepOrder, stepName, stepKind, stepKey, parentStepKey, depth, definitionId, null, null, success, durationMs, request, response,
+                    assertionResults, extractionResults, processorResults, errorMessage, createdAt);
+        }
+
+        private static String defaultStepKey(Integer stepOrder) {
+            return stepOrder == null ? null : "step-" + stepOrder;
+        }
     }
 
     public record ApiRunResponse(
