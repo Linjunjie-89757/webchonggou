@@ -7,6 +7,7 @@ import {
   Download,
   Edit,
   Link,
+  List,
   MoreFilled,
   Plus,
   RefreshRight,
@@ -47,6 +48,7 @@ import {
   type WebUiRunBatchSummary,
   type WebUiRunStepResult,
   type WebUiRunSummary,
+  type SaveWebUiCasePayload,
 } from '@/entities/web-ui-automation'
 import type { WorkspaceItem } from '@/entities/workspace'
 import { deleteWebUiCase } from '@/features/web-ui-case-delete'
@@ -56,6 +58,7 @@ import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppLoadingState from '@/shared/ui/app-loading-state/AppLoadingState.vue'
 
 import WebUiCaseEditorDrawer from './WebUiCaseEditorDrawer.vue'
+import WebUiCaseBasicInfoDialog from './WebUiCaseBasicInfoDialog.vue'
 import WebUiEnvironmentPanel from './WebUiEnvironmentPanel.vue'
 import WebUiReportShareDialog from './WebUiReportShareDialog.vue'
 import WebUiRunDetailDrawer from './WebUiRunDetailDrawer.vue'
@@ -119,6 +122,12 @@ const editorVisible = ref(false)
 const editingCaseId = ref<number | null>(null)
 const focusedEditorStepId = ref<number | null>(null)
 const draftCase = ref<WebUiCaseDetail | null>(null)
+const basicInfoDialogVisible = ref(false)
+const basicInfoDialogMode = ref<'create' | 'edit'>('create')
+const basicInfoCaseId = ref<number | null>(null)
+const basicInfoCaseDetail = ref<WebUiCaseDetail | null>(null)
+const loadingBasicInfoCase = ref(false)
+const savingBasicInfoCase = ref(false)
 const deletingCaseId = ref<number | null>(null)
 const runningCaseId = ref<number | null>(null)
 const runDetailVisible = ref(false)
@@ -195,6 +204,7 @@ let batchDetailRequestSeq = 0
 let ciTokenRequestSeq = 0
 let templateRequestSeq = 0
 let copyCaseRequestSeq = 0
+let basicInfoRequestSeq = 0
 let drawerStateSeq = 0
 let consumedDeepLinkKey = ''
 
@@ -416,12 +426,13 @@ async function syncReportDeepLink() {
 
   if ((tab === 'cases' || props.mode === 'cases') && caseId) {
     consumedDeepLinkKey = key
-    copyCaseRequestSeq += 1
-    drawerStateSeq += 1
-    editingCaseId.value = caseId
-    focusedEditorStepId.value = stepId
-    draftCase.value = null
-    editorVisible.value = true
+    await router.replace({
+      path: `/automation/web/cases/${caseId}`,
+      query: {
+        workspace: props.workspaceCode,
+        ...(stepId ? { stepId: String(stepId) } : {}),
+      },
+    })
     return
   }
 
@@ -753,11 +764,11 @@ function resetFilters() {
 
 function openCreateDrawer() {
   copyCaseRequestSeq += 1
-  drawerStateSeq += 1
-  editingCaseId.value = null
-  focusedEditorStepId.value = null
-  draftCase.value = null
-  editorVisible.value = true
+  basicInfoRequestSeq += 1
+  basicInfoDialogMode.value = 'create'
+  basicInfoCaseId.value = null
+  basicInfoCaseDetail.value = null
+  basicInfoDialogVisible.value = true
 }
 
 function openTemplateDialog() {
@@ -1017,13 +1028,70 @@ function getTemplateStepRowClassName({ row }: { row: WebUiCaseTemplateDetail['st
   return isFocusedTemplateStep(row) ? 'web-ui-template-step-table__row--focused' : ''
 }
 
-function openEditDrawer(caseItem: WebUiCaseItem) {
-  copyCaseRequestSeq += 1
-  drawerStateSeq += 1
-  editingCaseId.value = caseItem.id
-  focusedEditorStepId.value = null
-  draftCase.value = null
-  editorVisible.value = true
+function openStepDrawer(caseItem: WebUiCaseItem) {
+  void router.push({
+    path: `/automation/web/cases/${caseItem.id}`,
+    query: {
+      workspace: props.workspaceCode,
+    },
+  })
+}
+
+async function openEditDrawer(caseItem: WebUiCaseItem) {
+  const requestId = ++basicInfoRequestSeq
+  const workspaceCode = props.workspaceCode
+  basicInfoDialogMode.value = 'edit'
+  basicInfoCaseId.value = caseItem.id
+  basicInfoCaseDetail.value = null
+  loadingBasicInfoCase.value = true
+  basicInfoDialogVisible.value = true
+
+  try {
+    const detail = await webUiAutomationApi.getCaseDetail(workspaceCode, caseItem.id)
+    if (requestId === basicInfoRequestSeq && props.workspaceCode === workspaceCode && basicInfoCaseId.value === caseItem.id) {
+      basicInfoCaseDetail.value = detail
+    }
+  } catch (error) {
+    if (requestId === basicInfoRequestSeq && props.workspaceCode === workspaceCode && basicInfoCaseId.value === caseItem.id) {
+      ElMessage.error(getRequestErrorMessage(error))
+      basicInfoDialogVisible.value = false
+    }
+  } finally {
+    if (requestId === basicInfoRequestSeq && props.workspaceCode === workspaceCode && basicInfoCaseId.value === caseItem.id) {
+      loadingBasicInfoCase.value = false
+    }
+  }
+}
+
+async function saveCaseBasicInfo(payload: SaveWebUiCasePayload) {
+  if (savingBasicInfoCase.value) {
+    return
+  }
+
+  savingBasicInfoCase.value = true
+  try {
+    const requestPayload = {
+      ...payload,
+      workspaceCode: props.workspaceCode,
+    }
+    if (basicInfoDialogMode.value === 'edit') {
+      if (!basicInfoCaseId.value) {
+        ElMessage.warning('未找到要编辑的用例')
+        return
+      }
+      await webUiAutomationApi.updateCase(props.workspaceCode, basicInfoCaseId.value, requestPayload)
+      ElMessage.success('用例信息已更新')
+    } else {
+      await webUiAutomationApi.createCase(props.workspaceCode, requestPayload)
+      ElMessage.success('用例已创建，可在列表点击“步骤”继续维护')
+    }
+    basicInfoDialogVisible.value = false
+    await Promise.all([loadCases(), loadCaseStats()])
+  } catch (error) {
+    ElMessage.error(getRequestErrorMessage(error))
+  } finally {
+    savingBasicInfoCase.value = false
+  }
 }
 
 async function openCopyDrawer(caseItem: WebUiCaseItem) {
@@ -1446,13 +1514,14 @@ function handleLocateRunStep(payload: { caseId: number | null; step: WebUiRunSte
   }
 
   runDetailVisible.value = false
-  copyCaseRequestSeq += 1
-  drawerStateSeq += 1
-  editingCaseId.value = payload.caseId
-  focusedEditorStepId.value = payload.step.caseStepId ?? null
-  draftCase.value = null
-  editorVisible.value = true
-  ElMessage.info(`已打开用例编辑器，请查看第 ${payload.step.sortOrder} 步：${stepName}`)
+  void router.push({
+    path: `/automation/web/cases/${payload.caseId}`,
+    query: {
+      workspace: props.workspaceCode,
+      ...(payload.step.caseStepId ? { stepId: String(payload.step.caseStepId) } : {}),
+    },
+  })
+  ElMessage.info(`已打开用例工作台，请查看第 ${payload.step.sortOrder} 步：${stepName}`)
 }
 
 onMounted(() => {
@@ -1652,7 +1721,7 @@ watch(
                 {{ formatWebUiDateTime(row.updatedAt) }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="224" fixed="right">
+            <el-table-column label="操作" width="276" fixed="right">
               <template #default="{ row }">
                 <div class="web-ui-case-actions">
                   <el-button
@@ -1665,10 +1734,11 @@ watch(
                   >
                     运行
                   </el-button>
+                  <el-button :icon="List" link type="primary" @click="openStepDrawer(row)">步骤</el-button>
+                  <el-button :icon="Edit" link type="primary" @click="openEditDrawer(row)">编辑</el-button>
                   <el-button :icon="View" link type="primary" :disabled="!row.lastRunAt" @click="openLatestRunForCase(row)">
                     报告
                   </el-button>
-                  <el-button :icon="Edit" link type="primary" @click="openEditDrawer(row)">编辑</el-button>
                   <el-dropdown trigger="click" @command="handleCaseMoreCommand($event, row)">
                     <el-button class="web-ui-case-actions__more" :icon="MoreFilled" link type="primary" aria-label="更多操作" />
                     <template #dropdown>
@@ -2380,6 +2450,13 @@ watch(
       </template>
     </el-dialog>
 
+    <WebUiCaseBasicInfoDialog
+      v-model="basicInfoDialogVisible"
+      :mode="basicInfoDialogMode"
+      :loading="loadingBasicInfoCase || savingBasicInfoCase"
+      :case-detail="basicInfoCaseDetail"
+      @submit="saveCaseBasicInfo"
+    />
     <WebUiCaseEditorDrawer
       v-model="editorVisible"
       :workspace-code="workspaceCode"

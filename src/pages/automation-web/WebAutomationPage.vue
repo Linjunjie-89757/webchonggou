@@ -7,6 +7,7 @@ import AppButton from '@/shared/ui/app-button/AppButton.vue'
 import AppEmptyState from '@/shared/ui/app-empty-state/AppEmptyState.vue'
 import AppPage from '@/shared/ui/app-page/AppPage.vue'
 import { WebUiCaseWorkspace } from '@/widgets/web-ui-case-workspace'
+import WebUiCaseDetailWorkspace from '@/widgets/web-ui-case-workspace/WebUiCaseDetailWorkspace.vue'
 import WebUiElementCollectTaskWorkspace from '@/widgets/web-ui-case-workspace/WebUiElementCollectTaskWorkspace.vue'
 import WebUiElementLibraryPanel from '@/widgets/web-ui-case-workspace/WebUiElementLibraryPanel.vue'
 import WebUiVariableSetDetailPage from '@/widgets/web-ui-case-workspace/WebUiVariableSetDetailPage.vue'
@@ -21,10 +22,11 @@ const route = useRoute()
 const router = useRouter()
 const { selectedWorkspaceCode, setSelectedWorkspaceCode } = useWorkspaceContext()
 
-type WebUiSection = 'cases' | 'elements' | 'collectTask' | 'templates' | 'runs' | 'batches' | 'environments' | 'variables' | 'variableDetail'
+type WebUiSection = 'cases' | 'caseDetail' | 'elements' | 'collectTask' | 'templates' | 'runs' | 'batches' | 'environments' | 'variables' | 'variableDetail'
 
 const routeSectionMap: Record<string, WebUiSection> = {
   'automation-web-cases': 'cases',
+  'automation-web-case-detail': 'caseDetail',
   'automation-web-elements': 'elements',
   'automation-web-element-collect-task': 'collectTask',
   'automation-web-templates': 'templates',
@@ -40,7 +42,7 @@ const activeSection = computed<WebUiSection>(() => {
   return routeSectionMap[routeName] || 'cases'
 })
 const workspaceMode = computed<'cases' | 'templates' | 'runs' | 'batches' | 'environments'>(() =>
-  activeSection.value === 'elements' || activeSection.value === 'collectTask' || activeSection.value === 'variables' || activeSection.value === 'variableDetail'
+  activeSection.value === 'caseDetail' || activeSection.value === 'elements' || activeSection.value === 'collectTask' || activeSection.value === 'variables' || activeSection.value === 'variableDetail'
     ? 'cases'
     : activeSection.value,
 )
@@ -92,6 +94,12 @@ const pageCopy = computed(() => {
     return {
       title: 'Web UI 变量集详情',
       description: '查看和维护变量集基础信息、变量列表和 JSON 导入导出。',
+    }
+  }
+  if (activeSection.value === 'caseDetail') {
+    return {
+      title: 'Web UI 用例工作台',
+      description: '编辑用例步骤、运行调试，并为 Local Runner 录制入口预留控制台。',
     }
   }
   return {
@@ -203,11 +211,16 @@ watch(
   >
     <div class="web-automation-page">
       <WebUiCaseWorkspace
-        v-if="activeSection !== 'elements' && activeSection !== 'collectTask' && activeSection !== 'variables' && activeSection !== 'variableDetail'"
+        v-if="activeSection !== 'caseDetail' && activeSection !== 'elements' && activeSection !== 'collectTask' && activeSection !== 'variables' && activeSection !== 'variableDetail'"
         :workspace-code="workspaceCode"
         :workspace-ready="workspaceReady"
         :workspaces="workspaces"
         :mode="workspaceMode"
+      />
+      <WebUiCaseDetailWorkspace
+        v-else-if="activeSection === 'caseDetail'"
+        :workspace-code="workspaceCode"
+        :workspace-ready="workspaceReady"
       />
       <WebUiElementLibraryPanel
         v-else-if="activeSection === 'elements'"
